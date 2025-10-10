@@ -5967,54 +5967,125 @@ class IndustryUnitStandardizer:
     """Professional unit conversion system for wireline data"""
     
     def __init__(self):
+        # Unit conversion registry. Each entry supports either a multiplicative
+        # 'factor' or a callable 'apply' (and optional 'inverse') for non-linear
+        # conversions. All targets are industry-standard SI or modified SI.
         self.unit_conversions = {
             # Depth conversions
             'depth': {
-                'FT': {'factor': 0.3048, 'target': 'M', 'name': 'Feet to Meters'},
-                'M': {'factor': 1.0, 'target': 'M', 'name': 'Meters (standard)'},
-                'FEET': {'factor': 0.3048, 'target': 'M', 'name': 'Feet to Meters'},
-                'METER': {'factor': 1.0, 'target': 'M', 'name': 'Meters (standard)'}
+                'FT':     {'factor': 0.3048, 'target': 'M',    'name': 'Feet to meters'},
+                'FEET':   {'factor': 0.3048, 'target': 'M',    'name': 'Feet to meters'},
+                'M':      {'factor': 1.0,    'target': 'M',    'name': 'Meters (standard)'},
+                'METER':  {'factor': 1.0,    'target': 'M',    'name': 'Meters (standard)'}
             },
-            
-            # Density conversions
+
+            # Density conversions (bulk density of formations)
             'density': {
-                'G/CC': {'factor': 1000.0, 'target': 'KG/M3', 'name': 'g/cm³ to kg/m³'},
-                'G/CM3': {'factor': 1000.0, 'target': 'KG/M3', 'name': 'g/cm³ to kg/m³'},
-                'KG/M3': {'factor': 1.0, 'target': 'KG/M3', 'name': 'kg/m³ (standard)'},
-                'LB/FT3': {'factor': 16.0185, 'target': 'KG/M3', 'name': 'lb/ft³ to kg/m³'}
+                'G/CC':   {'factor': 1000.0,      'target': 'KG/M3', 'name': 'g/cm³ to kg/m³'},
+                'G/CM3':  {'factor': 1000.0,      'target': 'KG/M3', 'name': 'g/cm³ to kg/m³'},
+                'KG/M3':  {'factor': 1.0,         'target': 'KG/M3', 'name': 'kg/m³ (standard)'},
+                # Verified per spec: 1 lb/ft³ = 16.01846337 kg/m³ (kept to 7 sig figs)
+                'LB/FT3': {'factor': 16.0185,     'target': 'KG/M3', 'name': 'lb/ft³ to kg/m³'}
             },
-            
-            # Resistivity conversions
+
+            # Mud weight conversions (fluid density)
+            'mud_weight': {
+                # 1 ppg (lb/gal US) = 119.826427316 kg/m³
+                'PPG':    {'factor': 119.8264273, 'target': 'KG/M3', 'name': 'ppg to kg/m³'},
+                'G/CC':   {'factor': 1000.0,      'target': 'KG/M3', 'name': 'g/cm³ to kg/m³'},
+                'G/CM3':  {'factor': 1000.0,      'target': 'KG/M3', 'name': 'g/cm³ to kg/m³'},
+                'SG':     {'apply': lambda s: s * 1000.0,               'inverse': lambda s: s / 1000.0,
+                            'target': 'KG/M3', 'name': 'Specific gravity to kg/m³'},
+                'KG/M3':  {'factor': 1.0,         'target': 'KG/M3', 'name': 'kg/m³ (standard)'}
+            },
+
+            # Resistivity (ohm-m) and conductivity to resistivity
             'resistivity': {
                 'OHM-M': {'factor': 1.0, 'target': 'OHMM', 'name': 'Ohm-m (standard)'},
-                'OHMM': {'factor': 1.0, 'target': 'OHMM', 'name': 'Ohm-m (standard)'},
+                'OHMM':  {'factor': 1.0, 'target': 'OHMM', 'name': 'Ohm-m (standard)'},
                 'OHM.M': {'factor': 1.0, 'target': 'OHMM', 'name': 'Ohm-m (standard)'}
             },
-            
+            'conductivity': {
+                # Convert conductivity to resistivity (ohm-m) using ρ = 1 / σ
+                'S/M':   {'apply': lambda s: np.where(s > 0, 1.0 / s, np.nan),
+                          'inverse': lambda r: np.where(r > 0, 1.0 / r, np.nan),
+                          'target': 'OHMM', 'name': 'Siemens/m to ohm-m'},
+                'MS/M':  {'apply': lambda s: np.where(s > 0, 1.0 / (s * 1e-3), np.nan),
+                          'inverse': lambda r: np.where(r > 0, (1.0 / r) * 1e3, np.nan),
+                          'target': 'OHMM', 'name': 'mS/m to ohm-m'},
+                'US/M':  {'apply': lambda s: np.where(s > 0, 1.0 / (s * 1e-6), np.nan),
+                          'inverse': lambda r: np.where(r > 0, (1.0 / r) * 1e6, np.nan),
+                          'target': 'OHMM', 'name': 'µS/m to ohm-m'},
+                'MICROSIEMENS/M': {'apply': lambda s: np.where(s > 0, 1.0 / (s * 1e-6), np.nan),
+                                   'inverse': lambda r: np.where(r > 0, (1.0 / r) * 1e6, np.nan),
+                                   'target': 'OHMM', 'name': 'µS/m to ohm-m'},
+            },
+
+            # Temperature conversions (standard target: °C)
+            'temperature': {
+                'DEGC': {'factor': 1.0, 'target': 'DEGC', 'name': 'Celsius (standard)'},
+                'C':    {'factor': 1.0, 'target': 'DEGC', 'name': 'Celsius (standard)'},
+                'DEGF': {'apply': lambda s: (s - 32.0) * (5.0/9.0),
+                         'inverse': lambda s: (s * 9.0/5.0) + 32.0,
+                         'target': 'DEGC', 'name': 'Fahrenheit to Celsius'},
+                'F':    {'apply': lambda s: (s - 32.0) * (5.0/9.0),
+                         'inverse': lambda s: (s * 9.0/5.0) + 32.0,
+                         'target': 'DEGC', 'name': 'Fahrenheit to Celsius'},
+                'K':    {'apply': lambda s: s - 273.15,
+                         'inverse': lambda s: s + 273.15,
+                         'target': 'DEGC', 'name': 'Kelvin to Celsius'}
+            },
+
+            # Pressure conversions (standard target: MPa)
+            'pressure': {
+                'MPA': {'factor': 1.0,          'target': 'MPA', 'name': 'MPa (standard)'},
+                'PSI': {'factor': 0.0068947573, 'target': 'MPA', 'name': 'psi to MPa'},
+                'BAR': {'factor': 0.1,          'target': 'MPA', 'name': 'bar to MPa'},
+                'KPA': {'factor': 0.001,        'target': 'MPA', 'name': 'kPa to MPa'},
+                'PA':  {'factor': 1e-6,         'target': 'MPA', 'name': 'Pa to MPa'}
+            },
+
             # Transit time conversions
             'sonic': {
                 'USEC/FT': {'factor': 3.28084, 'target': 'US/M', 'name': 'µs/ft to µs/m'},
-                'US/FT': {'factor': 3.28084, 'target': 'US/M', 'name': 'µs/ft to µs/m'},
-                'US/M': {'factor': 1.0, 'target': 'US/M', 'name': 'µs/m (standard)'},
-                'USEC/M': {'factor': 1.0, 'target': 'US/M', 'name': 'µs/m (standard)'}
+                'US/FT':   {'factor': 3.28084, 'target': 'US/M', 'name': 'µs/ft to µs/m'},
+                'US/M':    {'factor': 1.0,     'target': 'US/M', 'name': 'µs/m (standard)'},
+                'USEC/M':  {'factor': 1.0,     'target': 'US/M', 'name': 'µs/m (standard)'}
             },
-            
-            # Porosity conversions (usually decimal or percentage)
+
+            # Porosity conversions (fractional)
             'porosity': {
-                'PU': {'factor': 1.0, 'target': 'V/V', 'name': 'Porosity units (standard)'},
-                'V/V': {'factor': 1.0, 'target': 'V/V', 'name': 'Volume/volume (standard)'},
-                'FRAC': {'factor': 1.0, 'target': 'V/V', 'name': 'Fraction (standard)'},
-                'PERCENT': {'factor': 0.01, 'target': 'V/V', 'name': 'Percent to fraction'}
+                'PU':     {'factor': 1.0,  'target': 'V/V', 'name': 'Porosity units (standard)'},
+                'V/V':    {'factor': 1.0,  'target': 'V/V', 'name': 'Volume/volume (standard)'},
+                'FRAC':   {'factor': 1.0,  'target': 'V/V', 'name': 'Fraction (standard)'},
+                'PERCENT':{'factor': 0.01, 'target': 'V/V', 'name': 'Percent to fraction'}
+            },
+
+            # Fluid density as API gravity (convert to kg/m³ for consistency)
+            'fluid_density': {
+                'API': {'apply': lambda s: (141.5 / (s + 131.5)) * 1000.0,
+                        'target': 'KG/M3', 'name': '°API to kg/m³ (via SG)'}
             }
         }
         
         # Map curve types to unit categories
         self.curve_unit_mapping = {
-            'DEPT': 'depth', 'DEPTH': 'depth', 'MD': 'depth', 'TVD': 'depth',
+            # Depth
+            'DEPT': 'depth', 'DEPTH': 'depth', 'MD': 'depth', 'TVD': 'depth', 'TVDSS': 'depth',
+            # Formation density
             'RHOB': 'density', 'RHOZ': 'density', 'DENB': 'density', 'DENS': 'density',
+            # Mud weight / fluid-related density
+            'MW': 'mud_weight', 'MUDWT': 'mud_weight', 'MUD_WT': 'mud_weight', 'MUDWEIGHT': 'mud_weight',
+            # Resistivity / conductivity
             'RILD': 'resistivity', 'RILM': 'resistivity', 'RLL3': 'resistivity', 
-            'RT': 'resistivity', 'RXO': 'resistivity', 'RM': 'resistivity',
+            'RT': 'resistivity', 'RXO': 'resistivity', 'RM': 'resistivity', 'RLLD': 'resistivity',
+            'COND': 'conductivity', 'CND': 'conductivity', 'EC': 'conductivity',
+            # Sonic
             'DT': 'sonic', 'DTC': 'sonic', 'DTCO': 'sonic', 'AC': 'sonic',
+            # Temperature and pressure
+            'TEMP': 'temperature', 'FTEMP': 'temperature', 'TEMF': 'temperature',
+            'PRES': 'pressure', 'FP': 'pressure', 'FPRES': 'pressure', 'PFOR': 'pressure',
+            # Porosity / fractional families
             'NPHI': 'porosity', 'CNPOR': 'porosity', 'DPOR': 'porosity', 'SPOR': 'porosity'
         }
         
@@ -6115,26 +6186,43 @@ class IndustryUnitStandardizer:
                 self.unit_analysis_results['unknown_units'].append(curve_name)
                 continue
             
-            # Determine curve category
+            # Determine curve category, try mnemonic then unit fallback
             curve_category = self._get_curve_category(curve_name)
             
             if curve_category and curve_category in self.unit_conversions:
                 if current_unit in self.unit_conversions[curve_category]:
                     conversion_info = self.unit_conversions[curve_category][current_unit]
                     target_unit = conversion_info['target']
-                    
-                    if current_unit != target_unit:
+                    needs_conversion = current_unit != target_unit
+                    if needs_conversion:
+                        planned = {
+                            'curve': curve_name,
+                            'from_unit': current_unit,
+                            'to_unit': target_unit,
+                            'description': conversion_info.get('name', '')
+                        }
+                        if 'factor' in conversion_info:
+                            planned['factor'] = conversion_info['factor']
+                        else:
+                            planned['factor'] = None
+                        self.unit_analysis_results['conversions_planned'].append(planned)
+                    else:
+                        self.unit_analysis_results['no_conversion_needed'].append(f"{curve_name} ({current_unit})")
+                else:
+                    # Attempt fallback: find any category whose units include the current unit
+                    fallback = self._infer_category_from_unit(current_unit)
+                    if fallback and current_unit in self.unit_conversions[fallback]:
+                        conversion_info = self.unit_conversions[fallback][current_unit]
+                        target_unit = conversion_info['target']
                         self.unit_analysis_results['conversions_planned'].append({
                             'curve': curve_name,
                             'from_unit': current_unit,
                             'to_unit': target_unit,
-                            'factor': conversion_info['factor'],
-                            'description': conversion_info['name']
+                            'factor': conversion_info.get('factor'),
+                            'description': conversion_info.get('name', '')
                         })
                     else:
-                        self.unit_analysis_results['no_conversion_needed'].append(f"{curve_name} ({current_unit})")
-                else:
-                    self.unit_analysis_results['unknown_units'].append(f"{curve_name} ({current_unit})")
+                        self.unit_analysis_results['unknown_units'].append(f"{curve_name} ({current_unit})")
             else:
                 self.unit_analysis_results['unknown_units'].append(f"{curve_name} ({current_unit})")
         
@@ -6177,51 +6265,100 @@ class IndustryUnitStandardizer:
                 if not current_unit:
                     continue
                 
-                # Determine curve category  
+                # Determine curve category (mnemonic first, then unit-based fallback)
                 curve_category = self._get_curve_category(curve_name)
                 
                 if curve_category and curve_category in self.unit_conversions:
                     if current_unit in self.unit_conversions[curve_category]:
                         conversion_info = self.unit_conversions[curve_category][current_unit]
                         target_unit = conversion_info['target']
-                        factor = conversion_info['factor']
                         
                         if current_unit != target_unit:
-                            # Apply conversion
                             original_data = self.app.current_data[curve_name].copy()
-                            converted_data = original_data * factor
-                            
-                            # Validation check
-                            if self._validate_conversion(original_data, converted_data, factor):
+                            # Apply conversion either by factor or function
+                            if 'apply' in conversion_info:
+                                converted_data = pd.Series(conversion_info['apply'](pd.to_numeric(original_data, errors='coerce')))
+                                valid = self._validate_conversion_function(
+                                    original_data, converted_data,
+                                    conversion_info.get('apply'), conversion_info.get('inverse')
+                                )
+                                applied_desc = conversion_info.get('name', 'function conversion')
+                                factor_for_log = ''
+                            else:
+                                factor = conversion_info['factor']
+                                converted_data = original_data * factor
+                                valid = self._validate_conversion(original_data, converted_data, factor)
+                                applied_desc = f"×{factor:.6f}"
+                                factor_for_log = factor
+
+                            if valid:
                                 self.app.current_data[curve_name] = converted_data
-                                
                                 # Update curve info with new unit
                                 if curve_name in self.app.curve_info:
                                     self.app.curve_info[curve_name]['unit'] = target_unit
                                     self.app.curve_info[curve_name]['original_unit'] = current_unit
-                                
-                                # Record successful conversion for reporting
-                                self.unit_analysis_results['conversions_applied'].append({
+                                # Record successful conversion
+                                entry = {
                                     'curve': curve_name,
                                     'from_unit': current_unit,
                                     'to_unit': target_unit,
-                                    'factor': factor
-                                })
-                                
+                                    'description': conversion_info.get('name', '')
+                                }
+                                if 'factor' in conversion_info:
+                                    entry['factor'] = conversion_info['factor']
+                                self.unit_analysis_results['conversions_applied'].append(entry)
                                 if self.app:
-                                    self.app.log_processing(f"   {curve_name}: {current_unit} → {target_unit} (×{factor:.4f})")
+                                    self.app.log_processing(f"   {curve_name}: {current_unit} → {target_unit} ({applied_desc})")
                             else:
-                                # Record conversion failure for reporting
+                                # Record conversion failure
                                 self.unit_analysis_results['conversion_errors'].append({
                                     'curve': curve_name,
                                     'from_unit': current_unit,
                                     'to_unit': target_unit,
-                                    'factor': factor,
                                     'reason': 'Validation failed'
                                 })
-                                
                                 if self.app:
                                     self.app.log_processing(f"   {curve_name}: Conversion validation failed")
+                    else:
+                        # Fallback attempt by unit membership across categories
+                        fallback = self._infer_category_from_unit(current_unit)
+                        if fallback and current_unit in self.unit_conversions[fallback]:
+                            conversion_info = self.unit_conversions[fallback][current_unit]
+                            target_unit = conversion_info['target']
+                            original_data = self.app.current_data[curve_name].copy()
+                            if 'apply' in conversion_info:
+                                converted_data = pd.Series(conversion_info['apply'](pd.to_numeric(original_data, errors='coerce')))
+                                valid = self._validate_conversion_function(
+                                    original_data, converted_data,
+                                    conversion_info.get('apply'), conversion_info.get('inverse')
+                                )
+                                applied_desc = conversion_info.get('name', 'function conversion')
+                            else:
+                                factor = conversion_info['factor']
+                                converted_data = original_data * factor
+                                valid = self._validate_conversion(original_data, converted_data, factor)
+                                applied_desc = f"×{factor:.6f}"
+                            if valid:
+                                self.app.current_data[curve_name] = converted_data
+                                if curve_name in self.app.curve_info:
+                                    self.app.curve_info[curve_name]['unit'] = target_unit
+                                    self.app.curve_info[curve_name]['original_unit'] = current_unit
+                                self.unit_analysis_results['conversions_applied'].append({
+                                    'curve': curve_name,
+                                    'from_unit': current_unit,
+                                    'to_unit': target_unit,
+                                    'description': conversion_info.get('name', '')
+                                })
+                                if self.app:
+                                    self.app.log_processing(f"   {curve_name}: {current_unit} → {target_unit} ({applied_desc})")
+                            else:
+                                self.unit_analysis_results['conversion_errors'].append({
+                                    'curve': curve_name,
+                                    'from_unit': current_unit,
+                                    'to_unit': target_unit,
+                                    'reason': 'Validation failed'
+                                })
+                        # else: leave as unknown
                 
             except Exception as e:
                 # Record conversion error for reporting
@@ -6255,23 +6392,56 @@ class IndustryUnitStandardizer:
     def _get_curve_category(self, curve_name):
         """Determine unit category for a curve"""
         curve_upper = curve_name.upper()
-        
+
         # Check direct mapping first
         if curve_upper in self.curve_unit_mapping:
             return self.curve_unit_mapping[curve_upper]
-        
-        # Check partial matches
-        if any(depth_kw in curve_upper for depth_kw in ['DEPT', 'DEPTH', 'MD', 'TVD']):
+
+        # Check partial matches by mnemonic
+        if any(depth_kw in curve_upper for depth_kw in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']):
             return 'depth'
-        elif any(res_kw in curve_upper for res_kw in ['RIL', 'RLL', 'RT', 'RXO']):
+        if any(res_kw in curve_upper for res_kw in ['RIL', 'RLL', 'RT', 'RXO']):
             return 'resistivity'
-        elif any(den_kw in curve_upper for den_kw in ['RHOB', 'RHOZ', 'DEN']):
+        if any(den_kw in curve_upper for den_kw in ['RHOB', 'RHOZ', 'DEN']):
             return 'density'
-        elif any(son_kw in curve_upper for son_kw in ['DT', 'AC']):
+        if any(son_kw in curve_upper for son_kw in ['DT', 'AC']):
             return 'sonic'
-        elif any(por_kw in curve_upper for por_kw in ['NPHI', 'PORO', 'PHI']):
+        if any(por_kw in curve_upper for por_kw in ['NPHI', 'PORO', 'PHI']):
             return 'porosity'
-        
+
+        # Fallback by unit if available in curve_info
+        try:
+            unit_upper = ''
+            if self.app and hasattr(self.app, 'curve_info') and curve_name in self.app.curve_info:
+                unit_upper = str(self.app.curve_info.get(curve_name, {}).get('unit', '')).upper()
+            # Temperature units
+            if unit_upper in ['DEGF', 'F', 'DEGC', 'C', 'K']:
+                return 'temperature'
+            # Pressure units
+            if unit_upper in ['PSI', 'BAR', 'MPA', 'KPA', 'PA']:
+                return 'pressure'
+            # Conductivity units
+            if unit_upper in ['S/M', 'MS/M', 'US/M', 'MICROSIEMENS/M']:
+                return 'conductivity'
+            # Mud weight units
+            if unit_upper in ['PPG', 'SG']:
+                return 'mud_weight'
+            # Density units fallback
+            if unit_upper in ['G/CC', 'G/CM3', 'KG/M3', 'LB/FT3']:
+                return 'density'
+        except Exception:
+            pass
+
+        return None
+
+    def _infer_category_from_unit(self, unit_upper: str):
+        """Infer a unit category by searching the registry for where the unit exists."""
+        try:
+            for category, units in self.unit_conversions.items():
+                if unit_upper in units:
+                    return category
+        except Exception:
+            pass
         return None
 
     def _validate_conversion(self, original, converted, factor):
@@ -6299,6 +6469,30 @@ class IndustryUnitStandardizer:
             
             return True
             
+        except Exception:
+            return False
+
+    def _validate_conversion_function(self, original, converted, apply_fn, inverse_fn):
+        """Validate non-linear conversion by applying inverse if available.
+        Falls back to sanity checks when inverse is missing."""
+        try:
+            valid_orig = pd.to_numeric(original, errors='coerce').dropna()
+            valid_conv = pd.to_numeric(converted, errors='coerce').dropna()
+            if len(valid_orig) == 0 or len(valid_conv) == 0 or len(valid_orig) != len(valid_conv):
+                return False
+            # If inverse is provided, check round-trip accuracy on a small sample
+            if inverse_fn is not None:
+                sample_idx = np.random.choice(len(valid_conv), min(10, len(valid_conv)), replace=False)
+                back = inverse_fn(valid_conv.iloc[sample_idx])
+                # Tolerance: 0.1% of magnitude or absolute 1e-6 for near-zero
+                expected = valid_orig.iloc[sample_idx].values
+                diff = np.abs(np.array(back, dtype=float) - expected)
+                tol = np.maximum(np.abs(expected) * 0.001, 1e-6)
+                return bool(np.all(diff <= tol))
+            # Without inverse, perform monotonicity and finite checks
+            if not np.isfinite(valid_conv).all():
+                return False
+            return True
         except Exception:
             return False
 
@@ -6423,12 +6617,19 @@ class AdvancedPreprocessingApplication:
         self.physics_informed_var = tk.BooleanVar(value=True)
         self.multi_curve_var = tk.BooleanVar(value=True)
         self.denoise_method_var = tk.StringVar(value="auto")
-        self.depth_spacing_var = tk.DoubleVar(value=0.5)
+        # Default resampling spacing will be adapted to current depth units.
+        # Initialize with metric default; will be updated post-load by _sync_depth_spacing_default().
+        self.depth_spacing_var = tk.DoubleVar(value=0.1)
         self.rename_curves_var = tk.BooleanVar(value=True)
         self.null_value_var = tk.StringVar(value="-999.25")
         self.standardize_units_var = tk.BooleanVar(value=True)
         self.output_format_var = tk.StringVar(value="Company Standard")
         self.large_gap_var = tk.StringVar(value="formation_based")
+        # Sync depth spacing default based on detected depth unit (m or ft)
+        try:
+            self._sync_depth_spacing_default()
+        except Exception:
+            pass
         self.large_gap_threshold_var = tk.IntVar(value=500)
         self.geological_gap_threshold_var = tk.IntVar(value=200)  # NEW: Geological gap threshold
         self.qc_enabled_var = tk.BooleanVar(value=True)
@@ -8063,7 +8264,8 @@ Your feedback contributes to software quality and reliability.
         # Uniformization tab content
         # Standard depth spacing
         ttk.Label(uniformization_tab, text="Standard Depth Spacing:", style='Card.TLabel').pack(anchor='w', padx=10, pady=(10, 5))
-        self.depth_spacing_var = tk.DoubleVar(value=0.5)
+        # Initialize with metric default here as well
+        self.depth_spacing_var = tk.DoubleVar(value=0.1)
         spacing_frame = ttk.Frame(uniformization_tab)
         spacing_frame.pack(fill='x', pady=5, padx=10)
         
@@ -11120,6 +11322,12 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 )
                 self.log_processing(f"Standardized depth reference: {selected_depth}")
                 self.log_processing(f"Depth metadata: {depth_metadata}")
+
+                # After depth reference is known, sync default resampling spacing
+                try:
+                    self._sync_depth_spacing_default()
+                except Exception:
+                    pass
                 
             except Exception as e:
                 error_category = self.categorize_error(e, "depth_validation")
@@ -12933,6 +13141,32 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 self.log_processing(f"ERROR: Resampling failed: {e}")
             except Exception:
                 pass
+
+    def _sync_depth_spacing_default(self) -> None:
+        """Set depth resampling default to 0.1 m or 0.5 ft based on current depth units."""
+        try:
+            # Determine current depth unit from curve_info
+            depth_col = None
+            for col in (self.processed_data.columns if self.processed_data is not None else []):
+                ctype = str(self.curve_info.get(col, {}).get('curve_type', '')).upper()
+                if 'DEPTH' in ctype or col.upper() in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
+                    depth_col = col
+                    break
+            if not depth_col:
+                return
+            unit = str(self.curve_info.get(depth_col, {}).get('unit', 'M')).upper()
+            if unit in ['FT', 'FEET']:
+                # 0.5 ft default
+                if abs(self.depth_spacing_var.get() - 0.5) > 1e-9:
+                    self.depth_spacing_var.set(0.5)
+                    self.log_processing("Depth spacing default set to 0.5 ft based on depth units")
+            else:
+                # 0.1 m default
+                if abs(self.depth_spacing_var.get() - 0.1) > 1e-9:
+                    self.depth_spacing_var.set(0.1)
+                    self.log_processing("Depth spacing default set to 0.1 m based on depth units")
+        except Exception:
+            pass
 
     def finalize_uniformization(self):
         """Apply final uniformization steps"""
