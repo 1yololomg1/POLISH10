@@ -3717,9 +3717,13 @@ class AdvancedSignalProcessor:
             return result
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Denoising failed - operation continues with fallback
-            pass
+            # Log the denoising failure explicitly
+            import warnings
+            warnings.warn(
+                f"Denoising failed for method '{method}': {str(e)}. "
+                f"Returning original unprocessed data. Check data quality and method compatibility.",
+                UserWarning
+            )
             # Return original data with failure indication
             return {
                 'denoised': original_data,
@@ -3892,10 +3896,14 @@ class AdvancedSignalProcessor:
             }
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Wavelet denoising failed: {e}")
-            return {'denoised': data.copy(), 'method': 'wavelet', 'quality': 0.0}
+            # Log wavelet denoising failure explicitly
+            import warnings
+            warnings.warn(
+                f"Wavelet denoising failed: {str(e)}. "
+                f"Returning original data. Verify pywt installation and data compatibility.",
+                UserWarning
+            )
+            return {'denoised': data.copy(), 'method': 'wavelet', 'quality': 0.0, 'error': str(e)}
     
     def _bilateral_filtering_with_real_metrics(self, data: np.ndarray, original_data: np.ndarray) -> Dict[str, Any]:
         """Bilateral filtering with REAL performance assessment"""
@@ -4093,10 +4101,14 @@ class AdvancedSignalProcessor:
             }
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Savitzky-Golay filtering failed: {e}")
-            return {'denoised': data.copy(), 'method': 'savgol', 'quality': 0.0}
+            # Log Savitzky-Golay filtering failure explicitly
+            import warnings
+            warnings.warn(
+                f"Savitzky-Golay filtering failed: {str(e)}. "
+                f"Returning original data. Check window size and polynomial order parameters.",
+                UserWarning
+            )
+            return {'denoised': data.copy(), 'method': 'savgol', 'quality': 0.0, 'error': str(e)}
     
     def _median_filtering_with_real_metrics(self, data: np.ndarray, original_data: np.ndarray) -> Dict[str, Any]:
         """Median filtering with REAL performance assessment"""
@@ -4176,10 +4188,14 @@ class AdvancedSignalProcessor:
             }
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Median filtering failed: {e}")
-            return {'denoised': data.copy(), 'method': 'median', 'quality': 0.0}
+            # Log median filtering failure explicitly
+            import warnings
+            warnings.warn(
+                f"Median filtering failed: {str(e)}. "
+                f"Returning original data. Verify scipy installation and data format.",
+                UserWarning
+            )
+            return {'denoised': data.copy(), 'method': 'median', 'quality': 0.0, 'error': str(e)}
     
     def _adaptive_smoothing_with_real_metrics(self, data: np.ndarray, curve_type: str, original_data: np.ndarray) -> Dict[str, Any]:
         """Adaptive smoothing with REAL performance assessment"""
@@ -4246,10 +4262,14 @@ class AdvancedSignalProcessor:
             }
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Adaptive smoothing failed: {e}")
-            return {'denoised': data.copy(), 'method': 'adaptive', 'quality': 0.0}
+            # Log adaptive smoothing failure explicitly
+            import warnings
+            warnings.warn(
+                f"Adaptive smoothing failed: {str(e)}. "
+                f"Returning original data. Check curve type and data characteristics.",
+                UserWarning
+            )
+            return {'denoised': data.copy(), 'method': 'adaptive', 'quality': 0.0, 'error': str(e)}
     
     def _calculate_noise_reduction(self, original: np.ndarray, filtered: np.ndarray) -> float:
         """Calculate noise reduction in dB"""
