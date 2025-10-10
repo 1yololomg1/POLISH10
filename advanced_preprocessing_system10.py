@@ -2814,15 +2814,31 @@ class AdvancedGapFiller:
         
         # Ensure arrays have the same shape
         if original.shape != filled.shape:
-            # Warning removed - operation continues (array shape mismatch detected)
-            pass
+            # CRITICAL: Shape mismatch indicates bug in gap filling algorithm
+            import warnings
+            warnings.warn(
+                f"CRITICAL: Gap filling produced shape mismatch - "
+                f"original shape {original.shape} vs filled shape {filled.shape}. "
+                f"This indicates a bug in the gap filling algorithm. "
+                f"Returning empty quality metrics. Please report this issue.",
+                UserWarning
+            )
+            # This should be logged for debugging
+            import traceback
+            print(f"ERROR: Shape mismatch in gap filling quality metrics")
+            print(f"  Original shape: {original.shape}")
+            print(f"  Filled shape: {filled.shape}")
+            print(f"  Stack trace:")
+            traceback.print_stack()
+            
             return {
                 'total_gaps_filled': len(gaps_filled),
                 'total_points_filled': sum(gap['gap']['size'] for gap in gaps_filled) if gaps_filled else 0,
                 'average_confidence': 0,
                 'methods_used': [],
                 'average_uncertainty': 0,
-                'data_completeness': 0
+                'data_completeness': 0,
+                'error': f'Shape mismatch: {original.shape} vs {filled.shape}'
             }
         
         # Check for valid confidence and uncertainty values
