@@ -3953,10 +3953,15 @@ class AdvancedSignalProcessor:
             }
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Bilateral filtering failed: {e}")
-            return {'denoised': data.copy(), 'method': 'bilateral', 'quality': 0.0}
+            # Log the error explicitly for debugging
+            import warnings
+            warnings.warn(
+                f"Bilateral filtering failed: {str(e)}. Returning unprocessed data. "
+                f"This may indicate incompatible data or parameter issues.",
+                UserWarning
+            )
+            # Return unprocessed data with quality=0 to indicate failure
+            return {'denoised': data.copy(), 'method': 'bilateral', 'quality': 0.0, 'error': str(e)}
     
     def _bilateral_filter_1d_optimized(self, data: np.ndarray, sigma_s: float, sigma_r: float) -> np.ndarray:
         """Optimized 1D bilateral filter with REAL edge preservation"""
