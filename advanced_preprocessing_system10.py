@@ -96,7 +96,7 @@ from datetime import datetime
 
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 import warnings
 
 
@@ -2765,6 +2765,26 @@ class AdvancedGapFiller:
     
     def __init__(self, params: GapFillingParameters):
         self.params = params
+        # Debug flag for verbose gap decision logging
+        self.debug = False
+
+    def _notify_error(self, title: str, message: str) -> None:
+        """UI-safe error notification hook.
+        If the host application injects a UI scheduler via `ui_notify`, use it; otherwise fallback.
+        """
+        try:
+            if hasattr(self, 'ui_notify') and callable(getattr(self, 'ui_notify')):
+                self.ui_notify(title, message)
+                return
+        except Exception:
+            pass
+        try:
+            # Fallback (may still be called off-thread in rare cases)
+            from tkinter import messagebox
+            messagebox.showerror(title, message)
+        except Exception:
+            # Last-resort: no UI available
+            print(f"[ERROR] {title}: {message}")
 
         
     def fill_gaps(self, data: np.ndarray, curve_type: str, 
@@ -2816,7 +2836,8 @@ class AdvancedGapFiller:
             # Apply curve-specific gap size threshold
             if gap_size <= max_gap_allowed:
                 # Log decision for debugging
-                print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} <= threshold {max_gap_allowed} - FILLING [{gap['gap_type']}]")
+                if self.debug:
+                    print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} <= threshold {max_gap_allowed} - FILLING [{gap['gap_type']}]")
                 
                 # Validate data quality before filling
                 data_quality = PHYSICAL_CONSTANTS.validate_curve_data_enhanced(data, curve_type)
@@ -2829,16 +2850,21 @@ class AdvancedGapFiller:
                 fillable_gaps.append(gap)
             else:
                 # Log decision for debugging  
-                print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} > threshold {max_gap_allowed} - SKIPPING [{gap['gap_type']}]")
+                if self.debug:
+                    print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} > threshold {max_gap_allowed} - SKIPPING [{gap['gap_type']}]")
                 gap['should_fill'] = False
                 gap['skip_reason'] = f"Gap size ({gap_size}) exceeds curve-specific threshold ({max_gap_allowed})"
                 skipped_gaps.append(gap)
         
         # Log gap processing summary
-        print(f"  - {curve_name_for_lookup}: Found {len(gaps)} gaps, filling {len(fillable_gaps)}, skipping {len(skipped_gaps)}")
-        if skipped_gaps:
-            for gap in skipped_gaps:
-                print(f"    - Skipped gap: {gap.get('size', 0)} points (exceeds threshold)")
+        if self.debug:
+            try:
+                print(f"  - {curve_name_for_lookup}: Found {len(gaps)} gaps, filling {len(fillable_gaps)}, skipping {len(skipped_gaps)}")
+                if skipped_gaps:
+                    for gap in skipped_gaps:
+                        print(f"    - Skipped gap: {gap.get('size', 0)} points (exceeds threshold)")
+            except Exception:
+                pass
         
         # Continue with geological context filtering (if any)
         final_gaps = []
@@ -2895,14 +2921,14 @@ class AdvancedGapFiller:
                     all_curves[curve_name] = curve_data
             
             # Add the current curve with a proper name
-            current_curve_name = f"curve_{curve_type}"
+            current_curve_name = curve_name if curve_name else f"curve_{curve_type}"
             all_curves[current_curve_name] = data
             
             # Train the model
             try:
                 rrp_model.train(all_curves)
             except Exception as e:
-                messagebox.showerror("Gap Filling Error", f"Failed to train Rock Properties model: {e}")
+                self._notify_error("Gap Filling Error", f"Failed to train Rock Properties model: {e}")
                 rrp_model = None
         
         for gap in gaps:
@@ -2944,7 +2970,7 @@ class AdvancedGapFiller:
 
                             continue
                     except Exception as e:
-                        messagebox.showerror("Gap Filling Error", f"Failed to fill large gap: {e}")
+                        self._notify_error("Gap Filling Error", f"Failed to fill large gap: {e}")
                         # Fall through to standard methods
             
             # If not a large gap or formation-based filling failed, use standard methods
@@ -2973,7 +2999,7 @@ class AdvancedGapFiller:
 
                 
             except Exception as e:
-                messagebox.showerror("Gap Filling Error", f"Failed to fill gap {gap['start']}-{gap['end']}: {e}")
+                self._notify_error("Gap Filling Error", f"Failed to fill gap {gap['start']}-{gap['end']}: {e}")
                 # Define gap_slice within this exception block
                 gap_slice = slice(gap['start'], gap['end'])
                 # Use simple linear interpolation as fallback
@@ -2985,7 +3011,7 @@ class AdvancedGapFiller:
                     
 
                 except Exception as fe:
-                    messagebox.showerror("Gap Filling Error", f"All gap filling methods failed: {fe}")
+                    self._notify_error("Gap Filling Error", f"All gap filling methods failed: {fe}")
         
         # Calculate quality metrics
         quality_metrics = self._calculate_gap_filling_quality(
@@ -5324,10 +5350,8 @@ class ThreadSafeVisualizationManager:
         self._main_thread_id = threading.current_thread().ident
         self._visualization_queue = queue.Queue()
         self._cleanup_scheduled = False
-        
-        # Configure matplotlib for thread safety
-        matplotlib.use('TkAgg')  # Thread-safe backend
-        plt.ioff()  # Turn off interactive mode
+        # Do not set the backend here. Backend is configured once at top of file
+        plt.ioff()  # Turn off interactive mode for thread-safety
         
     def create_visualization_threadsafe(self, viz_function, *args, **kwargs):
         """Create visualization in thread-safe manner"""
@@ -5343,9 +5367,8 @@ class ThreadSafeVisualizationManager:
     
     def _queue_visualization(self, viz_function, *args, **kwargs):
         """Queue visualization for main thread execution"""
-        
         result_container = {'result': None, 'exception': None, 'complete': False}
-        
+
         def wrapper():
             try:
                 result_container['result'] = viz_function(*args, **kwargs)
@@ -5353,24 +5376,24 @@ class ThreadSafeVisualizationManager:
                 result_container['exception'] = e
             finally:
                 result_container['complete'] = True
-        
+
         # Queue for main thread
         self._visualization_queue.put(wrapper)
-        
-        # Schedule processing in main thread
-        if hasattr(self, 'root'):
-            self.root.after_idle(self._process_visualization_queue)
-        
+
+        # Schedule processing in main thread via injected scheduler
+        if hasattr(self, '_schedule_on_main') and callable(self._schedule_on_main):
+            self._schedule_on_main(self._process_visualization_queue)
+
         # Wait for completion (with timeout)
         timeout = 30  # 30 seconds timeout
         start_time = time.time()
-        
+
         while not result_container['complete'] and (time.time() - start_time) < timeout:
             time.sleep(0.1)
-        
+
         if result_container['exception']:
             raise result_container['exception']
-        
+
         return result_container['result']
     
     def _process_visualization_queue(self):
@@ -6707,6 +6730,13 @@ class AdvancedPreprocessingApplication:
         # Initialize components
         self.mnemonic_library = ComprehensiveMnemonicLibrary()
         self.gap_filler = AdvancedGapFiller(GapFillingParameters())
+        # Inject UI-safe notifier so background operations can surface errors safely
+        try:
+            def ui_notify(title: str, message: str):
+                self.root.after(0, lambda: messagebox.showerror(title, message))
+            setattr(self.gap_filler, 'ui_notify', ui_notify)
+        except Exception:
+            pass
         self.signal_processor = AdvancedSignalProcessor()
         self.ui = PetrophysicalButtons(self.root)
         self.rrp_model = None  # Will be initialized when needed
@@ -6722,7 +6752,15 @@ class AdvancedPreprocessingApplication:
         self.zone_aware_gap_filler = ZoneAwareGapFiller(GapFillingParameters(), self.geological_zone_manager)
         self.petrophysical_validator = PetrophysicalRelationshipValidator()
         self.las_compliance = LASStandardsCompliance()
+        # Initialize thread-safe viz manager and inject scheduler callback
         self.thread_safe_viz = ThreadSafeVisualizationManager()
+        try:
+            # Provide a scheduler hook so the manager doesn't need root reference
+            def _schedule_on_main(func: Callable):
+                self.root.after_idle(func)
+            setattr(self.thread_safe_viz, '_schedule_on_main', _schedule_on_main)
+        except Exception:
+            pass
         self.environmental_corrections = EnvironmentalCorrectionsManager()
         self.scale_aware_processor = ScaleAwareProcessor()
         self.processing_history = ProcessingHistoryManager()
@@ -6766,7 +6804,7 @@ class AdvancedPreprocessingApplication:
             self._sync_depth_spacing_default()
         except Exception:
             pass
-        self.large_gap_threshold_var = tk.IntVar(value=500)
+        # Use instance created during __init__
         self.geological_gap_threshold_var = tk.IntVar(value=200)  # NEW: Geological gap threshold
         self.qc_enabled_var = tk.BooleanVar(value=True)
         self.outlier_detection_var = tk.BooleanVar(value=True)
@@ -7502,6 +7540,12 @@ class AdvancedPreprocessingApplication:
         
         # Create gap filler with appropriate configuration
         self.gap_filler = AdvancedGapFiller(gap_params)
+        try:
+            def ui_notify(title: str, message: str):
+                self.root.after(0, lambda: messagebox.showerror(title, message))
+            setattr(self.gap_filler, 'ui_notify', ui_notify)
+        except Exception:
+            pass
         
         # Configure fallback processing methods
         self._configure_processing_fallbacks(lib_status)
@@ -8774,7 +8818,7 @@ Your feedback contributes to software quality and reliability.
         threshold_frame = ttk.Frame(gap_filling_tab)
         threshold_frame.pack(fill='x', pady=5, padx=10)
         ttk.Label(threshold_frame, text="Large Gap Threshold:").pack(side='left')
-        self.large_gap_threshold_var = tk.IntVar(value=500)
+        # Bind to existing variable initialized in __init__
         threshold_entry = ttk.Entry(threshold_frame, width=6, textvariable=self.large_gap_threshold_var)
         threshold_entry.pack(side='left', padx=5)
         self.large_gap_physical_label = ttk.Label(threshold_frame, text="points (250 m)", foreground='#666666')
@@ -8804,7 +8848,7 @@ Your feedback contributes to software quality and reliability.
         geo_threshold_frame = ttk.Frame(gap_filling_tab)
         geo_threshold_frame.pack(fill='x', pady=5, padx=10)
         
-        self.geological_gap_threshold_var = tk.IntVar(value=200)
+        # Use instance created during __init__
         geo_scale = ttk.Scale(geo_threshold_frame, from_=50, to=2000, 
                              variable=self.geological_gap_threshold_var, 
                              orient='horizontal', length=200)
@@ -9019,7 +9063,8 @@ Your feedback contributes to software quality and reliability.
         viz_display_frame = ttk.Frame(control_frame)
         viz_display_frame.pack(fill='x', pady=(5, 10))
         
-        self.plot_in_new_window_var = tk.BooleanVar(value=True)  # Default to popup for professional workflow
+        # Use existing instance created during __init__
+        # self.plot_in_new_window_var is already initialized; bind to UI only
         ttk.Checkbutton(viz_display_frame, 
                        text="Open plots in new window (recommended for detailed analysis and dual monitors)",
                        variable=self.plot_in_new_window_var).pack(anchor='w')
@@ -10997,113 +11042,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
         except Exception as e:
             self.log_processing(f"Error updating well info display: {e}")
     
-    def _extract_well_information(self, las) -> dict:
-        """Extract critical well identification information from LAS header.
-        
-        This is CRITICAL for safety - ensures users know which well they're working on.
-        Prevents wrong-well processing disasters.
-        
-        Args:
-            las: lasio LAS object
-            
-        Returns:
-            Dictionary with well identification fields
-        """
-        well_info = {
-            'well_name': 'UNKNOWN',
-            'uwi': 'UNKNOWN',
-            'api': 'UNKNOWN',
-            'field': 'UNKNOWN',
-            'company': 'UNKNOWN',
-            'date': 'UNKNOWN',
-            'start_depth': 'UNKNOWN',
-            'stop_depth': 'UNKNOWN',
-            'step': 'UNKNOWN',
-            'null_value': '-999.25',
-            'county': 'UNKNOWN',
-            'state': 'UNKNOWN',
-            'province': 'UNKNOWN',
-            'country': 'UNKNOWN',
-            'depth_unit': 'm'
-        }
-        
-        try:
-            if hasattr(las, 'well') and las.well:
-                for item in las.well:
-                    mnemonic = item.mnemonic.upper()
-                    value = str(item.value).strip()
-                    
-                    # Well name
-                    if mnemonic in ['WELL', 'LEASE', 'NAME']:
-                        well_info['well_name'] = value
-                    
-                    # UWI/API number
-                    elif mnemonic in ['UWI', 'API', 'APINO']:
-                        well_info['uwi'] = value
-                        well_info['api'] = value
-                    
-                    # Field name
-                    elif mnemonic in ['FIELD', 'FLD']:
-                        well_info['field'] = value
-                    
-                    # Company
-                    elif mnemonic in ['COMP', 'COMPANY', 'OPERATOR']:
-                        well_info['company'] = value
-                    
-                    # Date
-                    elif mnemonic in ['DATE', 'DAT']:
-                        well_info['date'] = value
-                    
-                    # Depth range
-                    elif mnemonic in ['STRT', 'START']:
-                        try:
-                            well_info['start_depth'] = f"{float(value):.2f}"
-                        except:
-                            well_info['start_depth'] = value
-                    
-                    elif mnemonic in ['STOP', 'END']:
-                        try:
-                            well_info['stop_depth'] = f"{float(value):.2f}"
-                        except:
-                            well_info['stop_depth'] = value
-                    
-                    elif mnemonic in ['STEP']:
-                        try:
-                            well_info['step'] = f"{float(value):.4f}"
-                        except:
-                            well_info['step'] = value
-                    
-                    # Null value
-                    elif mnemonic in ['NULL']:
-                        well_info['null_value'] = value
-                    
-                    # Location
-                    elif mnemonic in ['CNTY', 'COUNTY']:
-                        well_info['county'] = value
-                    elif mnemonic in ['STAT', 'STATE']:
-                        well_info['state'] = value
-                    elif mnemonic in ['PROV', 'PROVINCE']:
-                        well_info['province'] = value
-                    elif mnemonic in ['CTRY', 'COUNTRY', 'COUN']:
-                        well_info['country'] = value
-                    elif mnemonic in ['LOC', 'LOCATION']:
-                        well_info['location'] = value
-            
-            # Try to get depth unit
-            if hasattr(las, 'curves') and las.curves:
-                for curve in las.curves:
-                    if curve.mnemonic.upper() in ['DEPT', 'DEPTH', 'MD']:
-                        if curve.unit:
-                            well_info['depth_unit'] = str(curve.unit).strip()
-                        break
-            
-            self.log_processing(f"Well Information Extracted: {well_info['well_name']} - {well_info['field']}")
-            
-        except Exception as e:
-            self.log_processing(f"Error extracting well information: {e}")
-        
-        return well_info
-    
     def _extract_lasio_curve_info(self, las):
         """Extract comprehensive curve information from lasio object"""
         try:
@@ -11119,8 +11057,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                             'mnemonic': str(curve.mnemonic),
                             'unit': str(curve.unit) if curve.unit else '',
                             'description': str(curve.descr) if curve.descr else '',
-                            'value': str(curve.value) if curve.value else '',
-                            'section': str(curve.section) if curve.section else ''
+                            'section': str(getattr(curve, 'section', '')) if getattr(curve, 'section', None) else ''
                         }
                     }
                     
@@ -14839,8 +14776,16 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.log_processing(f"Opened {viz_type} visualization in new window{well_text}")
             
         except Exception as e:
-            messagebox.showerror("Popup Visualization Error", 
-                               f"Failed to open visualization in new window:\n{str(e)}\n\nTry unchecking 'Open in new window'")
+            try:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Popup Visualization Error",
+                    f"Failed to open visualization in new window:\n{str(e)}\n\nTry unchecking 'Open in new window'"
+                ))
+            except Exception:
+                messagebox.showerror(
+                    "Popup Visualization Error",
+                    f"Failed to open visualization in new window:\n{str(e)}\n\nTry unchecking 'Open in new window'"
+                )
             self.log_processing(f"Error creating popup visualization: {e}")
     
     # Simplified popup plotting methods (delegate to matplotlib's popup system)
