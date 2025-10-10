@@ -9188,9 +9188,13 @@ Your feedback contributes to software quality and reliability.
                 if memory_after > memory_before:
                     memory_delta = memory_after - memory_before
                     if memory_delta > 50:  # MB
-                        # Warning removed - operation continues
-                        # Operation result handled - continuing safely
-                        pass
+                        import warnings
+                        warnings.warn(
+                            f"Visualization created significant memory delta: {memory_delta:.1f}MB. "
+                            f"Consider simplifying visualization or reducing data size.",
+                            UserWarning
+                        )
+                        self.log_processing(f"High memory delta from visualization: {memory_delta:.1f}MB")
                 
                 # Analytics tracking for enterprise monitoring
                 if BETA_SYSTEM_AVAILABLE and hasattr(self, 'beta_analytics'):
@@ -10921,9 +10925,9 @@ This ensures consistent data interpretation and fixes depth validation issues.
                             break
             
         except Exception as e:
-            # Warning removed - operation continues
-            # Operation result handled - continuing safely
-            pass  # f"Error inferring formation start: {e}")
+            # Log formation inference failure (non-critical, just informational)
+            self.log_processing(f"Note: Could not infer formation start from data: {str(e)}")
+            # This is not a critical error - just means we don't have automatic formation detection
 
     def _update_window_title_with_well_info(self):
         """Update main window title with well identification.
@@ -11398,9 +11402,15 @@ This ensures consistent data interpretation and fixes depth validation issues.
             return '\n'.join(header_lines)
             
         except Exception as e:
-            # Warning removed - operation continues
-            # Operation result handled - continuing safely
-            pass  # f"Error extracting LAS header: {e}")
+            # Log LAS header extraction failure
+            self.log_processing(f"Warning: Error extracting LAS header: {str(e)}")
+            self.log_processing("Using minimal fallback header for preview")
+            import warnings
+            warnings.warn(
+                f"LAS header extraction failed: {str(e)}. "
+                f"Using minimal header. Original LAS preview may be incomplete.",
+                UserWarning
+            )
             # Return a minimal header if extraction fails
             return "~Version Information\nVERS.                          2.0: CWLS Log ASCII Standard - Version 2.0\n~Well Information\n~Curve Information\n~ASCII"
     
