@@ -11429,9 +11429,13 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.log_processing(f"Manual parsing successful: {len(df)} rows, {len(df.columns)} curves")
             return df
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Error in manual LAS parsing: {e}")
+            # Log manual LAS parsing failure with detailed information
+            self.log_processing(f"ERROR: Manual LAS parsing failed: {str(e)}")
+            self.log_processing("Both lasio library and manual parsing have failed.")
+            self.log_processing("Please verify:")
+            self.log_processing("  1. File is a valid LAS format")
+            self.log_processing("  2. File is not corrupted")
+            self.log_processing("  3. File encoding is readable")
             raise ValueError(f"Failed to load LAS file with both lasio and manual parsing: {str(e)}")
 
     def _is_numeric_value(self, value_str):
@@ -11581,15 +11585,20 @@ This ensures consistent data interpretation and fixes depth validation issues.
                         }
                     return df
             except pd.errors.ParserError as e:
-                # Warning removed - operation continues
-                # Operation result handled - continuing safely
-                pass  # f"Failed to parse CSV with delimiter '{delimiter}': {e}")
+                # Continue trying other delimiters - log only if all fail
+                continue
             except Exception as e:
-                # Warning removed - operation continues
-                # Operation result handled - continuing safely
-                pass  # f"Unexpected error parsing CSV with delimiter '{delimiter}': {e}")
+                # Continue trying other delimiters - log only if all fail
+                continue
         
-        raise ValueError("Could not parse CSV file with any standard delimiter")
+        # All delimiters failed - provide helpful error message
+        self.log_processing(f"ERROR: Failed to parse CSV file with any standard delimiter")
+        self.log_processing(f"Tried delimiters: {delimiters}")
+        self.log_processing("Please verify:")
+        self.log_processing("  1. File is valid CSV/TSV format")
+        self.log_processing("  2. File uses standard delimiters (comma, tab, semicolon, pipe)")
+        self.log_processing("  3. File is not corrupted")
+        raise ValueError("Could not parse CSV file with any standard delimiter (tried: , ; \\t |)")
     
     def load_excel_file(self, filepath: str) -> pd.DataFrame:
         """Load Excel file"""
