@@ -6508,6 +6508,10 @@ class AdvancedPreprocessingApplication:
         self.well_datasets: Dict[str, Dict[str, Any]] = {}
         self.active_well_id: Optional[str] = None
         
+        # Popup window registry for proper memory management
+        self.popup_windows = []  # Track all popup visualization windows
+        self.popup_figures = []  # Track figures in popup windows for cleanup
+        
         # Initialize UI variables that are referenced in report generation
         self.max_gap_var = tk.IntVar(value=500)
         self.gap_method_var = tk.StringVar(value="auto")
@@ -9327,6 +9331,26 @@ Your feedback contributes to software quality and reliability.
             
             # Reset RRP model
             self.rrp_model = None
+            
+            # Close all popup visualization windows (prevents memory leaks)
+            if hasattr(self, 'popup_windows') and self.popup_windows:
+                popup_count = len(self.popup_windows)
+                for popup_window in self.popup_windows[:]:  # Copy list to avoid modification during iteration
+                    try:
+                        popup_window.destroy()
+                    except Exception:
+                        pass  # Window might already be closed
+                self.popup_windows = []
+                self.log_processing(f"Closed {popup_count} popup visualization windows")
+            
+            # Clean up popup figures
+            if hasattr(self, 'popup_figures') and self.popup_figures:
+                for fig in self.popup_figures[:]:
+                    try:
+                        plt.close(fig)
+                    except Exception:
+                        pass
+                self.popup_figures = []
             
             # Clear visualization state
             self.cleanup_visualization()
@@ -17530,14 +17554,15 @@ This ensures consistent data interpretation and fixes depth validation issues.
     # ============================================================================
     
     def _create_popup_visualization(self, viz_type, curve):
-        """Open visualization in separate matplotlib popup window.
+        """Open visualization in separate Toplevel window with proper memory management.
         
         Professional workflow: Separate windows allow resizing, zooming, dual monitors,
         and keeping multiple plots open simultaneously - industry standard practice.
+        
+        PROPER IMPLEMENTATION: Uses Toplevel windows with embedded FigureCanvasTkAgg
+        instead of plt.show(block=False) to prevent memory leaks and event loop conflicts.
         """
         try:
-            import matplotlib.pyplot as plt
-            
             # Determine appropriate figure size for viz type
             size_map = {
                 'single_curve': (12, 10),
@@ -17557,18 +17582,28 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             figsize = size_map.get(viz_type, (12, 9))
             
-            # Create new independent matplotlib figure
-            fig = plt.figure(figsize=figsize, num=f"{viz_type} - {curve if curve else 'Multiple Curves'}")
+            # Create Toplevel window (proper approach - no event loop conflicts)
+            popup = tk.Toplevel(self.root)
+            popup.title(f"{viz_type.replace('_', ' ').title()} - {curve if curve else 'Multiple Curves'}")
             
-            # Add well identification to figure title for safety
-            well_text = ""
+            # Add well identification to window title for safety
             if hasattr(self, 'well_info') and self.well_info:
                 well_name = self.well_info.get('well_name', '')
                 if well_name and well_name != 'UNKNOWN':
-                    well_text = f" (Well: {well_name})"
+                    current_title = popup.title()
+                    popup.title(f"{current_title} (Well: {well_name})")
             
-            # Route to appropriate plotting method
-            # Create plot on the new figure
+            # Set window size based on figure size (convert inches to pixels roughly)
+            window_width = int(figsize[0] * 80)
+            window_height = int(figsize[1] * 80) + 100  # Extra for toolbar
+            popup.geometry(f"{window_width}x{window_height}")
+            
+            # Create matplotlib figure (NOT using plt.figure - use Figure class)
+            from matplotlib.figure import Figure
+            fig = Figure(figsize=figsize, dpi=100)
+            fig.patch.set_facecolor('white')
+            
+            # Route to appropriate plotting method on the figure
             if viz_type == "single_curve":
                 self._plot_single_curve_popup(fig, curve)
             elif viz_type == "single_curve_comparison":
@@ -17584,34 +17619,72 @@ This ensures consistent data interpretation and fixes depth validation issues.
             elif viz_type == "unprocessed_curves":
                 self._plot_unprocessed_curves_popup(fig)
             else:
-                # For other types, use simplified popup
+                # For other types, show message
                 ax = fig.add_subplot(111)
                 ax.text(0.5, 0.5, f"Popup visualization for '{viz_type}' not yet implemented.\nUse embedded mode.",
                        ha='center', va='center', fontsize=12)
             
-            # Add well identification to overall title if present
-            if well_text:
-                current_title = fig._suptitle.get_text() if fig._suptitle else ""
-                if current_title:
-                    fig.suptitle(current_title + well_text, fontsize=14, fontweight='bold')
+            # Embed figure in Toplevel window using FigureCanvasTkAgg
+            canvas = FigureCanvasTkAgg(fig, master=popup)
+            canvas.draw()
             
-            # Show in popup window (non-blocking so app remains responsive)
-            plt.show(block=False)
+            # Add matplotlib navigation toolbar
+            toolbar_frame = ttk.Frame(popup)
+            toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+            toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
+            toolbar.update()
             
-            self.log_processing(f"Opened {viz_type} visualization in new window{well_text}")
+            # Pack canvas
+            canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+            
+            # Register popup for cleanup tracking
+            self.popup_windows.append(popup)
+            self.popup_figures.append(fig)
+            
+            # Add close callback for proper cleanup
+            def on_close():
+                try:
+                    # Remove from registries
+                    if popup in self.popup_windows:
+                        self.popup_windows.remove(popup)
+                    if fig in self.popup_figures:
+                        self.popup_figures.remove(fig)
+                    # Clean up canvas
+                    canvas.get_tk_widget().destroy()
+                    # Close figure
+                    plt.close(fig)
+                    # Destroy window
+                    popup.destroy()
+                    # Garbage collection
+                    gc.collect()
+                    self.log_processing(f"Closed popup visualization: {viz_type}")
+                except Exception as cleanup_error:
+                    self.log_processing(f"Error during popup cleanup: {cleanup_error}")
+                    # Force destroy even if cleanup fails
+                    try:
+                        popup.destroy()
+                    except:
+                        pass
+            
+            popup.protocol("WM_DELETE_WINDOW", on_close)
+            
+            self.log_processing(f"Opened {viz_type} visualization in Toplevel window (proper memory management)")
             
         except Exception as e:
+            err_msg = (
+                f"Failed to open visualization in new window:\n{str(e)}\n\n"
+                f"Details: Check that data is loaded and processed.\n"
+                f"Try unchecking 'Open in new window' to use embedded mode."
+            )
             try:
                 self.root.after(0, lambda: messagebox.showerror(
-                    "Popup Visualization Error",
-                    f"Failed to open visualization in new window:\n{str(e)}\n\nTry unchecking 'Open in new window'"
+                    "Popup Visualization Error", err_msg
                 ))
             except Exception:
-                messagebox.showerror(
-                    "Popup Visualization Error",
-                    f"Failed to open visualization in new window:\n{str(e)}\n\nTry unchecking 'Open in new window'"
-                )
-            self.log_processing(f"Error creating popup visualization: {e}")
+                messagebox.showerror("Popup Visualization Error", err_msg)
+            self.log_processing(f"ERROR: Failed to create popup visualization: {e}")
+            import traceback
+            self.log_processing(f"Traceback: {traceback.format_exc()}")
     
     # Simplified popup plotting methods (delegate to matplotlib's popup system)
     def _plot_single_curve_popup(self, fig, curve):
