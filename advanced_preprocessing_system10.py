@@ -6828,35 +6828,73 @@ class AdvancedPreprocessingApplication:
         return False
 
     def standardize_fractional_curves_on_upload(self):
-        """Convert percent-style fractional families to decimals after file load, before validation."""
+        """Convert percent-style fractional families to decimals after file load, before validation.
+        
+        SAFETY FEATURE: Shows preview dialog with conversion details before applying changes.
+        This prevents accidental misinterpretation of data (e.g., impedance as porosity).
+        """
         try:
             self._upload_standardization_note = ""
             if not self.standardize_on_upload_var.get() or self.current_data is None or self.current_data.empty:
                 return
-            converted = []
+            
+            # First pass: identify potential conversions
+            conversion_candidates = []
             for col in list(self.current_data.columns):
                 name_upper = str(col).upper()
                 if name_upper in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
                     continue
+                
                 series = pd.to_numeric(self.current_data[col], errors='coerce')
                 unit = self.curve_info.get(col, {}).get('unit', '')
                 unit_upper = str(unit).upper()
+                
                 should_convert = False
+                reason = ""
+                
                 if '%' in unit_upper or unit_upper in ['PERCENT', 'PCT', 'PERC']:
                     should_convert = True
+                    reason = f"Unit indicates percent ({unit})"
                 elif self._is_fractional_family_name(name_upper):
                     vals = series.dropna()
                     if len(vals) > 10:
                         med = float(np.median(vals))
+                        min_val = float(vals.min())
+                        max_val = float(vals.max())
                         # Heuristic: likely percent if median within (1, 100] and few extreme values
                         if 1.0 < med <= 100.0:
                             should_convert = True
+                            reason = f"Fractional curve with median {med:.2f} (range: {min_val:.2f}-{max_val:.2f})"
+                
                 if should_convert:
-                    self.current_data[col] = series / 100.0
-                    if col in self.curve_info:
-                        self.curve_info[col]['unit'] = 'v/v'
-                        self.curve_info[col]['original_unit'] = unit or self.curve_info[col].get('original_unit', '')
-                    converted.append(col)
+                    conversion_candidates.append({
+                        'name': col,
+                        'unit': unit,
+                        'reason': reason,
+                        'median': float(np.median(series.dropna())) if len(series.dropna()) > 0 else 0,
+                        'range': f"{series.min():.2f} to {series.max():.2f}"
+                    })
+            
+            # If no conversions needed, return early
+            if not conversion_candidates:
+                return
+            
+            # Show confirmation dialog with preview
+            if not self._show_conversion_confirmation_dialog(conversion_candidates):
+                self.log_processing("User declined automatic unit conversion")
+                return
+            
+            # User approved - perform conversions
+            converted = []
+            for candidate in conversion_candidates:
+                col = candidate['name']
+                series = pd.to_numeric(self.current_data[col], errors='coerce')
+                self.current_data[col] = series / 100.0
+                if col in self.curve_info:
+                    self.curve_info[col]['unit'] = 'v/v'
+                    self.curve_info[col]['original_unit'] = candidate['unit'] or self.curve_info[col].get('original_unit', '')
+                converted.append(col)
+            
             if converted:
                 # Refresh stats for display
                 self.ensure_curve_statistics()
@@ -6865,13 +6903,108 @@ class AdvancedPreprocessingApplication:
                 if len(converted) > 10:
                     sample += ' ...'
                 self._upload_standardization_note = note + sample
+                self.log_processing(f"Applied automatic conversions to {len(converted)} curves")
                 # Update status manager if available
                 if hasattr(self, 'status_manager') and self.status_manager:
                     self.status_manager.update_status(self._upload_standardization_note)
         except Exception as e:
+            self.log_processing(f"Upload standardization error: {e}")
             # Update status manager if available
             if hasattr(self, 'status_manager') and self.status_manager:
                 self.status_manager.update_status(f"Upload standardization skipped due to error: {e}")
+    
+    def _show_conversion_confirmation_dialog(self, conversion_candidates):
+        """Show dialog with preview of proposed unit conversions
+        
+        Args:
+            conversion_candidates: List of dicts with conversion details
+            
+        Returns:
+            bool: True if user approves conversions, False otherwise
+        """
+        try:
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Confirm Unit Conversions")
+            dialog.geometry("700x500")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Main frame
+            main_frame = ttk.Frame(dialog, padding=15)
+            main_frame.pack(fill='both', expand=True)
+            
+            # Header
+            header_text = f"Automatic Unit Conversion Preview\n\nDetected {len(conversion_candidates)} curve(s) that appear to be in percent format.\nReview the proposed conversions below:"
+            header_label = ttk.Label(main_frame, text=header_text, wraplength=650, justify='left', font=('TkDefaultFont', 10, 'bold'))
+            header_label.pack(pady=(0, 10), anchor='w')
+            
+            # Scrollable frame for conversion list
+            canvas = tk.Canvas(main_frame, height=300)
+            scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+            scrollable_frame = ttk.Frame(canvas)
+            
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+            
+            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            # Add conversion details
+            for i, candidate in enumerate(conversion_candidates, 1):
+                frame = ttk.LabelFrame(scrollable_frame, text=f"{i}. {candidate['name']}", padding=10)
+                frame.pack(fill='x', pady=5, padx=5)
+                
+                details = (
+                    f"Current Unit: {candidate['unit'] if candidate['unit'] else 'Not specified'}\n"
+                    f"Current Range: {candidate['range']}\n"
+                    f"Median Value: {candidate['median']:.2f}\n"
+                    f"Reason: {candidate['reason']}\n"
+                    f"→ Will convert to: v/v (divide by 100)"
+                )
+                ttk.Label(frame, text=details, justify='left', font=('Courier', 9)).pack(anchor='w')
+            
+            canvas.pack(side='left', fill='both', expand=True)
+            scrollbar.pack(side='right', fill='y')
+            
+            # Warning label
+            warning_text = "⚠️ WARNING: Incorrect conversions can corrupt your data. Verify these conversions are appropriate."
+            warning_label = ttk.Label(main_frame, text=warning_text, foreground='red', wraplength=650, font=('TkDefaultFont', 9, 'bold'))
+            warning_label.pack(pady=10)
+            
+            # Button frame
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill='x', pady=(10, 0))
+            
+            result = {'approved': False}
+            
+            def approve():
+                result['approved'] = True
+                dialog.destroy()
+            
+            def cancel():
+                result['approved'] = False
+                dialog.destroy()
+            
+            ttk.Button(button_frame, text="Cancel - Keep Original Units", command=cancel).pack(side='left', padx=5)
+            ttk.Button(button_frame, text="Apply Conversions", command=approve, style='success.TButton').pack(side='right', padx=5)
+            
+            # Center dialog
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+            y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+            dialog.geometry(f"+{x}+{y}")
+            
+            # Wait for user response
+            dialog.wait_window()
+            
+            return result['approved']
+            
+        except Exception as e:
+            self.log_processing(f"Error showing conversion dialog: {e}")
+            # On error, default to no conversion (safe choice)
+            return False
     
     def convert_columns_percent_to_decimal(self):
         """Convert percent-style columns to decimal format (v/v) for manual conversion."""
@@ -8253,7 +8386,39 @@ Your feedback contributes to software quality and reliability.
     
     def clear_data(self):
         """Clear loaded and processed data and reset UI elements safely."""
+        # Use the comprehensive reset method
+        self.reset_application_state(prompt_if_unsaved=False)
+    
+    def reset_application_state(self, prompt_if_unsaved=True):
+        """Comprehensive application state reset to prevent cross-contamination between wells
+        
+        SAFETY CRITICAL: This method ensures complete cleanup between well loads to prevent:
+        - Processing results from previous well affecting new well
+        - Curve information bleed-over
+        - Visualization artifacts from previous data
+        - Memory leaks from accumulated state
+        
+        Args:
+            prompt_if_unsaved: If True, warn user if processed data exists and hasn't been saved
+        """
+        # Check for unsaved processed data
+        if prompt_if_unsaved and self.processed_data is not None:
+            response = messagebox.askyesno(
+                "Unsaved Processed Data",
+                "You have processed data that hasn't been saved.\n\n"
+                "Loading a new file will discard this data.\n\n"
+                "Continue anyway?",
+                icon='warning'
+            )
+            if not response:
+                return False  # User cancelled
+        
         try:
+            # Log reset for audit trail
+            self.log_processing("="*60)
+            self.log_processing("APPLICATION STATE RESET - Clearing all data")
+            self.log_processing("="*60)
+            
             # Reset core data structures
             self.current_data = None
             self.processed_data = None
@@ -8261,8 +8426,37 @@ Your feedback contributes to software quality and reliability.
             self.processing_results = {}
             self.original_las_header = None
             self._upload_standardization_note = ""
-        except Exception:
-            pass
+            
+            # Reset well information (CRITICAL for safety)
+            self.well_info = {
+                'well_name': 'UNKNOWN',
+                'uwi': 'UNKNOWN',
+                'field': 'UNKNOWN',
+                'company': 'UNKNOWN'
+            }
+            
+            # Reset geological context
+            if hasattr(self, 'geological_context'):
+                self.geological_context = GeologicalContext()
+            
+            # Reset processing history
+            if hasattr(self, 'processing_history'):
+                self.processing_history.clear_history()
+            
+            # Reset RRP model
+            self.rrp_model = None
+            
+            # Clear visualization state
+            self.cleanup_visualization()
+            
+            # Reset window title
+            self.root.title("Advanced Wireline Data Preprocessing System")
+            
+            self.log_processing("Core data structures cleared")
+            
+        except Exception as e:
+            self.log_processing(f"Error during core data reset: {e}")
+            # Don't fail silently - this is critical
         
         # Clear data tree
         try:
@@ -10113,8 +10307,10 @@ This ensures consistent data interpretation and fixes depth validation issues.
             return
         
         try:
-            # Clear existing data before loading new file
-            self.clear_data()
+            # Clear existing data before loading new file with unsaved data check
+            if self.reset_application_state(prompt_if_unsaved=True) == False:
+                # User cancelled due to unsaved data
+                return
             
             self.status_label.config(text="Loading file...")
             self.progress_bar['value'] = 10
