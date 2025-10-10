@@ -6746,6 +6746,9 @@ class AdvancedPreprocessingApplication:
         self.file_path_var = tk.StringVar()  # Initialize file path variable
         self.fig = None  # Initialize matplotlib figure
         self.well_info = {}  # CRITICAL: Well identification for safety
+        # Multiwell state
+        self.well_datasets: Dict[str, Dict[str, Any]] = {}
+        self.active_well_id: Optional[str] = None
         
         # Initialize UI variables that are referenced in report generation
         self.max_gap_var = tk.IntVar(value=500)
@@ -8419,6 +8422,11 @@ Your feedback contributes to software quality and reliability.
         clear_btn = self.ui.create_button(button_frame, text="Clear Data",
                                          command=self.clear_data, button_type='warning', width=15)
         clear_btn.pack(side='left')
+
+        # New: Load multiple files (multiwell)
+        multi_btn = self.ui.create_button(button_frame, text="Load Multiple Files",
+                                         command=self.load_multiple_files, button_type='primary', width=22)
+        multi_btn.pack(side='left', padx=(15, 0))
         
         # CRITICAL: Well Information Card for safety
         well_card, well_content = self.ui.create_card(data_frame, "Well Identification")
@@ -8444,6 +8452,20 @@ Your feedback contributes to software quality and reliability.
         self.depth_range_label = ttk.Label(well_content, text="Depth Range: Not loaded", 
                                            font=('Segoe UI', 9))
         self.depth_range_label.pack(anchor='w', pady=2)
+
+        # New: Loaded Wells manager
+        wells_card, wells_content = self.ui.create_card(data_frame, "Loaded Wells")
+        wells_card.pack(fill='x', pady=(0, 10))
+        wells_toolbar = ttk.Frame(wells_content)
+        wells_toolbar.pack(fill='x', pady=(5, 5))
+        self.well_listbox = tk.Listbox(wells_content, height=6, selectmode='browse')
+        self.well_listbox.pack(fill='x', padx=10, pady=(0, 8))
+        set_active_btn = self.ui.create_button(wells_toolbar, text="Set Active Well",
+                                              command=self.on_set_active_well, button_type='secondary', width=18)
+        set_active_btn.pack(side='left', padx=(0, 10))
+        remove_btn = self.ui.create_button(wells_toolbar, text="Remove Selected",
+                                          command=self.on_remove_selected_wells, button_type='warning', width=18)
+        remove_btn.pack(side='left')
         
         # Data summary section
         summary_card, summary_content = self.ui.create_card(data_frame, "Data Summary")
@@ -8470,6 +8492,303 @@ Your feedback contributes to software quality and reliability.
         """Clear loaded and processed data and reset UI elements safely."""
         # Use the comprehensive reset method
         self.reset_application_state(prompt_if_unsaved=False)
+
+    # ============================
+    # Multiwell management methods
+    # ============================
+    def _snapshot_single_state(self) -> Dict[str, Any]:
+        return {
+            'current_data': self.current_data.copy() if isinstance(self.current_data, pd.DataFrame) else None,
+            'processed_data': self.processed_data.copy() if isinstance(self.processed_data, pd.DataFrame) else None,
+            'curve_info': copy.deepcopy(self.curve_info) if isinstance(self.curve_info, dict) else {},
+            'processing_results': copy.deepcopy(self.processing_results) if isinstance(self.processing_results, dict) else {},
+            'original_las_header': self.original_las_header,
+            'well_info': copy.deepcopy(self.well_info) if isinstance(self.well_info, dict) else {},
+            'file_path': self.file_path_var.get() if hasattr(self, 'file_path_var') else ''
+        }
+
+    def _apply_dataset_to_single_state(self, dataset: Dict[str, Any]) -> None:
+        # Replace current in-memory single-well state with dataset contents
+        self.current_data = dataset.get('current_data')
+        self.processed_data = dataset.get('processed_data')
+        self.curve_info = copy.deepcopy(dataset.get('curve_info', {}))
+        self.processing_results = copy.deepcopy(dataset.get('processing_results', {}))
+        self.original_las_header = dataset.get('original_las_header')
+        self.well_info = copy.deepcopy(dataset.get('well_info', {}))
+        try:
+            self.file_path_var.set(dataset.get('file_path', ''))
+        except Exception:
+            pass
+        # Refresh UI elements tied to single state
+        try:
+            self._update_well_info_display()
+            self.update_curve_options()
+            self.update_data_display()
+        except Exception:
+            pass
+
+    def _dataset_from_current_state(self, file_path: str) -> Dict[str, Any]:
+        return {
+            'file_path': file_path,
+            'current_data': self.current_data.copy() if isinstance(self.current_data, pd.DataFrame) else None,
+            'processed_data': self.processed_data.copy() if isinstance(self.processed_data, pd.DataFrame) else None,
+            'curve_info': copy.deepcopy(self.curve_info) if isinstance(self.curve_info, dict) else {},
+            'processing_results': copy.deepcopy(self.processing_results) if isinstance(self.processing_results, dict) else {},
+            'original_las_header': self.original_las_header,
+            'well_info': copy.deepcopy(self.well_info) if isinstance(self.well_info, dict) else {},
+        }
+
+    def _gen_well_id_from_info(self, filepath: str) -> str:
+        try:
+            uwi = str(self.well_info.get('uwi', '')).strip()
+            name = str(self.well_info.get('well_name', '')).strip()
+            base = os.path.splitext(os.path.basename(filepath or ''))[0]
+            candidate = uwi or name or base or f"well_{len(self.well_datasets)+1}"
+            candidate = candidate.replace(' ', '_')
+        except Exception:
+            candidate = f"well_{len(self.well_datasets)+1}"
+        # Ensure uniqueness
+        unique = candidate
+        idx = 2
+        while unique in self.well_datasets:
+            unique = f"{candidate}_{idx}"
+            idx += 1
+        return unique
+
+    def _save_active_well_to_dataset(self) -> None:
+        try:
+            if not self.active_well_id:
+                return
+            self.well_datasets[self.active_well_id] = self._dataset_from_current_state(
+                self.file_path_var.get() if hasattr(self, 'file_path_var') else ''
+            )
+        except Exception:
+            pass
+
+    def set_active_well(self, well_id: str) -> None:
+        if well_id not in self.well_datasets:
+            messagebox.showwarning("Well Selection", f"Well '{well_id}' not found")
+            return
+        self.active_well_id = well_id
+        self._apply_dataset_to_single_state(self.well_datasets[well_id])
+        try:
+            self.status_label.config(text=f"Active well: {well_id}")
+        except Exception:
+            pass
+
+    def update_well_list_display(self) -> None:
+        try:
+            if not hasattr(self, 'well_listbox') or self.well_listbox is None:
+                return
+            self.well_listbox.delete(0, tk.END)
+            for wid, ds in self.well_datasets.items():
+                wi = ds.get('well_info', {}) or {}
+                label = wi.get('well_name') or wi.get('uwi') or wid
+                rows = len(ds.get('current_data')) if isinstance(ds.get('current_data'), pd.DataFrame) else 0
+                cols = len(ds.get('current_data').columns) if isinstance(ds.get('current_data'), pd.DataFrame) else 0
+                self.well_listbox.insert(tk.END, f"{wid}  |  {label}  |  {rows}x{cols}")
+        except Exception:
+            pass
+
+    def on_set_active_well(self):
+        try:
+            sel = self.well_listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Well Selection", "Select a well from the list")
+                return
+            display = self.well_listbox.get(sel[0])
+            wid = display.split("  |  ")[0]
+            self.set_active_well(wid)
+        except Exception as e:
+            messagebox.showerror("Selection Error", f"Failed to set active well: {e}")
+
+    def on_remove_selected_wells(self):
+        try:
+            sel = self.well_listbox.curselection()
+            if not sel:
+                return
+            display = self.well_listbox.get(sel[0])
+            wid = display.split("  |  ")[0]
+            if wid in self.well_datasets:
+                del self.well_datasets[wid]
+            if self.active_well_id == wid:
+                self.active_well_id = None
+                self.reset_application_state(prompt_if_unsaved=False)
+            self.update_well_list_display()
+        except Exception:
+            pass
+
+    def load_multiple_files(self):
+        try:
+            filetypes = [("LAS files", "*.las"), ("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+            filenames = filedialog.askopenfilenames(title="Select Multiple Data Files", filetypes=filetypes)
+            if not filenames:
+                return
+            # Load each file into datasets without disturbing final active selection until the end
+            first_well_id = None
+            for fp in filenames:
+                try:
+                    # Clear transient state
+                    self.reset_application_state(prompt_if_unsaved=False)
+                    ext = os.path.splitext(fp)[1].lower()
+                    if ext == '.las':
+                        df = self.load_las_file(fp)
+                    elif ext == '.csv':
+                        df = self.load_csv_file(fp)
+                    elif ext in ['.xlsx', '.xls']:
+                        df = self.load_excel_file(fp)
+                    else:
+                        self.log_processing(f"Unsupported file format skipped: {fp}")
+                        continue
+                    self.current_data = df
+                    # Identify curves (lightweight)
+                    self.analyze_curves()
+                    # Build dataset
+                    wid = self._gen_well_id_from_info(fp)
+                    self.well_datasets[wid] = self._dataset_from_current_state(fp)
+                    if first_well_id is None:
+                        first_well_id = wid
+                    self.log_processing(f"Loaded well '{wid}' from {fp}")
+                except Exception as e:
+                    messagebox.showerror("Load Error", f"Failed to load file {fp}: {e}")
+            # Set active to the first loaded well and refresh list
+            if first_well_id:
+                self.set_active_well(first_well_id)
+            self.update_well_list_display()
+        except Exception as e:
+            messagebox.showerror("Load Error", f"Failed to load multiple files: {e}")
+
+    def process_current_well_blocking(self):
+        try:
+            # Spawn processing thread but keep UI responsive
+            t = threading.Thread(target=self.process_data_thread, daemon=True)
+            t.start()
+            while t.is_alive():
+                try:
+                    self.root.update()
+                except Exception:
+                    pass
+                time.sleep(0.05)
+            # Persist results into dataset
+            self._save_active_well_to_dataset()
+        except Exception as e:
+            messagebox.showerror("Processing Error", f"Failed to process well: {e}")
+
+    def process_all_wells(self):
+        try:
+            if not self.well_datasets:
+                messagebox.showwarning("Process All Wells", "No wells loaded. Use 'Load Multiple Files' first.")
+                return
+            ordered_ids = list(self.well_datasets.keys())
+            total = len(ordered_ids)
+            for i, wid in enumerate(ordered_ids, start=1):
+                self.set_active_well(wid)
+                try:
+                    self.status_label.config(text=f"Processing well {i}/{total}: {wid}")
+                except Exception:
+                    pass
+                self.process_current_well_blocking()
+            try:
+                self.status_label.config(text=f"Processed all wells ({total})")
+            except Exception:
+                pass
+        except Exception as e:
+            messagebox.showerror("Process All Wells", f"Failed to process all wells: {e}")
+
+    def _format_cross_well_summary(self) -> str:
+        lines: List[str] = []
+        lines.append("CROSS-WELL SUMMARY")
+        lines.append("-" * 60)
+        if not self.well_datasets:
+            lines.append("No wells loaded.")
+            return "\n".join(lines)
+        # Per-well basic stats
+        lines.append("Per-well overview:")
+        for wid, ds in self.well_datasets.items():
+            wi = ds.get('well_info', {}) or {}
+            label = wi.get('well_name') or wi.get('uwi') or wid
+            df = ds.get('current_data')
+            rows = len(df) if isinstance(df, pd.DataFrame) else 0
+            cols = len(df.columns) if isinstance(df, pd.DataFrame) else 0
+            missing_pct = 0.0
+            try:
+                if isinstance(df, pd.DataFrame) and rows > 0:
+                    missing_pct = float(df.isna().sum().sum()) / float(rows * max(cols, 1)) * 100.0
+            except Exception:
+                missing_pct = 0.0
+            lines.append(f"  • {wid}: {label} — shape {rows}x{cols}, missing {missing_pct:.1f}%")
+
+        # Common curves across wells
+        common_curves = None
+        for ds in self.well_datasets.values():
+            df = ds.get('current_data')
+            if isinstance(df, pd.DataFrame):
+                cols = set(df.columns)
+                common_curves = cols if common_curves is None else (common_curves & cols)
+        if not common_curves:
+            lines.append("")
+            lines.append("No common curve mnemonics across all wells.")
+            return "\n".join(lines)
+        lines.append("")
+        lines.append("Common curves across all wells (aggregate stats):")
+        for curve in sorted(list(common_curves))[:25]:  # limit to first 25 for readability
+            mins, maxs, means = [], [], []
+            for ds in self.well_datasets.values():
+                df = ds.get('current_data')
+                try:
+                    series = pd.to_numeric(df[curve], errors='coerce')
+                    vals = series.dropna()
+                    if len(vals) == 0:
+                        continue
+                    mins.append(float(vals.min()))
+                    maxs.append(float(vals.max()))
+                    means.append(float(vals.mean()))
+                except Exception:
+                    continue
+            if mins and maxs and means:
+                lines.append(f"  - {curve}: min {min(mins):.3g}, max {max(maxs):.3g}, avg(mean) {np.mean(means):.3g}")
+        return "\n".join(lines)
+
+    def show_cross_well_summary(self):
+        try:
+            summary = self._format_cross_well_summary()
+            if hasattr(self, 'report_text') and self.report_text:
+                self.report_text.config(state='normal')
+                self.report_text.delete('1.0', 'end')
+                self.report_text.insert('1.0', summary)
+                self.report_text.config(state='disabled')
+                try:
+                    self.status_label.config(text="Cross-well summary generated")
+                except Exception:
+                    pass
+            else:
+                messagebox.showinfo("Cross-Well Summary", summary)
+        except Exception as e:
+            messagebox.showerror("Cross-Well Summary", f"Failed to generate cross-well summary: {e}")
+
+    def export_all_processed(self):
+        try:
+            if not self.well_datasets:
+                messagebox.showwarning("Export All", "No wells loaded.")
+                return
+            target_dir = filedialog.askdirectory(title="Select export directory")
+            if not target_dir:
+                return
+            exported = 0
+            for wid, ds in self.well_datasets.items():
+                pdf = ds.get('processed_data')
+                if not isinstance(pdf, pd.DataFrame) or pdf.empty:
+                    continue
+                ci = ds.get('curve_info', {}) or {}
+                null_value = str(self.null_value_var.get()) if hasattr(self, 'null_value_var') else '-999.25'
+                las_text = self._generate_las_text_from_dataframe(pdf, ci, null_value, max_rows=None)
+                out_path = os.path.join(target_dir, f"{wid}_processed.las")
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    f.write(las_text)
+                exported += 1
+            messagebox.showinfo("Export All", f"Exported {exported} processed well(s) to {target_dir}")
+        except Exception as e:
+            messagebox.showerror("Export All", f"Failed to export: {e}")
     
     def reset_application_state(self, prompt_if_unsaved=True):
         """Comprehensive application state reset to prevent cross-contamination between wells
@@ -8888,9 +9207,21 @@ Your feedback contributes to software quality and reliability.
         exec_card, exec_content = self.ui.create_card(config_inner, "Execute Processing")
         exec_card.pack(fill='x', pady=10)
         
-        process_btn = self.ui.create_button(exec_content, text="Start Processing",
-                                           command=self.start_processing, button_type='primary', width=25)
-        process_btn.pack(fill='x', pady=10, padx=10)
+        process_btn = self.ui.create_button(exec_content, text="Start Processing (Active Well)",
+                                           command=self.start_processing, button_type='primary', width=30)
+        process_btn.pack(fill='x', pady=(10, 5), padx=10)
+
+        process_all_btn = self.ui.create_button(exec_content, text="Process All Wells",
+                                               command=self.process_all_wells, button_type='success', width=30)
+        process_all_btn.pack(fill='x', pady=(0, 5), padx=10)
+
+        cross_summary_btn = self.ui.create_button(exec_content, text="Cross-Well Summary",
+                                                 command=self.show_cross_well_summary, button_type='secondary', width=30)
+        cross_summary_btn.pack(fill='x', pady=(0, 5), padx=10)
+
+        export_all_btn = self.ui.create_button(exec_content, text="Export All Processed (LAS)",
+                                              command=self.export_all_processed, button_type='secondary', width=30)
+        export_all_btn.pack(fill='x', pady=(0, 10), padx=10)
         
         # Add a separator for visual clarity
         separator = ttk.Separator(exec_content, orient='horizontal')
@@ -10058,6 +10389,14 @@ Your feedback contributes to software quality and reliability.
         export_btn = self.ui.create_button(report_actions_frame, text="Export Data",
                                           command=self.export_data, button_type='primary', width=18)
         export_btn.pack(side='left')
+
+        # New: Cross-well utilities in Report tab
+        cross_btn = self.ui.create_button(report_actions_frame, text="Cross-Well Summary",
+                                         command=self.show_cross_well_summary, button_type='secondary', width=20)
+        cross_btn.pack(side='left', padx=(15, 0))
+        export_all_btn2 = self.ui.create_button(report_actions_frame, text="Export All Processed",
+                                               command=self.export_all_processed, button_type='secondary', width=20)
+        export_all_btn2.pack(side='left', padx=(10, 0))
         
         # Group 2: LAS Preview Actions
         preview_actions_frame = ttk.Frame(control_frame)
