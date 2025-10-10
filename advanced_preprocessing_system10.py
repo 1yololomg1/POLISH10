@@ -4740,8 +4740,12 @@ class GeologicalZoneManager:
         """Detect geological boundaries using gamma ray signature"""
         
         if gamma_ray_curve is None or len(gamma_ray_curve) < 10:
-            # Warning removed - operation continues
-            # Status notification handled - continuing operation
+            import warnings
+            warnings.warn(
+                "Geological boundary detection skipped: Insufficient gamma ray data. "
+                "Zone-aware processing will not be available. Minimum 10 valid points required.",
+                UserWarning
+            )
             return []
         
         # Calculate GR gradient to find sharp changes
@@ -4847,8 +4851,12 @@ class ZoneAwareGapFiller(AdvancedGapFiller):
             boundary_depths = self.zone_manager.detect_geological_boundaries(depth, gamma_ray)
             zones = self.zone_manager.create_zone_masks(depth, boundary_depths)
         else:
-            # Warning removed - operation continues
-            # Status notification handled - continuing operation
+            import warnings
+            warnings.warn(
+                "No gamma ray data available for zone detection. "
+                "Processing entire dataset as a single zone (no boundary detection).",
+                UserWarning
+            )
             zones = [{'zone_id': 0, 'mask': np.ones(len(data), dtype=bool)}]
         
         filled_data = data.copy()
@@ -8355,9 +8363,13 @@ Your feedback contributes to software quality and reliability.
                 memory_usage = process.memory_info().rss / (1024 * 1024)
                 
                 if memory_usage > 1000:  # Over 1GB
-                    # Warning removed - operation continues
-                    # Operation result handled - continuing safely
-                    # Trigger cleanup if needed
+                    import warnings
+                    warnings.warn(
+                        f"High memory usage detected: {memory_usage:.1f}MB. "
+                        f"Triggering garbage collection. Consider closing unused visualizations.",
+                        UserWarning
+                    )
+                    self.log_processing(f"High memory usage: {memory_usage:.1f}MB - running garbage collection")
                     gc.collect()
         except Exception:
             pass  # psutil not available or other issues
@@ -9083,9 +9095,12 @@ Your feedback contributes to software quality and reliability.
             # Phase 1: Resource cleanup with enhanced method
             cleanup_success = self.cleanup_visualization()
             if not cleanup_success:
-                # Warning removed - operation continues
-                # Status notification handled - continuing operation
-                pass
+                import warnings
+                warnings.warn(
+                    "Visualization cleanup reported errors. "
+                    "Memory leaks possible. Check cleanup logs for details.",
+                    UserWarning
+                )
 
             # --- Remove all widgets from viz_content to prevent duplicate toolbars/canvases ---
             if hasattr(self, 'viz_content') and self.viz_content:
