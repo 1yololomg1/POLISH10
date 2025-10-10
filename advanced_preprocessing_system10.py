@@ -7370,14 +7370,24 @@ class AdvancedPreprocessingApplication:
                 cleanup_success = False
 
             if cleanup_success:
-                pass  # debug removed("Visualization cleanup completed successfully")
+                self.log_processing("Visualization cleanup completed successfully")
             else:
-                pass  # warning removed(f"Visualization cleanup completed with errors: {cleanup_errors}")
+                import warnings
+                warnings.warn(
+                    f"Visualization cleanup completed with {len(cleanup_errors)} error(s). "
+                    f"This may cause memory leaks. Errors: {'; '.join(cleanup_errors[:3])}",
+                    UserWarning
+                )
             return cleanup_success
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Critical error in visualization cleanup: {e}")
+            # Log critical visualization cleanup failure
+            import warnings
+            warnings.warn(
+                f"CRITICAL: Visualization cleanup failed completely: {str(e)}. "
+                f"Memory leaks likely. Consider restarting application.",
+                UserWarning
+            )
+            self.log_processing(f"ERROR: Critical visualization cleanup failure: {e}")
             try:
                 plt.close('all')
                 gc.collect()
@@ -7925,19 +7935,28 @@ class AdvancedPreprocessingApplication:
             return self.fig
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Figure creation failed: {e}")
+            # Log figure creation failure and attempt fallback
+            import warnings
+            warnings.warn(
+                f"Primary figure creation failed: {str(e)}. "
+                f"Attempting fallback with minimal settings.",
+                UserWarning
+            )
             
             # Fallback: minimal figure creation
             try:
                 self.fig = Figure(figsize=(8, 6), dpi=72)
-                # Warning removed - operation continues
-                # Status notification handled - continuing operation
+                self.log_processing("Using fallback figure settings due to creation error")
                 return self.fig
             except Exception as fe:
-                # Error handling removed - operation continues safely
-                # Operation result handled - continuing safely
+                # Complete failure - log and return None
+                self.log_processing(f"ERROR: Both primary and fallback figure creation failed: {fe}")
+                import warnings
+                warnings.warn(
+                    f"CRITICAL: Cannot create matplotlib figure. Visualization will not work. "
+                    f"Error: {str(fe)}. Check matplotlib installation.",
+                    UserWarning
+                )
                 self.fig = None
                 return None
     
@@ -7968,16 +7987,24 @@ class AdvancedPreprocessingApplication:
                             pass
                             
                     except Exception as e:
-                        # Scheduled UI update failed - system continues safely
-                        pass
+                        # Log scheduled UI update failure
+                        import warnings
+                        warnings.warn(
+                            f"Scheduled UI update failed for '{update_type}': {str(e)}",
+                            UserWarning
+                        )
                 
                 if hasattr(self, 'root') and self.root.winfo_exists():
                     self.root.after_idle(monitored_update)
                 
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"UI update scheduling failed: {update_type} - {e}")
+            # Log UI update scheduling failure
+            import warnings
+            warnings.warn(
+                f"UI update scheduling failed for '{update_type}': {str(e)}. "
+                f"UI may not reflect current state.",
+                UserWarning
+            )
 
     def _execute_ui_update(self, update_type: str, **kwargs):
         """Execute UI updates with comprehensive validation"""
@@ -8012,14 +8039,21 @@ class AdvancedPreprocessingApplication:
                         self.results_text.see(tk.END)
                         self.results_text.update_idletasks()
                     except tk.TclError as e:
-                        # Debug information removed for security
-                        # Operation result handled - continuing safely
-                        pass
+                        # Tcl error in results text update - widget may be destroyed
+                        import warnings
+                        warnings.warn(
+                            f"Results text update failed (widget may be destroyed): {str(e)}",
+                            UserWarning
+                        )
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"UI update execution failed: {update_type} - {e}")
+            # Log UI update execution failure
+            import warnings
+            warnings.warn(
+                f"UI update execution failed for '{update_type}': {str(e)}. "
+                f"Check widget availability and thread context.",
+                UserWarning
+            )
     
     def _get_memory_usage(self):
         """Get current memory usage in MB for performance monitoring"""
