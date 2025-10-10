@@ -2777,10 +2777,19 @@ class AdvancedGapFiller:
         for gap in gaps:
             gap_size = gap.get('size', gap.get('end', 0) - gap.get('start', 0))
             
+            # NEW: Classify gap type (geological feature vs data error)
+            geological_threshold = self.params.geological_gap_threshold if hasattr(self.params, 'geological_gap_threshold') else 200
+            if gap_size >= geological_threshold:
+                gap['gap_type'] = 'geological'
+                gap['gap_classification'] = f"Geological/logging feature (>={geological_threshold} pts)"
+            else:
+                gap['gap_type'] = 'data_error'
+                gap['gap_classification'] = f"Data error (<{geological_threshold} pts)"
+            
             # Apply curve-specific gap size threshold
             if gap_size <= max_gap_allowed:
                 # Log decision for debugging
-                print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} <= threshold {max_gap_allowed} - FILLING")
+                print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} <= threshold {max_gap_allowed} - FILLING [{gap['gap_type']}]")
                 
                 # Validate data quality before filling
                 data_quality = PHYSICAL_CONSTANTS.validate_curve_data_enhanced(data, curve_type)
@@ -2793,7 +2802,7 @@ class AdvancedGapFiller:
                 fillable_gaps.append(gap)
             else:
                 # Log decision for debugging  
-                print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} > threshold {max_gap_allowed} - SKIPPING")
+                print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} > threshold {max_gap_allowed} - SKIPPING [{gap['gap_type']}]")
                 gap['should_fill'] = False
                 gap['skip_reason'] = f"Gap size ({gap_size}) exceeds curve-specific threshold ({max_gap_allowed})"
                 skipped_gaps.append(gap)
@@ -6418,6 +6427,7 @@ class AdvancedPreprocessingApplication:
         self.output_format_var = tk.StringVar(value="Company Standard")
         self.large_gap_var = tk.StringVar(value="formation_based")
         self.large_gap_threshold_var = tk.IntVar(value=500)
+        self.geological_gap_threshold_var = tk.IntVar(value=200)  # NEW: Geological gap threshold
         self.qc_enabled_var = tk.BooleanVar(value=True)
         self.outlier_detection_var = tk.BooleanVar(value=True)
         self.range_validation_var = tk.BooleanVar(value=True)
@@ -7874,19 +7884,19 @@ Your feedback contributes to software quality and reliability.
         file_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
         
         browse_btn = self.ui.create_button(file_frame, text="Browse", 
-                                          command=self.browse_file, button_type='secondary')
+                                          command=self.browse_file, button_type='secondary', width=15)
         browse_btn.pack(side='right')
         
         # Create a button frame for Load and Clear buttons
         button_frame = ttk.Frame(load_content)
-        button_frame.pack(fill='x', pady=10)
+        button_frame.pack(fill='x', pady=15)
         
         load_btn = self.ui.create_button(button_frame, text="Load & Analyze File",
-                                        command=self.load_file, button_type='success')
-        load_btn.pack(side='left', padx=(0, 10))
+                                        command=self.load_file, button_type='success', width=20)
+        load_btn.pack(side='left', padx=(0, 15))
         
         clear_btn = self.ui.create_button(button_frame, text="Clear Data",
-                                         command=self.clear_data, button_type='warning')
+                                         command=self.clear_data, button_type='warning', width=15)
         clear_btn.pack(side='left')
         
         # Data summary section
@@ -8054,8 +8064,8 @@ Your feedback contributes to software quality and reliability.
         # Move full Units controls into Uniformization section
         try:
             self.unit_standardizer.add_unit_standardization_ui(uniformization_tab)
-        except Exception:
-            pass
+        except Exception as e:
+            self.log_processing(f"Warning: Could not add unit standardization UI: {e}")
 
         # Normalization controls
         norm_card, norm_content = self.ui.create_card(uniformization_tab, "Normalization")
@@ -8083,12 +8093,12 @@ Your feedback contributes to software quality and reliability.
 
         auto_btn = self.ui.create_button(conv_btns, text="Convert % to decimal (auto-detect)",
                                          command=self.convert_columns_percent_to_decimal,
-                                         button_type='primary')
-        auto_btn.pack(side='left', padx=(0, 10))
+                                         button_type='primary', width=28)
+        auto_btn.pack(side='left', padx=(0, 15))
 
         select_btn = self.ui.create_button(conv_btns, text="Select Columns...",
                                            command=self.open_percent_conversion_dialog,
-                                           button_type='secondary')
+                                           button_type='secondary', width=18)
         select_btn.pack(side='left')
         
         # Output format compliance
@@ -8143,6 +8153,37 @@ Your feedback contributes to software quality and reliability.
         threshold_entry = ttk.Entry(threshold_frame, width=6, textvariable=self.large_gap_threshold_var)
         threshold_entry.pack(side='left', padx=5)
         ttk.Label(threshold_frame, text="points").pack(side='left')
+        
+        # Geological gap threshold - NEW FEATURE
+        ttk.Label(gap_filling_tab, text="Geological Gap Threshold:", style='Card.TLabel').pack(anchor='w', pady=(15, 5), padx=10)
+        
+        # Help text
+        help_text = ttk.Label(gap_filling_tab, 
+                             text="Gaps larger than this threshold are considered geological/logging features\n"
+                                  "(e.g., cased holes, interval logging), not data errors.",
+                             foreground='#666666', font=('Segoe UI', 8))
+        help_text.pack(anchor='w', padx=10, pady=(0, 5))
+        
+        # Geological threshold frame with slider
+        geo_threshold_frame = ttk.Frame(gap_filling_tab)
+        geo_threshold_frame.pack(fill='x', pady=5, padx=10)
+        
+        self.geological_gap_threshold_var = tk.IntVar(value=200)
+        geo_scale = ttk.Scale(geo_threshold_frame, from_=50, to=2000, 
+                             variable=self.geological_gap_threshold_var, 
+                             orient='horizontal', length=200)
+        geo_scale.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        
+        # Value display label
+        self.geo_gap_label = ttk.Label(geo_threshold_frame, text="200", width=6)
+        self.geo_gap_label.pack(side='left', padx=(0, 5))
+        ttk.Label(geo_threshold_frame, text="points").pack(side='left')
+        
+        # Update label when scale changes
+        def update_geo_gap_label(*args):
+            self.geo_gap_label.config(text=str(self.geological_gap_threshold_var.get()))
+        
+        self.geological_gap_threshold_var.trace_add("write", update_geo_gap_label)
         
         # Method Priority for normal gaps
         ttk.Label(gap_filling_tab, text="Method Priority:", style='Card.TLabel').pack(anchor='w', pady=(10, 5), padx=10)
@@ -8209,35 +8250,35 @@ Your feedback contributes to software quality and reliability.
         exec_card.pack(fill='x', pady=10)
         
         process_btn = self.ui.create_button(exec_content, text="Start Processing",
-                                           command=self.start_processing, button_type='primary')
+                                           command=self.start_processing, button_type='primary', width=25)
         process_btn.pack(fill='x', pady=10, padx=10)
         
         # Add a separator for visual clarity
         separator = ttk.Separator(exec_content, orient='horizontal')
-        separator.pack(fill='x', pady=5)
+        separator.pack(fill='x', pady=20)
         
         # Add quick visualization buttons for unprocessed curves
         viz_buttons_frame = ttk.Frame(exec_content)
-        viz_buttons_frame.pack(fill='x', pady=10)
+        viz_buttons_frame.pack(fill='x', pady=(10, 10), padx=10)
         
-        ttk.Label(viz_buttons_frame, text="Quick Visualization:", style='Card.TLabel').pack(anchor='w', pady=(0, 5))
+        ttk.Label(viz_buttons_frame, text="Quick Visualization:", style='Card.TLabel').pack(anchor='w', pady=(0, 8))
         
         quick_viz_frame = ttk.Frame(viz_buttons_frame)
         quick_viz_frame.pack(fill='x')
         
         # Button to visualize unprocessed curves
         unprocessed_btn = self.ui.create_button(quick_viz_frame, text="View Unprocessed Curves",
-                                               command=self.quick_view_unprocessed, button_type='secondary')
-        unprocessed_btn.pack(side='left', padx=(0, 10))
+                                               command=self.quick_view_unprocessed, button_type='secondary', width=20)
+        unprocessed_btn.pack(side='left', padx=(0, 15))
         
         # Button to show quality overview
         quality_btn = self.ui.create_button(quick_viz_frame, text="Quality Overview",
-                                           command=self.quick_quality_overview, button_type='secondary')
-        quality_btn.pack(side='left', padx=(0, 10))
+                                           command=self.quick_quality_overview, button_type='secondary', width=18)
+        quality_btn.pack(side='left', padx=(0, 15))
         
         # Button to compare all curves
         compare_btn = self.ui.create_button(quick_viz_frame, text="Compare All Curves",
-                                           command=self.quick_compare_all, button_type='secondary')
+                                           command=self.quick_compare_all, button_type='secondary', width=18)
         compare_btn.pack(side='left')
         
         # Right panel - Progress and results
@@ -8337,7 +8378,7 @@ Your feedback contributes to software quality and reliability.
         
         # Update button
         update_btn = self.ui.create_button(control_frame, text="Update Plot", 
-                                          command=self.update_visualization_enhanced, button_type='secondary')
+                                          command=self.update_visualization_enhanced, button_type='primary', width=25)
         update_btn.pack(pady=10)
         
         # Visualization area
@@ -9322,21 +9363,39 @@ Your feedback contributes to software quality and reliability.
         report_frame = ttk.Frame(self.notebook)
         self.notebook.add(report_frame, text="Report")
         
-        # Report controls
+        # Report controls - redesigned with logical grouping
         control_frame = ttk.Frame(report_frame)
         control_frame.pack(side='top', fill='x', padx=10, pady=10)
         
-        ttk.Button(control_frame, text="Generate Report",
-                   command=self.generate_report).pack(side='left')
+        # Group 1: Report Actions
+        report_actions_frame = ttk.Frame(control_frame)
+        report_actions_frame.pack(side='top', fill='x', pady=(0, 10))
         
-        ttk.Button(control_frame, text="Export Data",
-                   command=self.export_data).pack(side='left', padx=20)
+        ttk.Label(report_actions_frame, text="Report Actions:", 
+                 font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 15))
         
-        ttk.Button(control_frame, text="Preview Original LAS",
-                   command=self.preview_original_las).pack(side='left')
+        generate_btn = self.ui.create_button(report_actions_frame, text="Generate Report",
+                                            command=self.generate_report, button_type='success', width=20)
+        generate_btn.pack(side='left', padx=(0, 15))
         
-        ttk.Button(control_frame, text="Preview Processed LAS",
-                   command=self.preview_processed_las).pack(side='left', padx=10)
+        export_btn = self.ui.create_button(report_actions_frame, text="Export Data",
+                                          command=self.export_data, button_type='primary', width=18)
+        export_btn.pack(side='left')
+        
+        # Group 2: LAS Preview Actions
+        preview_actions_frame = ttk.Frame(control_frame)
+        preview_actions_frame.pack(side='top', fill='x')
+        
+        ttk.Label(preview_actions_frame, text="LAS Preview Actions:", 
+                 font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 15))
+        
+        preview_orig_btn = self.ui.create_button(preview_actions_frame, text="Preview Original LAS",
+                                                command=self.preview_original_las, button_type='secondary', width=22)
+        preview_orig_btn.pack(side='left', padx=(0, 15))
+        
+        preview_proc_btn = self.ui.create_button(preview_actions_frame, text="Preview Processed LAS",
+                                                command=self.preview_processed_las, button_type='secondary', width=22)
+        preview_proc_btn.pack(side='left')
         
         # Create notebook for report tabs
         report_notebook = ttk.Notebook(report_frame)
@@ -10680,15 +10739,35 @@ This ensures consistent data interpretation and fixes depth validation issues.
             stats = info.get('statistics', {})
             
             # Determine quality based on missing percentage using scientific thresholds
+            # NEW: Distinguish between data errors and geological gaps
             missing_pct = stats.get('missing_percent', 0.0)
-            if missing_pct < PetrophysicalConstants.DATA_QUALITY["EXCELLENT"]:
+            
+            # Analyze gap patterns to exclude geological gaps from quality assessment
+            geological_threshold = self.geological_gap_threshold_var.get()
+            gap_sizes = self._count_consecutive_missing(self.current_data[column])
+            
+            # Separate geological gaps from data error gaps
+            geological_gaps = [g for g in gap_sizes if g >= geological_threshold]
+            data_error_gaps = [g for g in gap_sizes if g < geological_threshold]
+            
+            # Calculate adjusted missing percentage (excluding geological gaps)
+            total_points = len(self.current_data[column])
+            data_error_missing = sum(data_error_gaps)
+            adjusted_missing_pct = (data_error_missing / total_points * 100) if total_points > 0 else 0
+            
+            # Determine quality based on adjusted percentage (excludes geological gaps)
+            if adjusted_missing_pct < PetrophysicalConstants.DATA_QUALITY["EXCELLENT"]:
                 quality = "Excellent"
-            elif missing_pct < PetrophysicalConstants.DATA_QUALITY["GOOD"]:
+            elif adjusted_missing_pct < PetrophysicalConstants.DATA_QUALITY["GOOD"]:
                 quality = "Good"
-            elif missing_pct < PetrophysicalConstants.DATA_QUALITY["FAIR"]:
+            elif adjusted_missing_pct < PetrophysicalConstants.DATA_QUALITY["FAIR"]:
                 quality = "Fair"
             else:
                 quality = "Poor"
+            
+            # Add note if geological gaps were excluded
+            if geological_gaps:
+                quality += f" ({len(geological_gaps)} geo)"
             
             # Format range
             if not np.isnan(stats['min']) and not np.isnan(stats['max']):
@@ -12034,6 +12113,43 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 return 0.0
         except Exception:
             return 0.0
+    
+    def _count_consecutive_missing(self, data: pd.Series) -> list:
+        """Count consecutive missing (NaN) values in a series.
+        
+        Returns a list of gap sizes (consecutive missing values).
+        Used to distinguish data errors from geological/logging gaps.
+        
+        Args:
+            data: Pandas Series of curve data
+            
+        Returns:
+            List of integers representing consecutive missing data lengths
+        """
+        try:
+            if data is None or len(data) == 0:
+                return []
+            
+            gap_sizes = []
+            current_gap = 0
+            
+            for value in data:
+                if pd.isna(value):
+                    current_gap += 1
+                else:
+                    if current_gap > 0:
+                        gap_sizes.append(current_gap)
+                        current_gap = 0
+            
+            # Don't forget trailing gap
+            if current_gap > 0:
+                gap_sizes.append(current_gap)
+            
+            return gap_sizes
+            
+        except Exception as e:
+            self.log_processing(f"Error counting consecutive missing: {e}")
+            return []
 
     def detect_curve_category(self, curve_name: str, curve_data: np.ndarray) -> str:
         """Detect the category of a curve based on name and data characteristics."""
@@ -12957,24 +13073,29 @@ This ensures consistent data interpretation and fixes depth validation issues.
     
     def update_visualization_enhanced(self):
         """Enhanced visualization update that includes unprocessed curves"""
-        # Pre-flight validation
-        validation_result = self._validate_visualization_prerequisites()
-        if not validation_result['valid']:
-            messagebox.showwarning("Visualization Warning", validation_result['message'])
-            return
-        
-        viz_type = self.viz_type_var.get()
-        
-        # Add new visualization types for unprocessed curves
-        if viz_type == "unprocessed_curves":
-            self.plot_unprocessed_curves()
-        elif viz_type == "quality_overview":
-            self.plot_curve_quality_overview()
-        elif viz_type == "curve_comparison_all":
-            self.plot_curve_comparison_all()
-        else:
-            # Use existing visualization methods
-            self.update_visualization()
+        try:
+            # Pre-flight validation
+            validation_result = self._validate_visualization_prerequisites()
+            if not validation_result['valid']:
+                messagebox.showwarning("Visualization Warning", validation_result['message'])
+                return
+            
+            viz_type = self.viz_type_var.get()
+            
+            # Add new visualization types for unprocessed curves
+            if viz_type == "unprocessed_curves":
+                self.plot_unprocessed_curves()
+            elif viz_type == "quality_overview":
+                self.plot_curve_quality_overview()
+            elif viz_type == "curve_comparison_all":
+                self.plot_curve_comparison_all()
+            else:
+                # Use existing visualization methods
+                self.update_visualization()
+        except Exception as e:
+            messagebox.showerror("Visualization Error", 
+                               f"Failed to update visualization:\n{str(e)}")
+            self.log_processing(f"Error in update_visualization_enhanced: {e}")
     
     def on_viz_type_change_enhanced(self, event=None):
         """Enhanced visualization type change handler"""
@@ -13001,42 +13122,57 @@ This ensures consistent data interpretation and fixes depth validation issues.
     
     def quick_view_unprocessed(self):
         """Quick access to view unprocessed curves from the data loading tab"""
-        if self.current_data is None:
-            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
-            return
-        
-        # Switch to visualization tab and set the visualization type
-        self.notebook.select(2)  # Visualization tab (0-indexed)
-        self.viz_type_var.set("unprocessed_curves")
-        
-        # Update the visualization
-        self.update_visualization_enhanced()
+        try:
+            if self.current_data is None:
+                messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
+                return
+            
+            # Switch to visualization tab and set the visualization type
+            self.notebook.select(2)  # Visualization tab (0-indexed)
+            self.viz_type_var.set("unprocessed_curves")
+            
+            # Update the visualization
+            self.update_visualization_enhanced()
+        except Exception as e:
+            messagebox.showerror("Visualization Error", 
+                               f"Failed to display unprocessed curves:\n{str(e)}")
+            self.log_processing(f"Error in quick_view_unprocessed: {e}")
     
     def quick_quality_overview(self):
         """Quick access to quality overview from the data loading tab"""
-        if self.current_data is None:
-            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
-            return
-        
-        # Switch to visualization tab and set the visualization type
-        self.notebook.select(2)  # Visualization tab (0-indexed)
-        self.viz_type_var.set("quality_overview")
-        
-        # Update the visualization
-        self.update_visualization_enhanced()
+        try:
+            if self.current_data is None:
+                messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
+                return
+            
+            # Switch to visualization tab and set the visualization type
+            self.notebook.select(2)  # Visualization tab (0-indexed)
+            self.viz_type_var.set("quality_overview")
+            
+            # Update the visualization
+            self.update_visualization_enhanced()
+        except Exception as e:
+            messagebox.showerror("Visualization Error", 
+                               f"Failed to display quality overview:\n{str(e)}")
+            self.log_processing(f"Error in quick_quality_overview: {e}")
     
     def quick_compare_all(self):
         """Quick access to compare all curves from the data loading tab"""
-        if self.current_data is None:
-            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
-            return
-        
-        # Switch to visualization tab and set the visualization type
-        self.notebook.select(2)  # Visualization tab (0-indexed)
-        self.viz_type_var.set("curve_comparison_all")
-        
-        # Update the visualization
-        self.update_visualization_enhanced()
+        try:
+            if self.current_data is None:
+                messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
+                return
+            
+            # Switch to visualization tab and set the visualization type
+            self.notebook.select(2)  # Visualization tab (0-indexed)
+            self.viz_type_var.set("curve_comparison_all")
+            
+            # Update the visualization
+            self.update_visualization_enhanced()
+        except Exception as e:
+            messagebox.showerror("Visualization Error", 
+                               f"Failed to compare curves:\n{str(e)}")
+            self.log_processing(f"Error in quick_compare_all: {e}")
 
     def run(self):
         """Run the application"""
