@@ -17563,6 +17563,24 @@ This ensures consistent data interpretation and fixes depth validation issues.
         instead of plt.show(block=False) to prevent memory leaks and event loop conflicts.
         """
         try:
+            # Validate data is available
+            if self.processed_data is None and self.current_data is None:
+                messagebox.showwarning("No Data", "Please load and process data before creating visualizations.")
+                return
+            
+            # Validate curve exists if needed
+            if curve:
+                data_available = False
+                if self.processed_data is not None and curve in self.processed_data.columns:
+                    data_available = True
+                elif self.current_data is not None and curve in self.current_data.columns:
+                    data_available = True
+                
+                if not data_available:
+                    messagebox.showwarning("Curve Not Found", 
+                                         f"Selected curve '{curve}' not found in available data.")
+                    return
+            
             # Determine appropriate figure size for viz type
             size_map = {
                 'single_curve': (12, 10),
@@ -17649,17 +17667,28 @@ This ensures consistent data interpretation and fixes depth validation issues.
                         self.popup_windows.remove(popup)
                     if fig in self.popup_figures:
                         self.popup_figures.remove(fig)
-                    # Clean up canvas
-                    canvas.get_tk_widget().destroy()
-                    # Close figure
-                    plt.close(fig)
+                    # Clean up canvas and toolbar
+                    try:
+                        toolbar.destroy()
+                    except:
+                        pass
+                    try:
+                        canvas.get_tk_widget().destroy()
+                    except:
+                        pass
+                    # Close figure properly (import plt here to ensure availability)
+                    try:
+                        import matplotlib.pyplot as plt
+                        plt.close(fig)
+                    except:
+                        pass
                     # Destroy window
                     popup.destroy()
                     # Garbage collection
                     gc.collect()
                     self.log_processing(f"Closed popup visualization: {viz_type}")
                 except Exception as cleanup_error:
-                    self.log_processing(f"Error during popup cleanup: {cleanup_error}")
+                    self.log_processing(f"Warning during popup cleanup: {cleanup_error}")
                     # Force destroy even if cleanup fails
                     try:
                         popup.destroy()
@@ -17691,13 +17720,20 @@ This ensures consistent data interpretation and fixes depth validation issues.
         """Plot single curve in popup window"""
         ax = fig.add_subplot(111)
         
-        # Get data and plot (simplified version for popup)
-        if curve in self.processing_results:
+        # Get data and plot - check processed first, then current
+        if self.processing_results and curve in self.processing_results:
             data = self.processing_results[curve]['final_data']
             color, status = 'blue', 'Processed'
-        else:
+        elif self.processed_data is not None and curve in self.processed_data.columns:
+            data = self.processed_data[curve].values
+            color, status = 'green', 'Processed'
+        elif self.current_data is not None and curve in self.current_data.columns:
             data = self.current_data[curve].values
             color, status = 'red', 'Original'
+        else:
+            ax.text(0.5, 0.5, f"Curve '{curve}' not found in data", 
+                   ha='center', va='center', fontsize=12)
+            return
         
         depth = self._get_depth_array()
         ax.plot(data, depth, color=color, linewidth=2, label=status)
@@ -17877,25 +17913,37 @@ This ensures consistent data interpretation and fixes depth validation issues.
     
     def _get_depth_array(self) -> np.ndarray:
         """Get depth array for plotting with proper fallback handling.
-        
+
+        Prefers processed_data when available, otherwise current_data.
+
         Returns:
             np.ndarray: Depth array from data if available, otherwise index array.
         """
         try:
-            if not hasattr(self, 'current_data') or self.current_data is None:
+            data_source = None
+            if hasattr(self, 'processed_data') and self.processed_data is not None:
+                data_source = self.processed_data
+            elif hasattr(self, 'current_data') and self.current_data is not None:
+                data_source = self.current_data
+
+            if data_source is None:
                 return np.arange(100)  # Fallback for no data
-            
-            # Search for depth column in current data
-            for col in self.current_data.columns:
+
+            # Search for depth column
+            for col in data_source.columns:
                 curve_type = self.curve_info.get(col, {}).get('curve_type', '')
-                if 'DEPTH' in curve_type.upper() or 'DEPT' in col.upper():
-                    depth = self.current_data[col].values
-                    # Validate depth array is not empty
+                col_upper = col.upper()
+                if (
+                    'DEPTH' in str(curve_type).upper()
+                    or 'DEPT' in col_upper
+                    or col_upper in ['DEPT', 'DEPTH', 'MD', 'TVD']
+                ):
+                    depth = data_source[col].values
                     if len(depth) > 0:
                         return depth
-            
+
             # Fallback to index-based depth
-            return np.arange(len(self.current_data))
+            return np.arange(len(data_source))
         except Exception as e:
             self.log_processing(f"Warning: Error getting depth array: {e}")
             return np.arange(100)  # Safe fallback
