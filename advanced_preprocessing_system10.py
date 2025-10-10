@@ -2677,6 +2677,32 @@ class GapClassificationResult:
         self.confidence = confidence
         self.reason = reason
 
+@dataclass
+class DepthValidationResult:
+    """Result of depth curve validation with detailed feedback"""
+    is_valid: bool
+    failure_reason: str = ""
+    failure_details: dict = field(default_factory=dict)
+    remediation_steps: List[str] = field(default_factory=list)
+    
+    def get_user_message(self) -> str:
+        """Generate user-friendly error message with remediation steps"""
+        if self.is_valid:
+            return "Depth validation passed"
+        
+        message = f"Depth Validation Failed: {self.failure_reason}\n\n"
+        
+        if self.failure_details:
+            message += "Details:\n"
+            for key, value in self.failure_details.items():
+                message += f"  - {key}: {value}\n"
+        
+        if self.remediation_steps:
+            message += "\nRecommended Actions:\n"
+            for i, step in enumerate(self.remediation_steps, 1):
+                message += f"  {i}. {step}\n"
+        
+        return message
 
 from typing import Tuple
 
@@ -4448,57 +4474,132 @@ class DepthValidationManager:
         
         # Validate each candidate
         valid_depth = None
+        validation_failures = {}
+        
         for candidate in depth_candidates:
-            if self._validate_depth_curve(data[candidate]):
+            validation_result = self._validate_depth_curve(data[candidate])
+            if validation_result.is_valid:
                 valid_depth = candidate
                 break
+            else:
+                validation_failures[candidate] = validation_result
         
         if not valid_depth:
-            raise ValueError(
-                f"CRITICAL ERROR: Found depth curves {depth_candidates} but none are valid.\n"
-                "Depth must be monotonically increasing with reasonable intervals.\n"
-                "Please verify data quality before processing."
-            )
+            # Build detailed error message with all validation failures
+            error_msg = f"CRITICAL ERROR: Found depth curves {depth_candidates} but none passed validation.\n\n"
+            
+            for curve_name, result in validation_failures.items():
+                error_msg += f"\n{curve_name} VALIDATION FAILURE:\n"
+                error_msg += result.get_user_message()
+                error_msg += "\n" + "="*60 + "\n"
+            
+            raise ValueError(error_msg)
         
         return valid_depth
     
     def _validate_depth_curve(self, depth_data):
-        """Validate depth curve meets industry standards"""
+        """Validate depth curve meets industry standards
+        
+        Returns:
+            DepthValidationResult: Detailed validation result with failure reasons and remediation steps
+        """
         clean_depth = depth_data.dropna()
         
+        # Check sufficient data points
         if len(clean_depth) < 10:
-            return False
+            return DepthValidationResult(
+                is_valid=False,
+                failure_reason="Insufficient data points for depth validation",
+                failure_details={
+                    "Valid points": len(clean_depth),
+                    "Minimum required": 10,
+                    "Total points": len(depth_data),
+                    "Missing points": len(depth_data) - len(clean_depth)
+                },
+                remediation_steps=[
+                    "Check if depth curve is severely corrupted or mostly null values",
+                    "Verify correct depth column was selected",
+                    "Consider manual data repair if this is the only available depth curve"
+                ]
+            )
         
         # Check monotonic increasing
         if not clean_depth.is_monotonic_increasing:
-            # Error handling removed - operation continues safely
-            # Depth validation failed - non-monotonic sequence detected
-            pass
-            return False
+            non_monotonic_indices = []
+            for i in range(1, len(clean_depth)):
+                if clean_depth.iloc[i] <= clean_depth.iloc[i-1]:
+                    non_monotonic_indices.append(i)
+            
+            return DepthValidationResult(
+                is_valid=False,
+                failure_reason="Depth curve is not monotonically increasing",
+                failure_details={
+                    "Non-monotonic points": len(non_monotonic_indices),
+                    "First violation at index": non_monotonic_indices[0] if non_monotonic_indices else "N/A",
+                    "Depth range": f"{clean_depth.min():.2f} to {clean_depth.max():.2f}m"
+                },
+                remediation_steps=[
+                    "Check for depth reversals or duplicated depth values",
+                    "Verify depth curve was not corrupted during data transfer",
+                    "Consider sorting depth data if order is simply reversed",
+                    "Check if multiple logging runs were concatenated incorrectly"
+                ]
+            )
         
         # Check reasonable interval
         total_interval = clean_depth.max() - clean_depth.min()
-        if total_interval < self.depth_validation_rules['min_interval']:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Depth interval {total_interval}m too small for reservoir analysis")
-            return False
+        min_interval = self.depth_validation_rules['min_interval']
+        if total_interval < min_interval:
+            return DepthValidationResult(
+                is_valid=False,
+                failure_reason="Depth interval too small for reservoir analysis",
+                failure_details={
+                    "Actual interval": f"{total_interval:.2f}m",
+                    "Minimum required": f"{min_interval:.2f}m",
+                    "Start depth": f"{clean_depth.min():.2f}m",
+                    "End depth": f"{clean_depth.max():.2f}m"
+                },
+                remediation_steps=[
+                    f"Ensure logged interval is at least {min_interval}m for meaningful analysis",
+                    "Check if this is core data (different requirements) or incomplete log",
+                    "Verify depth units are correct (meters vs feet)",
+                    "Consider if this is a test log or calibration run"
+                ]
+            )
         
-        # Check step sizes
+        # Check step sizes (warning only, not failure)
         steps = clean_depth.diff().dropna()
         max_step = steps.max()
-        if max_step > self.depth_validation_rules['max_step']:
-            pass  # warning removed(f"Large depth step detected: {max_step}m")
+        max_allowed_step = self.depth_validation_rules['max_step']
+        if max_step > max_allowed_step:
+            import warnings
+            warnings.warn(
+                f"Large depth step detected: {max_step:.2f}m (max recommended: {max_allowed_step:.2f}m). "
+                f"This may indicate gaps in logging or tool malfunctions.",
+                UserWarning
+            )
         
         # Check reasonable range
         min_range, max_range = self.depth_validation_rules['reasonable_range']
         if clean_depth.min() < min_range or clean_depth.max() > max_range:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Depth range {clean_depth.min()}-{clean_depth.max()} outside reasonable limits")
-            return False
+            return DepthValidationResult(
+                is_valid=False,
+                failure_reason="Depth range outside reasonable limits for wireline logging",
+                failure_details={
+                    "Actual range": f"{clean_depth.min():.2f} to {clean_depth.max():.2f}m",
+                    "Acceptable range": f"{min_range:.2f} to {max_range:.2f}m",
+                    "Minimum depth": f"{clean_depth.min():.2f}m (limit: {min_range:.2f}m)",
+                    "Maximum depth": f"{clean_depth.max():.2f}m (limit: {max_range:.2f}m)"
+                },
+                remediation_steps=[
+                    "Verify depth units (meters vs feet) - incorrect units are common",
+                    "Check if depth reference is correct (KB, GL, MSL, etc.)",
+                    "Confirm this is wireline log data, not seismic or other data type",
+                    "Review data source for depth datum corrections needed"
+                ]
+            )
         
-        return True
+        return DepthValidationResult(is_valid=True)
 
 #=============================================================================
 # RESERVOIR DEPTH MANAGER
@@ -10722,6 +10823,156 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     
         except Exception as e:
             self.log_processing(f"Warning: Could not extract lasio curve info: {e}")
+    
+    def _extract_well_information(self, las=None):
+        """Extract critical well identification information from LAS file
+        
+        SAFETY CRITICAL: This information prevents well confusion and ensures
+        users know which well they're working with at all times.
+        
+        Args:
+            las: lasio LAS object (if available)
+            
+        Returns:
+            dict: Well identification information
+        """
+        well_info = {
+            'well_name': 'UNKNOWN',
+            'uwi': 'UNKNOWN',
+            'field': 'UNKNOWN',
+            'company': 'UNKNOWN',
+            'date': 'UNKNOWN',
+            'null_value': '-999.25',
+            'start_depth': 'UNKNOWN',
+            'stop_depth': 'UNKNOWN',
+            'step': 'UNKNOWN',
+            'depth_unit': 'm',
+            'location': {},
+            'api_number': 'UNKNOWN',
+            'county': 'UNKNOWN',
+            'state': 'UNKNOWN',
+            'country': 'UNKNOWN'
+        }
+        
+        if las is None:
+            return well_info
+        
+        try:
+            # Extract from LAS well section
+            if hasattr(las, 'well'):
+                well_section = las.well
+                
+                # Standard LAS parameters
+                param_mapping = {
+                    'WELL': 'well_name',
+                    'UWI': 'uwi',
+                    'FIELD': 'field',
+                    'COMP': 'company',
+                    'DATE': 'date',
+                    'NULL': 'null_value',
+                    'STRT': 'start_depth',
+                    'STOP': 'stop_depth',
+                    'STEP': 'step',
+                    'API': 'api_number',
+                    'CNTY': 'county',
+                    'STAT': 'state',
+                    'CTRY': 'country',
+                    'LOC': 'location_string',
+                    'LAT': 'latitude',
+                    'LON': 'longitude',
+                    'LONG': 'longitude',
+                    'LATI': 'latitude'
+                }
+                
+                # Try to extract each parameter
+                for las_param, dict_key in param_mapping.items():
+                    try:
+                        if hasattr(well_section, las_param):
+                            value = getattr(well_section, las_param)
+                            if hasattr(value, 'value'):
+                                value = value.value
+                            if value not in [None, '', 'None', 'NONE']:
+                                well_info[dict_key] = str(value).strip()
+                        # Also try alternate forms
+                        alternate_key = las_param.lower()
+                        if alternate_key in well_section:
+                            value = well_section[alternate_key].value
+                            if value not in [None, '', 'None', 'NONE']:
+                                well_info[dict_key] = str(value).strip()
+                    except (AttributeError, KeyError):
+                        continue
+                
+                # Extract depth unit from STRT or STOP
+                try:
+                    if hasattr(well_section, 'STRT') and hasattr(well_section.STRT, 'unit'):
+                        unit = well_section.STRT.unit
+                        if unit:
+                            well_info['depth_unit'] = str(unit).strip()
+                except (AttributeError, KeyError):
+                    pass
+            
+            # Build location dict if we have coordinates
+            if 'latitude' in well_info and well_info.get('latitude') != 'UNKNOWN':
+                try:
+                    well_info['location']['latitude'] = float(well_info['latitude'])
+                except (ValueError, TypeError):
+                    pass
+            
+            if 'longitude' in well_info and well_info.get('longitude') != 'UNKNOWN':
+                try:
+                    well_info['location']['longitude'] = float(well_info['longitude'])
+                except (ValueError, TypeError):
+                    pass
+            
+            # Format depth values with units
+            for depth_key in ['start_depth', 'stop_depth']:
+                if well_info[depth_key] != 'UNKNOWN':
+                    try:
+                        depth_val = float(well_info[depth_key])
+                        well_info[depth_key] = f"{depth_val:.2f} {well_info['depth_unit']}"
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Format step value
+            if well_info['step'] != 'UNKNOWN':
+                try:
+                    step_val = float(well_info['step'])
+                    well_info['step'] = f"{step_val:.4f} {well_info['depth_unit']}"
+                except (ValueError, TypeError):
+                    pass
+            
+            # Log extraction success
+            self.log_processing(f"Well Information Extracted:")
+            self.log_processing(f"  Well Name: {well_info['well_name']}")
+            self.log_processing(f"  UWI: {well_info['uwi']}")
+            self.log_processing(f"  Field: {well_info['field']}")
+            self.log_processing(f"  Depth Range: {well_info['start_depth']} to {well_info['stop_depth']}")
+            
+        except Exception as e:
+            self.log_processing(f"Error extracting well information: {e}")
+            # Return default values on error
+        
+        return well_info
+    
+    def _update_window_title_with_well_info(self):
+        """Update main window title to include well name for safety"""
+        try:
+            if hasattr(self, 'well_info') and self.well_info:
+                well_name = self.well_info.get('well_name', 'UNKNOWN')
+                if well_name and well_name != 'UNKNOWN':
+                    self.root.title(f"Advanced Wireline Data Preprocessing System - Well: {well_name}")
+                else:
+                    self.root.title("Advanced Wireline Data Preprocessing System")
+            else:
+                self.root.title("Advanced Wireline Data Preprocessing System")
+        except Exception as e:
+            self.log_processing(f"Warning: Could not update window title: {e}")
+    
+    def _update_well_info_display(self):
+        """Update well information display in Data Tab"""
+        # This will be implemented when we add the UI component to the data tab
+        # For now, just ensure well_info is available
+        pass
     
 
     
