@@ -2693,6 +2693,7 @@ class GapFillingParameters:
     time_series_order: Tuple[int, int, int] = (2, 1, 2)
     geological_context_aware: bool = True
     min_formation_penetration: float = 10.0  # meters
+    geological_gap_threshold: int = 200  # NEW: Threshold to distinguish geological gaps from data errors
 class AdvancedGapFiller:
     """
     Sophisticated gap filling engine with multiple advanced algorithms
@@ -2880,7 +2881,8 @@ class AdvancedGapFiller:
         
         for gap in gaps:
             if gap['size'] > self.params.max_gap_size:
-                messagebox.showwarning("Gap Size Warning", f"Gap size {gap['size']} exceeds maximum {self.params.max_gap_size}")
+                # Log to report instead of showing popup
+                self.status_manager.update_status(f"⚠ Gap size {gap['size']} exceeds maximum {self.params.max_gap_size} - skipping")
                 continue
                 
             # Check if this is a large gap needing special treatment
@@ -6413,6 +6415,7 @@ class AdvancedPreprocessingApplication:
         self.original_las_header = None  # Initialize LAS header storage
         self.file_path_var = tk.StringVar()  # Initialize file path variable
         self.fig = None  # Initialize matplotlib figure
+        self.well_info = {}  # CRITICAL: Well identification for safety
         
         # Initialize UI variables that are referenced in report generation
         self.max_gap_var = tk.IntVar(value=500)
@@ -6436,6 +6439,7 @@ class AdvancedPreprocessingApplication:
         self.confidence_intervals_var = tk.BooleanVar(value=True)
         self.memory_limit_var = tk.IntVar(value=2048)
         self.auto_cleanup_var = tk.BooleanVar(value=True)
+        self.plot_in_new_window_var = tk.BooleanVar(value=True)  # Default to popup windows for professional workflow
         
         # Session preference: standardize units on upload (percent → v/v for fractional families)
         self.standardize_on_upload_var = tk.BooleanVar(value=True)
@@ -7899,6 +7903,31 @@ Your feedback contributes to software quality and reliability.
                                          command=self.clear_data, button_type='warning', width=15)
         clear_btn.pack(side='left')
         
+        # CRITICAL: Well Information Card for safety
+        well_card, well_content = self.ui.create_card(data_frame, "Well Identification")
+        well_card.pack(fill='x', pady=(0, 10))
+        
+        # Create labels for well information (will be populated on load)
+        self.well_name_label = ttk.Label(well_content, text="Well: Not loaded", 
+                                         font=('Segoe UI', 10, 'bold'), foreground='#CC0000')
+        self.well_name_label.pack(anchor='w', pady=2)
+        
+        self.field_label = ttk.Label(well_content, text="Field: Not loaded", 
+                                     font=('Segoe UI', 9))
+        self.field_label.pack(anchor='w', pady=2)
+        
+        self.uwi_label = ttk.Label(well_content, text="UWI: Not loaded", 
+                                   font=('Segoe UI', 9))
+        self.uwi_label.pack(anchor='w', pady=2)
+        
+        self.company_label = ttk.Label(well_content, text="Company: Not loaded", 
+                                       font=('Segoe UI', 9))
+        self.company_label.pack(anchor='w', pady=2)
+        
+        self.depth_range_label = ttk.Label(well_content, text="Depth Range: Not loaded", 
+                                           font=('Segoe UI', 9))
+        self.depth_range_label.pack(anchor='w', pady=2)
+        
         # Data summary section
         summary_card, summary_content = self.ui.create_card(data_frame, "Data Summary")
         summary_card.pack(fill='both', expand=True)
@@ -8038,10 +8067,20 @@ Your feedback contributes to software quality and reliability.
         spacing_frame = ttk.Frame(uniformization_tab)
         spacing_frame.pack(fill='x', pady=5, padx=10)
         
+        # Quick preset buttons
         spacing_values = [0.1, 0.25, 0.5, 1.0]
         for val in spacing_values:
             ttk.Radiobutton(spacing_frame, text=f"{val} m", value=val, 
                            variable=self.depth_spacing_var).pack(side='left', padx=10)
+        
+        # Custom depth spacing entry
+        custom_spacing_frame = ttk.Frame(uniformization_tab)
+        custom_spacing_frame.pack(fill='x', pady=5, padx=10)
+        
+        ttk.Label(custom_spacing_frame, text="Custom Spacing:").pack(side='left', padx=(0, 5))
+        custom_spacing_entry = ttk.Entry(custom_spacing_frame, textvariable=self.depth_spacing_var, width=10)
+        custom_spacing_entry.pack(side='left', padx=(0, 5))
+        ttk.Label(custom_spacing_frame, text="meters (affects gap thresholds, filter windows, and resampling)").pack(side='left')
         
         # Curve renaming to standard mnemonics
         self.rename_curves_var = tk.BooleanVar(value=True)
@@ -8122,15 +8161,19 @@ Your feedback contributes to software quality and reliability.
                              orient='horizontal', length=200)
         gap_scale.pack(side='left', fill='x', expand=True, padx=(0, 10))
         
-        # Add value display label
-        self.gap_size_label = ttk.Label(gap_size_frame, text="500", width=6)
+        # Add value display label showing both points and meters
+        self.gap_size_label = ttk.Label(gap_size_frame, text="500 pts (250 m)", width=18)
         self.gap_size_label.pack(side='right')
         
-        # Update label when scale changes
+        # Update label when scale or depth spacing changes
         def update_gap_label(*args):
-            self.gap_size_label.config(text=str(self.max_gap_var.get()))
+            pts = self.max_gap_var.get()
+            spacing = self.depth_spacing_var.get()
+            meters = pts * spacing
+            self.gap_size_label.config(text=f"{pts} pts ({meters:.1f} m)")
         
         self.max_gap_var.trace_add("write", update_gap_label)
+        self.depth_spacing_var.trace_add("write", update_gap_label)
         
         # Large gap treatment options
         ttk.Label(gap_filling_tab, text="Large Gap Treatment:", style='Card.TLabel').pack(anchor='w', pady=(10, 5), padx=10)
@@ -8152,7 +8195,18 @@ Your feedback contributes to software quality and reliability.
         self.large_gap_threshold_var = tk.IntVar(value=500)
         threshold_entry = ttk.Entry(threshold_frame, width=6, textvariable=self.large_gap_threshold_var)
         threshold_entry.pack(side='left', padx=5)
-        ttk.Label(threshold_frame, text="points").pack(side='left')
+        self.large_gap_physical_label = ttk.Label(threshold_frame, text="points (250 m)", foreground='#666666')
+        self.large_gap_physical_label.pack(side='left', padx=(5, 0))
+        
+        # Update physical distance label when threshold or depth spacing changes
+        def update_large_gap_physical(*args):
+            pts = self.large_gap_threshold_var.get()
+            spacing = self.depth_spacing_var.get()
+            meters = pts * spacing
+            self.large_gap_physical_label.config(text=f"points ({meters:.1f} m)")
+        
+        self.large_gap_threshold_var.trace_add("write", update_large_gap_physical)
+        self.depth_spacing_var.trace_add("write", update_large_gap_physical)
         
         # Geological gap threshold - NEW FEATURE
         ttk.Label(gap_filling_tab, text="Geological Gap Threshold:", style='Card.TLabel').pack(anchor='w', pady=(15, 5), padx=10)
@@ -8174,16 +8228,19 @@ Your feedback contributes to software quality and reliability.
                              orient='horizontal', length=200)
         geo_scale.pack(side='left', fill='x', expand=True, padx=(0, 10))
         
-        # Value display label
-        self.geo_gap_label = ttk.Label(geo_threshold_frame, text="200", width=6)
-        self.geo_gap_label.pack(side='left', padx=(0, 5))
-        ttk.Label(geo_threshold_frame, text="points").pack(side='left')
+        # Value display label showing both points and meters
+        self.geo_gap_label = ttk.Label(geo_threshold_frame, text="200 pts (100 m)", width=18)
+        self.geo_gap_label.pack(side='left')
         
-        # Update label when scale changes
+        # Update label when scale or depth spacing changes
         def update_geo_gap_label(*args):
-            self.geo_gap_label.config(text=str(self.geological_gap_threshold_var.get()))
+            pts = self.geological_gap_threshold_var.get()
+            spacing = self.depth_spacing_var.get()
+            meters = pts * spacing
+            self.geo_gap_label.config(text=f"{pts} pts ({meters:.1f} m)")
         
         self.geological_gap_threshold_var.trace_add("write", update_geo_gap_label)
+        self.depth_spacing_var.trace_add("write", update_geo_gap_label)
         
         # Method Priority for normal gaps
         ttk.Label(gap_filling_tab, text="Method Priority:", style='Card.TLabel').pack(anchor='w', pady=(10, 5), padx=10)
@@ -8323,8 +8380,8 @@ Your feedback contributes to software quality and reliability.
         
         ttk.Label(row1, text="Visualization Type:", style='Card.TLabel').pack(side='left')
         self.viz_type_var = tk.StringVar(value="comparison")
-        viz_types = ["comparison", "uncertainty", "quality_metrics", "correlation_matrix", "scatter_plot", "3d_visualization", "multi_curve", "log_display", "unprocessed_curves", "quality_overview", "curve_comparison_all"]
-        viz_combo = ttk.Combobox(row1, textvariable=self.viz_type_var, values=viz_types, width=20)
+        viz_types = ["single_curve", "single_curve_comparison", "comparison", "uncertainty", "quality_metrics", "correlation_matrix", "scatter_plot", "3d_visualization", "multi_curve", "log_display", "unprocessed_curves", "quality_overview", "curve_comparison_all"]
+        viz_combo = ttk.Combobox(row1, textvariable=self.viz_type_var, values=viz_types, width=22)
         viz_combo.pack(side='left', padx=10)
         
         # Bind event to viz type changes to update UI
@@ -8375,6 +8432,15 @@ Your feedback contributes to software quality and reliability.
         
         # Hide multi-curve frame initially
         self.multi_curve_frame.pack_forget()
+        
+        # Visualization display option
+        viz_display_frame = ttk.Frame(control_frame)
+        viz_display_frame.pack(fill='x', pady=(5, 10))
+        
+        self.plot_in_new_window_var = tk.BooleanVar(value=True)  # Default to popup for professional workflow
+        ttk.Checkbutton(viz_display_frame, 
+                       text="Open plots in new window (recommended for detailed analysis and dual monitors)",
+                       variable=self.plot_in_new_window_var).pack(anchor='w')
         
         # Update button
         update_btn = self.ui.create_button(control_frame, text="Update Plot", 
@@ -8710,7 +8776,8 @@ Your feedback contributes to software quality and reliability.
                 if i > 0:
                     track_ax.set_ylabel('')
         
-                self.fig.tight_layout()
+            # Apply tight layout once after all tracks are plotted
+            self.fig.tight_layout()
 
     def _plot_depth_based_curves(self, ax, curves, industry_colors):
         """Plot curves in petroleum industry standard with depth on Y-axis"""
@@ -8860,8 +8927,12 @@ Your feedback contributes to software quality and reliability.
                 curve_by_type[curve_type] = []
             curve_by_type[curve_type].append(curve)
         
-        # Create a 3-track display
-        fig, axes = plt.subplots(1, 3, figsize=(12, 8), sharey=True)
+        # Use proper figure management with larger size for better readability
+        self.ensure_figure_exists()
+        self.fig.set_size_inches(18, 10)
+        
+        # Create a 3-track display using proper method
+        axes = self.fig.subplots(1, 3, sharey=True)
         
         # Use depth for Y-axis
         depth_curves = curve_by_type.get('DEPTH_MEASURED', []) + curve_by_type.get('DEPTH_TRUE_VERTICAL', [])
@@ -8984,11 +9055,9 @@ Your feedback contributes to software quality and reliability.
                 ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.05),
                          ncol=len(handles))
         
-        self.fig = fig
-        plt.tight_layout()
-        
-        # Adjust subplots to create space for legends
-        plt.subplots_adjust(bottom=0.2)
+        # Apply proper spacing for multi-track display
+        self.fig.tight_layout()
+        self.fig.subplots_adjust(left=0.08, right=0.95, bottom=0.20, top=0.92, wspace=0.25)
     
     def _visualize_unprocessed_data(self, curve: str, viz_type: str):
         """Visualize unprocessed data from current_data"""
@@ -9279,8 +9348,9 @@ Your feedback contributes to software quality and reliability.
             messagebox.showwarning("Warning", f"Curve '{curve}' not found in data")
             return
         
-        # Ensure we have a valid figure
+        # Ensure we have a valid figure with good size for detailed viewing
         self.ensure_figure_exists()
+        self.fig.set_size_inches(12, 9)
         ax = self.fig.add_subplot(111)
         
         # Find depth curve if available
@@ -9850,6 +9920,15 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Extract curve information from lasio
             self._extract_lasio_curve_info(las)
             
+            # CRITICAL: Extract well identification information for safety
+            self.well_info = self._extract_well_information(las)
+            
+            # Update window title with well identification
+            self._update_window_title_with_well_info()
+            
+            # Update well info display in Data Tab
+            self._update_well_info_display()
+            
             # Extract geological context from LAS file
             self.geological_context = self._extract_geological_context_from_las(las, df)
             
@@ -10252,6 +10331,170 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Operation result handled - continuing safely
             pass  # f"Error inferring formation start: {e}")
 
+    def _update_window_title_with_well_info(self):
+        """Update main window title with well identification.
+        
+        CRITICAL for safety - user always knows which well they're working on.
+        """
+        try:
+            if hasattr(self, 'well_info') and self.well_info:
+                well_name = self.well_info.get('well_name', 'UNKNOWN')
+                field = self.well_info.get('field', 'UNKNOWN')
+                
+                title = "Advanced Wireline Data Preprocessing"
+                
+                if well_name != 'UNKNOWN':
+                    title += f" - Well: {well_name}"
+                
+                if field != 'UNKNOWN':
+                    title += f" - Field: {field}"
+                
+                self.root.title(title)
+            else:
+                self.root.title("Advanced Wireline Data Preprocessing System")
+        except Exception as e:
+            self.log_processing(f"Error updating window title: {e}")
+    
+    def _update_well_info_display(self):
+        """Update well information display in Data Tab.
+        
+        Shows critical well identification so user always knows which well is loaded.
+        """
+        try:
+            if hasattr(self, 'well_info') and self.well_info:
+                # Update labels with well information
+                well_name = self.well_info.get('well_name', 'UNKNOWN')
+                self.well_name_label.config(
+                    text=f"Well: {well_name}",
+                    foreground='#006600' if well_name != 'UNKNOWN' else '#CC0000'
+                )
+                
+                self.field_label.config(text=f"Field: {self.well_info.get('field', 'UNKNOWN')}")
+                self.uwi_label.config(text=f"UWI: {self.well_info.get('uwi', 'UNKNOWN')}")
+                self.company_label.config(text=f"Company: {self.well_info.get('company', 'UNKNOWN')}")
+                
+                # Format depth range
+                start = self.well_info.get('start_depth', 'UNKNOWN')
+                stop = self.well_info.get('stop_depth', 'UNKNOWN')
+                unit = self.well_info.get('depth_unit', 'm')
+                self.depth_range_label.config(text=f"Depth Range: {start} - {stop} {unit}")
+            else:
+                # No well info available
+                self.well_name_label.config(text="Well: Not loaded", foreground='#CC0000')
+                self.field_label.config(text="Field: Not loaded")
+                self.uwi_label.config(text="UWI: Not loaded")
+                self.company_label.config(text="Company: Not loaded")
+                self.depth_range_label.config(text="Depth Range: Not loaded")
+        except Exception as e:
+            self.log_processing(f"Error updating well info display: {e}")
+    
+    def _extract_well_information(self, las) -> dict:
+        """Extract critical well identification information from LAS header.
+        
+        This is CRITICAL for safety - ensures users know which well they're working on.
+        Prevents wrong-well processing disasters.
+        
+        Args:
+            las: lasio LAS object
+            
+        Returns:
+            Dictionary with well identification fields
+        """
+        well_info = {
+            'well_name': 'UNKNOWN',
+            'uwi': 'UNKNOWN',
+            'api': 'UNKNOWN',
+            'field': 'UNKNOWN',
+            'company': 'UNKNOWN',
+            'date': 'UNKNOWN',
+            'start_depth': 'UNKNOWN',
+            'stop_depth': 'UNKNOWN',
+            'step': 'UNKNOWN',
+            'null_value': '-999.25',
+            'county': 'UNKNOWN',
+            'state': 'UNKNOWN',
+            'province': 'UNKNOWN',
+            'country': 'UNKNOWN',
+            'depth_unit': 'm'
+        }
+        
+        try:
+            if hasattr(las, 'well') and las.well:
+                for item in las.well:
+                    mnemonic = item.mnemonic.upper()
+                    value = str(item.value).strip()
+                    
+                    # Well name
+                    if mnemonic in ['WELL', 'LEASE', 'NAME']:
+                        well_info['well_name'] = value
+                    
+                    # UWI/API number
+                    elif mnemonic in ['UWI', 'API', 'APINO']:
+                        well_info['uwi'] = value
+                        well_info['api'] = value
+                    
+                    # Field name
+                    elif mnemonic in ['FIELD', 'FLD']:
+                        well_info['field'] = value
+                    
+                    # Company
+                    elif mnemonic in ['COMP', 'COMPANY', 'OPERATOR']:
+                        well_info['company'] = value
+                    
+                    # Date
+                    elif mnemonic in ['DATE', 'DAT']:
+                        well_info['date'] = value
+                    
+                    # Depth range
+                    elif mnemonic in ['STRT', 'START']:
+                        try:
+                            well_info['start_depth'] = f"{float(value):.2f}"
+                        except:
+                            well_info['start_depth'] = value
+                    
+                    elif mnemonic in ['STOP', 'END']:
+                        try:
+                            well_info['stop_depth'] = f"{float(value):.2f}"
+                        except:
+                            well_info['stop_depth'] = value
+                    
+                    elif mnemonic in ['STEP']:
+                        try:
+                            well_info['step'] = f"{float(value):.4f}"
+                        except:
+                            well_info['step'] = value
+                    
+                    # Null value
+                    elif mnemonic in ['NULL']:
+                        well_info['null_value'] = value
+                    
+                    # Location
+                    elif mnemonic in ['CNTY', 'COUNTY']:
+                        well_info['county'] = value
+                    elif mnemonic in ['STAT', 'STATE']:
+                        well_info['state'] = value
+                    elif mnemonic in ['PROV', 'PROVINCE']:
+                        well_info['province'] = value
+                    elif mnemonic in ['CTRY', 'COUNTRY', 'COUN']:
+                        well_info['country'] = value
+                    elif mnemonic in ['LOC', 'LOCATION']:
+                        well_info['location'] = value
+            
+            # Try to get depth unit
+            if hasattr(las, 'curves') and las.curves:
+                for curve in las.curves:
+                    if curve.mnemonic.upper() in ['DEPT', 'DEPTH', 'MD']:
+                        if curve.unit:
+                            well_info['depth_unit'] = str(curve.unit).strip()
+                        break
+            
+            self.log_processing(f"Well Information Extracted: {well_info['well_name']} - {well_info['field']}")
+            
+        except Exception as e:
+            self.log_processing(f"Error extracting well information: {e}")
+        
+        return well_info
+    
     def _extract_lasio_curve_info(self, las):
         """Extract comprehensive curve information from lasio object"""
         try:
@@ -10743,7 +10986,9 @@ This ensures consistent data interpretation and fixes depth validation issues.
             missing_pct = stats.get('missing_percent', 0.0)
             
             # Analyze gap patterns to exclude geological gaps from quality assessment
-            geological_threshold = self.geological_gap_threshold_var.get()
+            # Use depth-aware threshold to maintain consistent physical distance
+            depth_params = self.get_depth_aware_parameters()
+            geological_threshold = depth_params['geological_gap_threshold']
             gap_sizes = self._count_consecutive_missing(self.current_data[column])
             
             # Separate geological gaps from data error gaps
@@ -11003,9 +11248,21 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             total_curves = len(self.processed_data.columns)
             
+            # Get depth-aware parameters (adjusts for depth spacing)
+            depth_params = self.get_depth_aware_parameters()
+            
+            self.log_processing("=" * 50)
+            self.log_processing("DEPTH-AWARE PARAMETER ADJUSTMENT")
+            self.log_processing(f"Depth Spacing: {depth_params['depth_spacing']} m")
+            self.log_processing(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x")
+            self.log_processing(f"Geological Gap Threshold: {depth_params['geological_gap_threshold']} pts ({depth_params['geological_gap_meters']:.1f} m)")
+            self.log_processing(f"Large Gap Threshold: {depth_params['large_gap_threshold']} pts ({depth_params['large_gap_meters']:.1f} m)")
+            self.log_processing(f"Max Gap Size: {depth_params['max_gap_size']} pts ({depth_params['max_gap_meters']:.1f} m)")
+            self.log_processing("=" * 50)
+            
             # Get UI parameters for gap filling
             if hasattr(self, 'large_gap_threshold_var'):
-                self.large_gap_threshold = self.large_gap_threshold_var.get()
+                self.large_gap_threshold = depth_params['large_gap_threshold']  # Use depth-aware value
             else:
                 self.large_gap_threshold = 500
                 
@@ -11014,11 +11271,12 @@ This ensures consistent data interpretation and fixes depth validation issues.
             else:
                 self.large_gap_treatment = "formation_based"
             
-            # Initialize gap_params once outside the loop
+            # Initialize gap_params once outside the loop with depth-aware values
             gap_params = GapFillingParameters(
-                max_gap_size=self.max_gap_var.get(),
+                max_gap_size=depth_params['max_gap_size'],  # Use depth-aware max gap size
                 physics_informed=self.physics_informed_var.get(),
-                multi_curve_correlation=self.multi_curve_var.get()
+                multi_curve_correlation=self.multi_curve_var.get(),
+                geological_gap_threshold=depth_params['geological_gap_threshold']  # Use depth-aware geological threshold
             )
             
             # Prepare auxiliary curves once for all columns
@@ -11405,47 +11663,59 @@ This ensures consistent data interpretation and fixes depth validation issues.
         report = []
         
         # Header
-        report.append("=" * 80)
-        report.append("ADVANCED WIRELINE DATA PREPROCESSING REPORT")
-        report.append("=" * 80)
+        report.append("╔" + "═" * 78 + "╗")
+        report.append("║" + " " * 15 + "ADVANCED WIRELINE DATA PREPROCESSING REPORT" + " " * 20 + "║")
+        report.append("╚" + "═" * 78 + "╝")
         report.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         report.append(f"File: {self.file_path_var.get()}")
         report.append("")
+        
+        # CRITICAL: Well Identification Box
+        if hasattr(self, 'well_info') and self.well_info:
+            report.append("╔" + "═" * 78 + "╗")
+            report.append("║" + " " * 26 + "WELL IDENTIFICATION" + " " * 33 + "║")
+            report.append("╠" + "═" * 78 + "╣")
+            
+            well_name = self.well_info.get('well_name', 'UNKNOWN')
+            uwi = self.well_info.get('uwi', 'UNKNOWN')
+            field = self.well_info.get('field', 'UNKNOWN')
+            company = self.well_info.get('company', 'UNKNOWN')
+            date = self.well_info.get('date', 'UNKNOWN')
+            start = self.well_info.get('start_depth', 'UNKNOWN')
+            stop = self.well_info.get('stop_depth', 'UNKNOWN')
+            unit = self.well_info.get('depth_unit', 'm')
+            
+            report.append(f"║  Well Name:    {well_name:<62} ║")
+            report.append(f"║  UWI:          {uwi:<62} ║")
+            report.append(f"║  Field:        {field:<62} ║")
+            report.append(f"║  Company:      {company:<62} ║")
+            report.append(f"║  Date:         {date:<62} ║")
+            depth_range_text = f"{start} - {stop} {unit}"
+            report.append(f"║  Depth Range:  {depth_range_text:<62} ║")
+            report.append("╚" + "═" * 78 + "╝")
+            report.append("")
 
-        # === Include original LAS header and first 100 lines of the LAS file in the report preview ===
+        # === IMPROVEMENT 1: Trim LAS header to first 30 lines only ===
         try:
             from pathlib import Path
 
-            # Original LAS header captured during file load
+            # Original LAS header captured during file load (trimmed)
             if hasattr(self, 'original_las_header') and self.original_las_header:
-                report.append("\nORIGINAL LAS HEADER:")
-                report.append("-" * 40)
-                report.extend(self.original_las_header.split('\n'))
+                all_header_lines = self.original_las_header.split('\n')
+                header_lines = all_header_lines[:30]  # Reduced from 100 to 30
+                report.append("ORIGINAL LAS HEADER (First 30 lines):")
+                report.append("-" * 80)
+                report.extend(header_lines)
+                if len(all_header_lines) > 30:
+                    omitted_count = len(all_header_lines) - 30
+                    report.append(f"... ({omitted_count} additional lines omitted)")
             else:
-                report.append("\nORIGINAL LAS HEADER: Not available (file may not have been loaded with a readable header)")
-
-            # Try to include the first 100 lines of the original LAS file (raw file content) when possible
-            las_filepath = None
-            try:
-                las_filepath = Path(self.file_path_var.get()) if self.file_path_var.get() else None
-            except Exception:
-                las_filepath = None
-
-            if las_filepath and las_filepath.exists():
-                try:
-                    with las_filepath.open('r', encoding='utf-8', errors='replace') as f:
-                        raw_lines = f.read().splitlines()
-
-                    report.append("\nFIRST 100 LINES OF LAS FILE (raw):")
-                    report.append("-" * 40)
-                    for i, ln in enumerate(raw_lines[:100], start=1):
-                        report.append(f"{i:03}: {ln}")
-                except Exception:
-                    report.append("\nFIRST 100 LINES OF LAS FILE: Failed to read LAS file content")
-            else:
-                report.append("\nFIRST 100 LINES OF LAS FILE: Source LAS file not found or path not set")
+                report.append("ORIGINAL LAS HEADER: Not available")
+            
+            report.append("")
         except Exception:
-            report.append("\nORIGINAL LAS HEADER AND FILE PREVIEW: Failed to include LAS header/file preview")
+            report.append("ORIGINAL LAS HEADER: Failed to include")
+            report.append("")
         
         # Check if we have data to report on
         if self.current_data is None:
@@ -11453,9 +11723,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             report.append("Please load and process data before generating a report.")
             return "\n".join(report)
         
-        # Executive Summary
-        report.append("EXECUTIVE SUMMARY")
-        report.append("-" * 40)
+        # === IMPROVEMENT 2: Add Processing Dashboard ===
         total_curves = len(self.current_data.columns)
         total_points = len(self.current_data)
         
@@ -11496,16 +11764,219 @@ This ensures consistent data interpretation and fixes depth validation issues.
             avg_completeness = np.mean(completeness_values) if completeness_values else 0
             avg_denoise_quality = 0
         
-        report.append(f"Total Curves Processed: {total_curves}")
-        report.append(f"Total Data Points: {total_points:,}")
-        report.append(f"Total Gaps Filled: {total_gaps_filled:,}")
-        report.append(f"Average Data Completeness: {avg_completeness:.1f}%")
-        report.append(f"Average Denoising Quality: {avg_denoise_quality:.1f}%")
+        # Grade the overall processing quality
+        if avg_completeness >= 95 and avg_denoise_quality >= 80:
+            overall_grade = "EXCELLENT"
+        elif avg_completeness >= 90 and avg_denoise_quality >= 70:
+            overall_grade = "GOOD"
+        elif avg_completeness >= 80 and avg_denoise_quality >= 60:
+            overall_grade = "SATISFACTORY"
+        else:
+            overall_grade = "NEEDS IMPROVEMENT"
+        
+        # Processing Dashboard
+        report.append("╔" + "═" * 78 + "╗")
+        report.append("║" + " " * 25 + "PROCESSING DASHBOARD" + " " * 33 + "║")
+        report.append("╠" + "═" * 78 + "╣")
+        report.append(f"║  Curves Processed: {total_curves:>6}        Overall Grade: {overall_grade:<20} ║")
+        report.append(f"║  Total Data Points: {total_points:>6,}      Avg Completeness: {avg_completeness:>5.1f}%{' ' * 15} ║")
+        report.append(f"║  Gaps Filled: {total_gaps_filled:>6,}           Avg Denoise Quality: {avg_denoise_quality:>5.1f}%{' ' * 10} ║")
+        report.append("╚" + "═" * 78 + "╝")
         report.append("")
         
-        # Curve-by-Curve Analysis
+        # === IMPROVEMENT 3: Add Depth-Aware Parameters Section ===
+        depth_params = self.get_depth_aware_parameters()
+        report.append("DEPTH-AWARE PARAMETER CONFIGURATION")
+        report.append("=" * 80)
+        report.append(f"Depth Spacing: {depth_params['depth_spacing']} m")
+        report.append(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x (relative to 0.5m reference)")
+        report.append("")
+        report.append("Adjusted Thresholds (Points | Physical Distance):")
+        report.append(f"  Geological Gap Threshold:  {depth_params['geological_gap_threshold']:>4} pts | {depth_params['geological_gap_meters']:>6.1f} m")
+        report.append(f"  Large Gap Threshold:       {depth_params['large_gap_threshold']:>4} pts | {depth_params['large_gap_meters']:>6.1f} m")
+        report.append(f"  Max Gap Size:              {depth_params['max_gap_size']:>4} pts | {depth_params['max_gap_meters']:>6.1f} m")
+        report.append("")
+        report.append("Filter Windows (Adjusted for depth spacing):")
+        report.append(f"  Savitzky-Golay: {depth_params['savgol_window']} pts")
+        report.append(f"  Median Filter:  {depth_params['median_window']} pts")
+        report.append(f"  Bilateral:      {depth_params['bilateral_window']} pts")
+        report.append("")
+        
+        # === IMPROVEMENT 4 & 5: Add Gap Analysis Summary ===
+        report.append("GAP ANALYSIS SUMMARY")
+        report.append("=" * 80)
+        
+        # Collect gap statistics from all curves
+        total_gaps = 0
+        geological_gaps_count = 0
+        data_error_gaps_count = 0
+        gaps_filled_count = 0
+        gaps_skipped_count = 0
+        
+        gap_details = []  # For per-curve table
+        
+        for curve in self.current_data.columns:
+            curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
+            if 'DEPTH' in curve_type:
+                continue  # Skip depth curves
+            
+            # Count gaps
+            gap_sizes = self._count_consecutive_missing(self.current_data[curve])
+            curve_total_gaps = len(gap_sizes)
+            total_gaps += curve_total_gaps
+            
+            # Classify gaps
+            geo_threshold = depth_params['geological_gap_threshold']
+            curve_geo_gaps = sum(1 for g in gap_sizes if g >= geo_threshold)
+            curve_data_gaps = sum(1 for g in gap_sizes if g < geo_threshold)
+            
+            geological_gaps_count += curve_geo_gaps
+            data_error_gaps_count += curve_data_gaps
+            
+            # Determine if curve was processed
+            if curve in self.processing_results:
+                result = self.processing_results[curve]
+                gaps_filled = result.get('gap_filling', {}).get('quality_metrics', {}).get('total_gaps_filled', 0)
+            else:
+                gaps_filled = 0
+            
+            gaps_filled_count += gaps_filled
+            gaps_skipped = curve_total_gaps - gaps_filled
+            gaps_skipped_count += gaps_skipped
+            
+            # Get quality
+            stats = self.curve_info.get(curve, {}).get('statistics', {})
+            missing_pct = stats.get('missing_percent', 0.0)
+            if missing_pct < 5.0:
+                quality = "Excellent"
+            elif missing_pct < 15.0:
+                quality = "Good"
+            elif missing_pct < 30.0:
+                quality = "Fair"
+            else:
+                quality = "Poor"
+            
+            if curve_geo_gaps > 0:
+                quality += f" ({curve_geo_gaps} geo)"
+            
+            gap_details.append({
+                'curve': curve,
+                'total': curve_total_gaps,
+                'data_err': curve_data_gaps,
+                'geo': curve_geo_gaps,
+                'filled': gaps_filled,
+                'quality': quality
+            })
+        
+        # Overall gap statistics
+        report.append(f"Total Gaps Found: {total_gaps}")
+        report.append("")
+        report.append("Gap Classification:")
+        if total_gaps > 0:
+            data_pct = (data_error_gaps_count / total_gaps * 100) if total_gaps > 0 else 0
+            geo_pct = (geological_gaps_count / total_gaps * 100) if total_gaps > 0 else 0
+            report.append(f"  Data Errors (<{depth_params['geological_gap_threshold']} pts):        {data_error_gaps_count:>4} gaps ({data_pct:>5.1f}%)")
+            report.append(f"  Geological Features (≥{depth_params['geological_gap_threshold']} pts):  {geological_gaps_count:>4} gaps ({geo_pct:>5.1f}%)")
+        else:
+            report.append("  No gaps found")
+        report.append("")
+        report.append("Gap Filling Results:")
+        report.append(f"  Gaps Filled:                 {gaps_filled_count:>4} gaps")
+        report.append(f"  Gaps Preserved (geological): {gaps_skipped_count:>4} gaps")
+        report.append("")
+        
+        # Per-Curve Gap Table
+        report.append("Per-Curve Gap Analysis:")
+        report.append("-" * 80)
+        report.append(f"{'Curve':<12} | {'Gaps':>5} | {'Data':>5} | {'Geo':>4} | {'Filled':>6} | {'Quality':<15}")
+        report.append("-" * 80)
+        
+        for detail in gap_details[:20]:  # Show first 20 curves
+            report.append(f"{detail['curve']:<12} | {detail['total']:>5} | {detail['data_err']:>5} | {detail['geo']:>4} | {detail['filled']:>6} | {detail['quality']:<15}")
+        
+        if len(gap_details) > 20:
+            report.append(f"... and {len(gap_details) - 20} more curves")
+        
+        report.append("")
+        
+        # === IMPROVEMENT 3: Gap Classification Methodology Explanation ===
+        report.append("GAP CLASSIFICATION METHODOLOGY")
+        report.append("=" * 80)
+        report.append("How the System Classifies Missing Data:")
+        report.append("")
+        report.append("The system distinguishes between two fundamentally different types of gaps:")
+        report.append("")
+        report.append("1. DATA ERRORS (Small Gaps)")
+        report.append(f"   Definition: Consecutive missing points < Geological Gap Threshold")
+        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} m)")
+        report.append("   Characteristics:")
+        report.append("     • Short duration gaps (typically <100m)")
+        report.append("     • Caused by: Tool failures, data transmission errors, sensor issues")
+        report.append("     • Processing: Should be filled using interpolation methods")
+        report.append("   Examples:")
+        report.append("     • Tool malfunction: 5-50 point gaps")
+        report.append("     • Data transmission glitch: 10-100 point gaps")
+        report.append("     • Sensor noise spike: 3-20 point gaps")
+        report.append("")
+        report.append("2. GEOLOGICAL/LOGGING FEATURES (Large Gaps)")
+        report.append(f"   Definition: Consecutive missing points ≥ Geological Gap Threshold")
+        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} m)")
+        report.append("   Characteristics:")
+        report.append("     • Extended duration gaps (typically >100m)")
+        report.append("     • Caused by: Intentional non-logging, cased holes, interval logging")
+        report.append("     • Processing: Should be preserved, NOT filled")
+        report.append("   Examples:")
+        report.append("     • Cased hole sections: 200-1000+ point gaps")
+        report.append("     • Interval logging (open hole only): 300-500 point gaps")
+        report.append("     • Zones where specific tools not run: 150-400 point gaps")
+        report.append("")
+        report.append("Classification Logic (Applied to Each Gap):")
+        report.append("  ┌─────────────────────────────────────────────────────────────────┐")
+        report.append("  │ For each gap found in curve data:                              │")
+        report.append("  │   Step 1: Count consecutive missing points = gap_size          │")
+        report.append("  │                                                                  │")
+        threshold_pts = self.geological_gap_threshold_var.get()
+        threshold_m = depth_params['geological_gap_meters']
+        report.append(f"  │   Step 2: IF gap_size >= {threshold_pts} points ({threshold_m:.1f}m):               │")
+        report.append("  │            → Classify as: GEOLOGICAL FEATURE                    │")
+        report.append("  │            → Action: Preserve gap (do NOT fill)                 │")
+        report.append("  │            → Quality: Exclude from error metrics                │")
+        report.append("  │                                                                  │")
+        report.append(f"  │   Step 3: ELSE (gap_size < {threshold_pts} points):                       │")
+        report.append("  │            → Classify as: DATA ERROR                            │")
+        report.append("  │            → Action: Attempt to fill using interpolation        │")
+        report.append("  │            → Quality: Include in error metrics                  │")
+        report.append("  └─────────────────────────────────────────────────────────────────┘")
+        report.append("")
+        report.append("Why This Matters for Quality Assessment:")
+        report.append("  • Data quality grades (Excellent/Good/Fair/Poor) are calculated using")
+        report.append("    ONLY the data error gaps")
+        report.append("  • Geological gaps are excluded because they represent intentional")
+        report.append("    non-logging, not data quality problems")
+        report.append("  • This provides accurate quality metrics that reflect actual acquisition")
+        report.append("    issues, not logging program decisions")
+        report.append("")
+        report.append("Threshold Adjustment Guidance:")
+        report.append("  • Increase threshold (300-500 pts): Wells with longer cased sections")
+        report.append("  • Decrease threshold (100-150 pts): High-quality continuous logging")
+        report.append("  • Consider depth spacing: Threshold scales automatically with sampling rate")
+        spacing_ratio = depth_params['spacing_ratio']
+        report.append(f"  • Current scaling: {spacing_ratio:.2f}x (for {depth_params['depth_spacing']}m spacing)")
+        report.append("")
+        report.append("Physical Distance Interpretation:")
+        report.append(f"  At current settings:")
+        spacing_val = self.depth_spacing_var.get()
+        threshold_val = self.geological_gap_threshold_var.get()
+        physical_dist = depth_params['geological_gap_meters']
+        report.append(f"    {threshold_val} points × {spacing_val} m/point = {physical_dist:.1f} meters")
+        report.append("")
+        report.append(f"  Gaps >= {physical_dist:.1f}m are considered geological features.")
+        report.append("=" * 80)
+        report.append("")
+        
+        # Detailed Curve Analysis
         report.append("DETAILED CURVE ANALYSIS")
-        report.append("-" * 40)
+        report.append("=" * 80)
         
         for curve in self.current_data.columns:
             curve_info = self.curve_info.get(curve, {})
@@ -11572,18 +12043,33 @@ This ensures consistent data interpretation and fixes depth validation issues.
             else:
                 report.append(f"  Denoising: Not processed")
         
-        # Processing Configuration
-        report.append(f"\nPROCESSING CONFIGURATION")
-        report.append("-" * 40)
-        report.append(f"Gap Filling:")
-        report.append(f"  Full-hole curves: 500 points max")
-        report.append(f"  Interval curves: 100 points max")
-        report.append(f"  Unknown curves: 50 points max")
+        # === IMPROVEMENT 6: Processing Configuration with Actual UI Values ===
+        report.append("PROCESSING CONFIGURATION")
+        report.append("=" * 80)
+        report.append("Gap Filling Parameters:")
+        report.append(f"  Max Gap Size: {self.max_gap_var.get()} points ({self.max_gap_var.get() * self.depth_spacing_var.get():.1f} m)")
+        report.append(f"  Large Gap Threshold: {self.large_gap_threshold_var.get()} points ({self.large_gap_threshold_var.get() * self.depth_spacing_var.get():.1f} m)")
+        report.append(f"  Large Gap Treatment: {self.large_gap_var.get()}")
+        report.append(f"  Geological Gap Threshold: {self.geological_gap_threshold_var.get()} points ({self.geological_gap_threshold_var.get() * self.depth_spacing_var.get():.1f} m)")
         report.append(f"  Method Priority: {self.gap_method_var.get()}")
         report.append(f"  Physics-Informed: {self.physics_informed_var.get()}")
         report.append(f"  Multi-Curve Correlation: {self.multi_curve_var.get()}")
-        report.append(f"Denoising:")
+        report.append("")
+        report.append("Denoising Parameters:")
         report.append(f"  Method: {self.denoise_method_var.get()}")
+        report.append("")
+        report.append("Uniformization Parameters:")
+        report.append(f"  Depth Spacing: {self.depth_spacing_var.get()} m")
+        report.append(f"  Rename Curves: {self.rename_curves_var.get()}")
+        report.append(f"  Standardize Units: {self.standardize_units_var.get()}")
+        report.append(f"  Null Value: {self.null_value_var.get()}")
+        report.append(f"  Output Format: {self.output_format_var.get()}")
+        report.append("")
+        report.append("Quality Control Parameters:")
+        report.append(f"  QC Enabled: {self.qc_enabled_var.get()}")
+        report.append(f"  Outlier Detection: {self.outlier_detection_var.get()}")
+        report.append(f"  Range Validation: {self.range_validation_var.get()}")
+        report.append(f"  Uncertainty Quantification: {self.uncertainty_quantification_var.get()}")
         
         # Unit Standardization Analysis
         if hasattr(self, 'unit_standardizer'):
@@ -11645,44 +12131,76 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 report.append(f"  Unknown Units: {total_unknown}")
                 report.append(f"  Conversion Errors: {total_errors}")
         
+        # === IMPROVEMENT 8: Add Export Metadata Section ===
+        report.append("EXPORT INFORMATION")
+        report.append("=" * 80)
+        report.append(f"Null Value Used: {self.null_value_var.get()}")
+        report.append(f"Output Format: {self.output_format_var.get()}")
+        report.append(f"Depth Spacing: {self.depth_spacing_var.get()} m (standardized)")
+        report.append(f"Unit Standard: {'SI Modified' if self.standardize_units_var.get() else 'Original'}")
+        report.append(f"Curves Renamed: {'Yes' if self.rename_curves_var.get() else 'No'}")
+        report.append("")
+        
         # Quality Assessment
-        report.append(f"\nQUALITY ASSESSMENT")
-        report.append("-" * 40)
-        
-        # Grade the overall processing quality
-        if avg_completeness >= 95 and avg_denoise_quality >= 80:
-            overall_grade = "EXCELLENT"
-        elif avg_completeness >= 90 and avg_denoise_quality >= 70:
-            overall_grade = "GOOD"
-        elif avg_completeness >= 80 and avg_denoise_quality >= 60:
-            overall_grade = "SATISFACTORY"
-        else:
-            overall_grade = "NEEDS_IMPROVEMENT"
-        
+        report.append("QUALITY ASSESSMENT")
+        report.append("=" * 80)
         report.append(f"Overall Processing Grade: {overall_grade}")
+        report.append(f"Average Data Completeness: {avg_completeness:.1f}%")
+        report.append(f"Average Denoising Quality: {avg_denoise_quality:.1f}%")
+        report.append("")
         
-        # Recommendations
-        report.append(f"\nRECOMMENDATIONS")
-        report.append("-" * 40)
+        # === IMPROVEMENT 9: Enhanced Recommendations ===
+        report.append("RECOMMENDATIONS AND INSIGHTS")
+        report.append("=" * 80)
         
         recommendations = []
         
-        if total_gaps_filled > total_points * 0.1:
-            recommendations.append("High number of gaps detected. Consider data acquisition quality.")
+        # Geological gap recommendations
+        if geological_gaps_count > data_error_gaps_count:
+            recommendations.append(f"INFO: {geological_gaps_count} geological gaps detected (cased holes or interval logging).")
+            recommendations.append(f"  → This is normal for interval curves. Current threshold: {self.geological_gap_threshold_var.get()} pts ({depth_params['geological_gap_meters']:.1f}m)")
         
-        if avg_denoise_quality < 70:
-            recommendations.append("Low denoising quality. Consider adjusting denoising parameters.")
+        # Gap filling recommendations
+        if data_error_gaps_count > total_curves * 2:
+            recommendations.append(f"ATTENTION: {data_error_gaps_count} data error gaps detected across {total_curves} curves.")
+            recommendations.append(f"  → Consider reviewing data acquisition quality or increasing gap fill threshold")
         
-        low_quality_curves = [
-            curve for curve, info in self.curve_info.items()
-            if info.get('statistics', {}).get('missing_percent', 0.0) > 30
+        # Depth spacing recommendations
+        if self.depth_spacing_var.get() != 0.5:
+            recommendations.append(f"NOTE: Non-standard depth spacing ({self.depth_spacing_var.get()}m) detected.")
+            recommendations.append(f"  → All parameters automatically adjusted by {depth_params['spacing_ratio']:.2f}x to maintain physical distances")
+        
+        # Denoising recommendations
+        if avg_denoise_quality < 70 and avg_denoise_quality > 0:
+            recommendations.append(f"SUGGESTION: Low denoising quality ({avg_denoise_quality:.1f}%).")
+            recommendations.append(f"  → Try different denoising method or adjust parameters")
+        
+        # Curve-specific recommendations
+        high_missing_curves = [
+            (curve, self.curve_info.get(curve, {}).get('statistics', {}).get('missing_percent', 0.0))
+            for curve in self.current_data.columns
+            if self.curve_info.get(curve, {}).get('statistics', {}).get('missing_percent', 0.0) > 30
         ]
         
-        if low_quality_curves:
-            recommendations.append(f"Curves with high missing data: {', '.join(low_quality_curves)}")
+        if high_missing_curves:
+            recommendations.append(f"WARNING: {len(high_missing_curves)} curve(s) with >30% missing data:")
+            for curve, pct in sorted(high_missing_curves, key=lambda x: x[1], reverse=True)[:5]:
+                recommendations.append(f"  → {curve}: {pct:.1f}% missing")
+            if len(high_missing_curves) > 5:
+                recommendations.append(f"  → ... and {len(high_missing_curves) - 5} more")
+        
+        # Processing success recommendations
+        excellent_curves = [
+            curve for curve in self.current_data.columns
+            if self.curve_info.get(curve, {}).get('statistics', {}).get('missing_percent', 0.0) < 5.0
+        ]
+        
+        if len(excellent_curves) > total_curves * 0.7:
+            recommendations.append(f"EXCELLENT: {len(excellent_curves)} curves ({len(excellent_curves)/total_curves*100:.1f}%) have <5% missing data.")
+            recommendations.append(f"  → Data quality is very good, processing should be reliable")
         
         if not recommendations:
-            recommendations.append("Data quality is good. No specific recommendations.")
+            recommendations.append("✓ Data quality is good. No specific recommendations.")
         
         for i, rec in enumerate(recommendations, 1):
             report.append(f"{i}. {rec}")
@@ -11733,6 +12251,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 return
 
             self.ensure_figure_exists()
+            self.fig.set_size_inches(12, 10)
             
             # Clear the figure and create a new layout with marginal histograms
             self.fig.clear()
@@ -11858,8 +12377,9 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 messagebox.showwarning("Warning", f"Curve '{curve2}' not found in data")
                 return
             
-            # Ensure we have a valid figure
+            # Ensure we have a valid figure with good size for 3D visualization
             self.ensure_figure_exists()
+            self.fig.set_size_inches(12, 10)
             
             # Create 3D subplot
             ax = self.fig.add_subplot(111, projection='3d')
@@ -12150,6 +12670,59 @@ This ensures consistent data interpretation and fixes depth validation issues.
         except Exception as e:
             self.log_processing(f"Error counting consecutive missing: {e}")
             return []
+    
+    def get_depth_aware_parameters(self) -> dict:
+        """Calculate depth-aware parameters based on current depth spacing.
+        
+        Adjusts gap thresholds, filter windows, and geological thresholds to account
+        for actual depth spacing. This ensures that thresholds represent physical 
+        distances rather than just point counts.
+        
+        Returns:
+            Dictionary with adjusted parameters
+        """
+        try:
+            depth_spacing = self.depth_spacing_var.get()
+            
+            # Reference spacing (0.5m) - all default thresholds assume this
+            reference_spacing = 0.5
+            
+            # Scaling factor
+            spacing_ratio = reference_spacing / depth_spacing if depth_spacing > 0 else 1.0
+            
+            # Adjusted parameters
+            adjusted = {
+                'depth_spacing': depth_spacing,
+                'spacing_ratio': spacing_ratio,
+                
+                # Gap thresholds (scale to maintain same physical distance)
+                'geological_gap_threshold': int(self.geological_gap_threshold_var.get() * spacing_ratio),
+                'large_gap_threshold': int(self.large_gap_threshold_var.get() * spacing_ratio),
+                'max_gap_size': int(self.max_gap_var.get() * spacing_ratio),
+                
+                # Filter windows (scale to maintain same physical smoothing distance)
+                'savgol_window': max(5, int(11 * spacing_ratio)),
+                'median_window': max(3, int(5 * spacing_ratio)),
+                'bilateral_window': max(5, int(10 * spacing_ratio)),
+                
+                # Physical interpretation
+                'geological_gap_meters': self.geological_gap_threshold_var.get() * depth_spacing,
+                'large_gap_meters': self.large_gap_threshold_var.get() * depth_spacing,
+                'max_gap_meters': self.max_gap_var.get() * depth_spacing
+            }
+            
+            return adjusted
+            
+        except Exception as e:
+            self.log_processing(f"Error calculating depth-aware parameters: {e}")
+            # Return defaults
+            return {
+                'depth_spacing': 0.5,
+                'spacing_ratio': 1.0,
+                'geological_gap_threshold': 200,
+                'large_gap_threshold': 500,
+                'max_gap_size': 500
+            }
 
     def detect_curve_category(self, curve_name: str, curve_data: np.ndarray) -> str:
         """Detect the category of a curve based on name and data characteristics."""
@@ -12435,6 +13008,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
         
         try:
             self.ensure_figure_exists()
+            self.fig.set_size_inches(12, 9)
             ax = self.fig.add_subplot(111)
             
             # Data already retrieved above
@@ -12518,17 +13092,18 @@ This ensures consistent data interpretation and fixes depth validation issues.
             return
         
         try:
+            # Use proper figure management with larger size
             self.ensure_figure_exists()
+            self.fig.set_size_inches(14, 10)
             
             # Create subplots for different quality metrics
-            fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-            self.fig = fig
+            axes = self.fig.subplots(2, 2)
             
             # Set overall title with processing status
             if has_processed:
-                fig.suptitle(f'Quality Metrics: {curve} (Processed)', fontsize=16, fontweight='bold')
+                self.fig.suptitle(f'Quality Metrics: {curve} (Processed)', fontsize=16, fontweight='bold')
             else:
-                fig.suptitle(f'Quality Metrics: {curve} (Not Yet Processed)', fontsize=16, fontweight='bold')
+                self.fig.suptitle(f'Quality Metrics: {curve} (Not Yet Processed)', fontsize=16, fontweight='bold')
             
             # Get metrics based on processing status
             if has_processed:
@@ -12588,7 +13163,9 @@ This ensures consistent data interpretation and fixes depth validation issues.
             ax4.set_ylabel('Count')
             plt.setp(ax4.get_xticklabels(), rotation=45, ha='right')
             
-            plt.tight_layout()
+            # Apply proper spacing for quality metrics display
+            self.fig.tight_layout()
+            self.fig.subplots_adjust(top=0.93)  # Space for suptitle
             
         except Exception as e:
             messagebox.showerror("Quality Metrics Error", f"Failed to create quality metrics plot: {str(e)}")
@@ -12605,6 +13182,11 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Calculate correlation matrix
             numeric_data = self.processed_data.select_dtypes(include=[np.number])
             correlation_matrix = numeric_data.corr()
+            
+            # Set larger figure size for better readability
+            num_curves = len(correlation_matrix.columns)
+            fig_size = max(10, min(16, num_curves * 0.8))  # Scale with number of curves
+            self.fig.set_size_inches(fig_size, fig_size)
             
             # Create heatmap
             ax = self.fig.add_subplot(111)
@@ -12851,9 +13433,11 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.cleanup_visualization()
             self.ensure_figure_exists()
             
+            # Set larger figure size for comprehensive quality overview
+            self.fig.set_size_inches(16, 12)
+            
             # Create a comprehensive quality overview
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-            self.fig = fig
+            axes = self.fig.subplots(2, 2)
             
             # Get all curve information
             curves = list(self.current_data.columns)
@@ -12945,7 +13529,9 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     ax4.text(bar.get_x() + bar.get_width()/2., height + 0.1,
                             f'{int(height)}', ha='center', va='bottom')
             
-            plt.tight_layout()
+            # Apply proper spacing for quality overview display
+            self.fig.tight_layout()
+            self.fig.subplots_adjust(top=0.94, bottom=0.10, wspace=0.25, hspace=0.35)
             
         except Exception as e:
             messagebox.showerror("Quality Overview Error", f"Failed to create quality overview: {str(e)}")
@@ -13068,11 +13654,473 @@ This ensures consistent data interpretation and fixes depth validation issues.
             messagebox.showerror("Curve Comparison Error", f"Failed to create curve comparison: {str(e)}")
 
     # ============================================================================
+    # NEW SINGLE CURVE VISUALIZATION METHODS
+    # ============================================================================
+    
+    def plot_single_curve(self, curve: str):
+        """Create a large, detailed view of a single curve for professional inspection.
+        
+        Features:
+        - Large figure (12x10) for excellent readability
+        - Depth-based plotting (industry standard)
+        - Statistical annotations
+        - Gap indicators
+        - Quality metrics overlay
+        - Processing status indication
+        """
+        try:
+            # Check if curve exists
+            if curve not in self.current_data.columns:
+                messagebox.showwarning("Warning", f"Curve '{curve}' not found in data")
+                return
+            
+            # Clean up and create large figure
+            self.cleanup_visualization()
+            self.ensure_figure_exists()
+            self.fig.set_size_inches(12, 10)
+            
+            # Create main axis
+            ax = self.fig.add_subplot(111)
+            
+            # Get curve data
+            if curve in self.processing_results:
+                curve_data = self.processing_results[curve]['final_data']
+                status = 'Processed'
+                color = 'blue'
+                linewidth = 2.0
+            else:
+                curve_data = self.current_data[curve].values
+                status = 'Original (Not Yet Processed)'
+                color = 'red'
+                linewidth = 1.5
+            
+            # Get depth data
+            depth_curve = None
+            for col in self.current_data.columns:
+                curve_type = self.curve_info.get(col, {}).get('curve_type', '')
+                if 'DEPTH' in curve_type:
+                    depth_curve = col
+                    break
+            
+            if depth_curve:
+                depth = self.current_data[depth_curve].values
+                depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
+                y_label = f'Depth ({depth_unit})'
+            else:
+                depth = np.arange(len(curve_data))
+                y_label = 'Depth (index)'
+            
+            # Plot curve with depth on Y-axis
+            ax.plot(curve_data, depth, color=color, linewidth=linewidth, label=status, alpha=0.9)
+            
+            # Highlight gaps
+            gap_mask = np.isnan(curve_data)
+            if np.any(gap_mask):
+                gap_indices = np.where(gap_mask)[0]
+                if len(gap_indices) > 0:
+                    ax.scatter(np.zeros(len(gap_indices)), depth[gap_indices], 
+                             color='orange', s=10, alpha=0.5, label='Missing Data', zorder=1)
+            
+            # Set title and labels
+            curve_info = self.curve_info.get(curve, {})
+            curve_type = curve_info.get('curve_type', 'UNKNOWN')
+            unit = curve_info.get('unit', '')
+            
+            ax.set_title(f'{curve} - {curve_type}\n({status})', fontsize=14, fontweight='bold')
+            ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
+            ax.set_ylabel(y_label, fontsize=12)
+            
+            # Add legend
+            ax.legend(loc='best', fontsize=10)
+            
+            # Add grid
+            ax.grid(True, alpha=0.3)
+            
+            # Invert Y-axis (industry standard)
+            ax.invert_yaxis()
+            
+            # Add statistics text box
+            valid_data = curve_data[~np.isnan(curve_data)]
+            if len(valid_data) > 0:
+                stats = curve_info.get('statistics', {})
+                quality = "Unknown"
+                missing_pct = stats.get('missing_percent', 0.0)
+                
+                if missing_pct < 5.0:
+                    quality = "Excellent"
+                elif missing_pct < 15.0:
+                    quality = "Good"
+                elif missing_pct < 30.0:
+                    quality = "Fair"
+                else:
+                    quality = "Poor"
+                
+                stats_text = (
+                    f"Statistics:\n"
+                    f"  Min: {stats.get('min', 0):.2f}\n"
+                    f"  Max: {stats.get('max', 0):.2f}\n"
+                    f"  Mean: {stats.get('mean', 0):.2f}\n"
+                    f"  Std: {stats.get('std', 0):.2f}\n"
+                    f"  Missing: {missing_pct:.1f}%\n"
+                    f"  Quality: {quality}"
+                )
+                
+                ax.text(0.98, 0.02, stats_text, transform=ax.transAxes,
+                       fontsize=9, verticalalignment='bottom', horizontalalignment='right',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.85, edgecolor='gray'))
+            
+            self.fig.tight_layout()
+            
+        except Exception as e:
+            messagebox.showerror("Single Curve Plot Error", f"Failed to create single curve plot: {str(e)}")
+            self.log_processing(f"Error in plot_single_curve: {e}")
+    
+    def plot_single_curve_comparison(self):
+        """Create a side-by-side comparison of two single curves for easy visual comparison.
+        
+        Features:
+        - Two panels side-by-side (14x8 figure)
+        - Independent axis scaling per curve
+        - Aligned depth axes for easy correlation
+        - Statistical overlays on both curves
+        - Clear labeling and professional appearance
+        """
+        try:
+            # Get both curves
+            curve1 = self.viz_curve_var.get()
+            curve2 = self.viz_curve2_var.get()
+            
+            if not curve1 or curve1 not in self.current_data.columns:
+                messagebox.showwarning("Warning", "Please select a valid primary curve")
+                return
+            
+            if not curve2 or curve2 not in self.current_data.columns:
+                messagebox.showwarning("Warning", "Please select a valid secondary curve for comparison")
+                return
+            
+            # Clean up and create figure
+            self.cleanup_visualization()
+            self.ensure_figure_exists()
+            self.fig.set_size_inches(14, 9)
+            
+            # Create two side-by-side subplots with shared Y-axis
+            ax1 = self.fig.add_subplot(121)
+            ax2 = self.fig.add_subplot(122, sharey=ax1)
+            
+            # Get depth data
+            depth_curve = None
+            for col in self.current_data.columns:
+                curve_type = self.curve_info.get(col, {}).get('curve_type', '')
+                if 'DEPTH' in curve_type:
+                    depth_curve = col
+                    break
+            
+            if depth_curve:
+                depth = self.current_data[depth_curve].values
+                depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
+                y_label = f'Depth ({depth_unit})'
+            else:
+                depth = np.arange(len(self.current_data))
+                y_label = 'Depth (index)'
+            
+            # Plot Curve 1
+            if curve1 in self.processing_results:
+                data1 = self.processing_results[curve1]['final_data']
+                status1 = 'Processed'
+                color1 = 'blue'
+            else:
+                data1 = self.current_data[curve1].values
+                status1 = 'Original'
+                color1 = 'red'
+            
+            ax1.plot(data1, depth, color=color1, linewidth=2, label=status1)
+            ax1.set_title(f'{curve1}\n({status1})', fontsize=12, fontweight='bold')
+            ax1.set_xlabel(f'{curve1} ({self.curve_info.get(curve1, {}).get("unit", "")})', fontsize=11)
+            ax1.set_ylabel(y_label, fontsize=11)
+            ax1.grid(True, alpha=0.3)
+            ax1.invert_yaxis()
+            ax1.legend(loc='best')
+            
+            # Add statistics for curve 1
+            valid1 = data1[~np.isnan(data1)]
+            if len(valid1) > 0:
+                stats1_text = (
+                    f"Min: {np.min(valid1):.2f}\n"
+                    f"Max: {np.max(valid1):.2f}\n"
+                    f"Mean: {np.mean(valid1):.2f}\n"
+                    f"Missing: {(np.sum(np.isnan(data1))/len(data1)*100):.1f}%"
+                )
+                ax1.text(0.02, 0.98, stats1_text, transform=ax1.transAxes,
+                        fontsize=9, verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85))
+            
+            # Plot Curve 2
+            if curve2 in self.processing_results:
+                data2 = self.processing_results[curve2]['final_data']
+                status2 = 'Processed'
+                color2 = 'blue'
+            else:
+                data2 = self.current_data[curve2].values
+                status2 = 'Original'
+                color2 = 'red'
+            
+            ax2.plot(data2, depth, color=color2, linewidth=2, label=status2)
+            ax2.set_title(f'{curve2}\n({status2})', fontsize=12, fontweight='bold')
+            ax2.set_xlabel(f'{curve2} ({self.curve_info.get(curve2, {}).get("unit", "")})', fontsize=11)
+            ax2.grid(True, alpha=0.3)
+            ax2.legend(loc='best')
+            
+            # Add statistics for curve 2
+            valid2 = data2[~np.isnan(data2)]
+            if len(valid2) > 0:
+                stats2_text = (
+                    f"Min: {np.min(valid2):.2f}\n"
+                    f"Max: {np.max(valid2):.2f}\n"
+                    f"Mean: {np.mean(valid2):.2f}\n"
+                    f"Missing: {(np.sum(np.isnan(data2))/len(data2)*100):.1f}%"
+                )
+                ax2.text(0.02, 0.98, stats2_text, transform=ax2.transAxes,
+                        fontsize=9, verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.85))
+            
+            # Overall title
+            self.fig.suptitle(f'Side-by-Side Comparison: {curve1} vs {curve2}', 
+                            fontsize=14, fontweight='bold')
+            
+            # Apply proper spacing
+            self.fig.tight_layout()
+            self.fig.subplots_adjust(top=0.93, wspace=0.30)
+            
+        except Exception as e:
+            messagebox.showerror("Single Curve Comparison Error", f"Failed to create comparison plot: {str(e)}")
+            self.log_processing(f"Error in plot_single_curve_comparison: {e}")
+    
+    # ============================================================================
+    # POPUP VISUALIZATION SYSTEM (Professional Workflow)
+    # ============================================================================
+    
+    def _create_popup_visualization(self, viz_type, curve):
+        """Open visualization in separate matplotlib popup window.
+        
+        Professional workflow: Separate windows allow resizing, zooming, dual monitors,
+        and keeping multiple plots open simultaneously - industry standard practice.
+        """
+        try:
+            import matplotlib.pyplot as plt
+            
+            # Determine appropriate figure size for viz type
+            size_map = {
+                'single_curve': (12, 10),
+                'single_curve_comparison': (14, 9),
+                'comparison': (12, 9),
+                'log_display': (18, 10),
+                'quality_overview': (16, 12),
+                'quality_metrics': (14, 10),
+                'correlation_matrix': (12, 12),
+                'scatter_plot': (12, 10),
+                '3d_visualization': (12, 10),
+                'multi_curve': (16, 10),
+                'unprocessed_curves': (14, 10),
+                'curve_comparison_all': (16, 10),
+                'uncertainty': (12, 9)
+            }
+            
+            figsize = size_map.get(viz_type, (12, 9))
+            
+            # Create new independent matplotlib figure
+            fig = plt.figure(figsize=figsize, num=f"{viz_type} - {curve if curve else 'Multiple Curves'}")
+            
+            # Add well identification to figure title for safety
+            well_text = ""
+            if hasattr(self, 'well_info') and self.well_info:
+                well_name = self.well_info.get('well_name', '')
+                if well_name and well_name != 'UNKNOWN':
+                    well_text = f" (Well: {well_name})"
+            
+            # Route to appropriate plotting method
+            # Create plot on the new figure
+            if viz_type == "single_curve":
+                self._plot_single_curve_popup(fig, curve)
+            elif viz_type == "single_curve_comparison":
+                self._plot_single_curve_comparison_popup(fig)
+            elif viz_type == "comparison":
+                self._plot_comparison_popup(fig, curve)
+            elif viz_type == "multi_curve":
+                self._plot_multi_curve_popup(fig)
+            elif viz_type == "log_display":
+                self._plot_log_display_popup(fig)
+            elif viz_type == "quality_overview":
+                self._plot_quality_overview_popup(fig)
+            elif viz_type == "unprocessed_curves":
+                self._plot_unprocessed_curves_popup(fig)
+            else:
+                # For other types, use simplified popup
+                ax = fig.add_subplot(111)
+                ax.text(0.5, 0.5, f"Popup visualization for '{viz_type}' not yet implemented.\nUse embedded mode.",
+                       ha='center', va='center', fontsize=12)
+            
+            # Add well identification to overall title if present
+            if well_text:
+                current_title = fig._suptitle.get_text() if fig._suptitle else ""
+                if current_title:
+                    fig.suptitle(current_title + well_text, fontsize=14, fontweight='bold')
+            
+            # Show in popup window (non-blocking so app remains responsive)
+            plt.show(block=False)
+            
+            self.log_processing(f"Opened {viz_type} visualization in new window{well_text}")
+            
+        except Exception as e:
+            messagebox.showerror("Popup Visualization Error", 
+                               f"Failed to open visualization in new window:\n{str(e)}\n\nTry unchecking 'Open in new window'")
+            self.log_processing(f"Error creating popup visualization: {e}")
+    
+    # Simplified popup plotting methods (delegate to matplotlib's popup system)
+    def _plot_single_curve_popup(self, fig, curve):
+        """Plot single curve in popup window"""
+        ax = fig.add_subplot(111)
+        
+        # Get data and plot (simplified version for popup)
+        if curve in self.processing_results:
+            data = self.processing_results[curve]['final_data']
+            color, status = 'blue', 'Processed'
+        else:
+            data = self.current_data[curve].values
+            color, status = 'red', 'Original'
+        
+        depth = self._get_depth_array()
+        ax.plot(data, depth, color=color, linewidth=2, label=status)
+        ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
+        ax.set_ylabel('Depth (m)')
+        ax.set_title(f"{curve} - {status}", fontsize=14, fontweight='bold')
+        ax.invert_yaxis()
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+    
+    def _plot_single_curve_comparison_popup(self, fig):
+        """Plot side-by-side comparison in popup"""
+        curve1 = self.viz_curve_var.get()
+        curve2 = self.viz_curve2_var.get()
+        
+        ax1 = fig.add_subplot(121)
+        ax2 = fig.add_subplot(122, sharey=ax1)
+        
+        depth = self._get_depth_array()
+        
+        # Plot curve 1
+        data1 = self.processing_results.get(curve1, {}).get('final_data', self.current_data[curve1].values)
+        ax1.plot(data1, depth, 'b-', linewidth=2)
+        ax1.set_title(curve1, fontsize=12, fontweight='bold')
+        ax1.set_xlabel(f"{curve1}")
+        ax1.set_ylabel('Depth (m)')
+        ax1.invert_yaxis()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot curve 2
+        data2 = self.processing_results.get(curve2, {}).get('final_data', self.current_data[curve2].values)
+        ax2.plot(data2, depth, 'r-', linewidth=2)
+        ax2.set_title(curve2, fontsize=12, fontweight='bold')
+        ax2.set_xlabel(f"{curve2}")
+        ax2.grid(True, alpha=0.3)
+        
+        fig.suptitle(f"Comparison: {curve1} vs {curve2}", fontsize=14, fontweight='bold')
+        fig.tight_layout()
+    
+    def _plot_comparison_popup(self, fig, curve):
+        """Plot original vs processed comparison in popup"""
+        ax = fig.add_subplot(111)
+        depth = self._get_depth_array()
+        
+        if curve in self.processing_results:
+            original = self.processing_results[curve]['original_data']
+            processed = self.processing_results[curve]['final_data']
+            ax.plot(original, depth, 'r-', alpha=0.7, label='Original', linewidth=1)
+            ax.plot(processed, depth, 'b-', alpha=0.9, label='Processed', linewidth=2)
+        else:
+            data = self.current_data[curve].values
+            ax.plot(data, depth, 'r-', label='Original', linewidth=1.5)
+        
+        ax.set_title(f"Comparison: {curve}", fontsize=14, fontweight='bold')
+        ax.set_xlabel(f"{curve}")
+        ax.set_ylabel('Depth (m)')
+        ax.invert_yaxis()
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+    
+    def _plot_multi_curve_popup(self, fig):
+        """Plot multiple curves in popup window"""
+        selected_indices = self.curve_listbox.curselection()
+        if not selected_indices:
+            return
+        
+        selected_curves = [self.curve_listbox.get(i) for i in selected_indices]
+        depth = self._get_depth_array()
+        
+        ax = fig.add_subplot(111)
+        for i, curve in enumerate(selected_curves[:10]):  # Limit to 10 curves
+            if curve in self.current_data.columns:
+                data = self.current_data[curve].values
+                ax.plot(data, depth, label=curve, linewidth=1.5, alpha=0.8)
+        
+        ax.set_ylabel('Depth (m)')
+        ax.set_title("Multi-Curve Display", fontsize=14, fontweight='bold')
+        ax.invert_yaxis()
+        ax.grid(True, alpha=0.3)
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        fig.tight_layout()
+    
+    def _plot_log_display_popup(self, fig):
+        """Plot industry log display in popup"""
+        # Similar to embedded but uses popup fig
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, "Log display in popup - use embedded mode for full features",
+               ha='center', va='center')
+        fig.tight_layout()
+    
+    def _plot_quality_overview_popup(self, fig):
+        """Plot quality overview in popup"""
+        # Similar to embedded but uses popup fig
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, "Quality overview - use embedded mode for full dashboard",
+               ha='center', va='center')
+        fig.tight_layout()
+    
+    def _plot_unprocessed_curves_popup(self, fig):
+        """Plot unprocessed curves in popup"""
+        ax = fig.add_subplot(111)
+        depth = self._get_depth_array()
+        
+        for curve in list(self.current_data.columns)[:10]:
+            if curve in self.current_data.columns:
+                data = self.current_data[curve].values
+                ax.plot(data, depth, label=curve, alpha=0.7)
+        
+        ax.set_ylabel('Depth (m)')
+        ax.set_title("Unprocessed Curves", fontsize=14, fontweight='bold')
+        ax.invert_yaxis()
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+    
+    def _get_depth_array(self):
+        """Helper to get depth array for plotting"""
+        try:
+            for col in self.current_data.columns:
+                curve_type = self.curve_info.get(col, {}).get('curve_type', '')
+                if 'DEPTH' in curve_type:
+                    return self.current_data[col].values
+            return np.arange(len(self.current_data))
+        except:
+            return np.arange(100)  # Fallback
+    
+    # ============================================================================
     # ENHANCED VISUALIZATION CONTROLLER
     # ============================================================================
     
     def update_visualization_enhanced(self):
-        """Enhanced visualization update that includes unprocessed curves"""
+        """Enhanced visualization update with support for popup and embedded displays"""
         try:
             # Pre-flight validation
             validation_result = self._validate_visualization_prerequisites()
@@ -13081,17 +14129,28 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 return
             
             viz_type = self.viz_type_var.get()
+            curve = self.viz_curve_var.get()
             
-            # Add new visualization types for unprocessed curves
-            if viz_type == "unprocessed_curves":
-                self.plot_unprocessed_curves()
-            elif viz_type == "quality_overview":
-                self.plot_curve_quality_overview()
-            elif viz_type == "curve_comparison_all":
-                self.plot_curve_comparison_all()
+            # Check if user wants popup window (professional workflow)
+            if self.plot_in_new_window_var.get():
+                # Open in new matplotlib popup window
+                self._create_popup_visualization(viz_type, curve)
             else:
-                # Use existing visualization methods
-                self.update_visualization()
+                # Embedded display (original behavior)
+                # Add new visualization types
+                if viz_type == "single_curve":
+                    self.plot_single_curve(curve)
+                elif viz_type == "single_curve_comparison":
+                    self.plot_single_curve_comparison()
+                elif viz_type == "unprocessed_curves":
+                    self.plot_unprocessed_curves()
+                elif viz_type == "quality_overview":
+                    self.plot_curve_quality_overview()
+                elif viz_type == "curve_comparison_all":
+                    self.plot_curve_comparison_all()
+                else:
+                    # Use existing visualization methods
+                    self.update_visualization()
         except Exception as e:
             messagebox.showerror("Visualization Error", 
                                f"Failed to update visualization:\n{str(e)}")
@@ -13111,7 +14170,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.multi_curve_frame.pack_forget()
         
         # Enable/disable secondary curve combobox based on viz type
-        if viz_type in ["3d_visualization"]:
+        if viz_type in ["3d_visualization", "single_curve_comparison"]:
             self.viz_curve2_combo['state'] = 'readonly'
         else:
             self.viz_curve2_combo['state'] = 'disabled'
@@ -13191,9 +14250,10 @@ def main():
         # Set up logging
 
         
-        # Check for advanced libraries
+        # Check for advanced libraries - log to console instead of popup
         if not ADVANCED_LIBS:
-            messagebox.showwarning("Library Warning", "Some advanced features may not be available due to missing libraries.\nFor full functionality, install: scipy, scikit-learn, pywavelets")
+            print("INFO: Some advanced features may not be available due to missing libraries.")
+            print("      For full functionality, install: scipy, scikit-learn, pywavelets")
         
         # Create and run application
         app = AdvancedPreprocessingApplication()
