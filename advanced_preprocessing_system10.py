@@ -8452,6 +8452,9 @@ Your feedback contributes to software quality and reliability.
             # Reset window title
             self.root.title("Advanced Wireline Data Preprocessing System")
             
+            # Update well info display to show "not loaded" state
+            self._update_well_info_display()
+            
             self.log_processing("Core data structures cleared")
             
         except Exception as e:
@@ -11165,10 +11168,72 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.log_processing(f"Warning: Could not update window title: {e}")
     
     def _update_well_info_display(self):
-        """Update well information display in Data Tab"""
-        # This will be implemented when we add the UI component to the data tab
-        # For now, just ensure well_info is available
-        pass
+        """Update well information display in Data Tab
+        
+        SAFETY CRITICAL: Updates the prominent well identification card
+        to ensure users always know which well they're working with.
+        """
+        try:
+            if not hasattr(self, 'well_info') or not self.well_info:
+                # No well info available - show "not loaded" state
+                if hasattr(self, 'well_name_label'):
+                    self.well_name_label.config(text="Well: Not loaded", foreground='#CC0000')
+                if hasattr(self, 'field_label'):
+                    self.field_label.config(text="Field: Not loaded")
+                if hasattr(self, 'uwi_label'):
+                    self.uwi_label.config(text="UWI: Not loaded")
+                if hasattr(self, 'company_label'):
+                    self.company_label.config(text="Company: Not loaded")
+                if hasattr(self, 'depth_range_label'):
+                    self.depth_range_label.config(text="Depth Range: Not loaded")
+                return
+            
+            # Extract well information
+            well_name = self.well_info.get('well_name', 'UNKNOWN')
+            field = self.well_info.get('field', 'UNKNOWN')
+            uwi = self.well_info.get('uwi', 'UNKNOWN')
+            company = self.well_info.get('company', 'UNKNOWN')
+            start_depth = self.well_info.get('start_depth', 'UNKNOWN')
+            stop_depth = self.well_info.get('stop_depth', 'UNKNOWN')
+            
+            # Color code well name based on whether it's known
+            if well_name and well_name != 'UNKNOWN':
+                well_color = '#006400'  # Dark green for loaded
+                well_text = f"Well: {well_name}"
+            else:
+                well_color = '#CC6600'  # Orange for unknown
+                well_text = "Well: UNKNOWN - Please verify well identification"
+            
+            # Update UI labels if they exist
+            if hasattr(self, 'well_name_label'):
+                self.well_name_label.config(text=well_text, foreground=well_color)
+            
+            if hasattr(self, 'field_label'):
+                field_text = f"Field: {field}" if field and field != 'UNKNOWN' else "Field: Not specified"
+                self.field_label.config(text=field_text)
+            
+            if hasattr(self, 'uwi_label'):
+                uwi_text = f"UWI: {uwi}" if uwi and uwi != 'UNKNOWN' else "UWI: Not specified"
+                self.uwi_label.config(text=uwi_text)
+            
+            if hasattr(self, 'company_label'):
+                company_text = f"Company: {company}" if company and company != 'UNKNOWN' else "Company: Not specified"
+                self.company_label.config(text=company_text)
+            
+            if hasattr(self, 'depth_range_label'):
+                if start_depth != 'UNKNOWN' and stop_depth != 'UNKNOWN':
+                    depth_text = f"Depth Range: {start_depth} to {stop_depth}"
+                else:
+                    depth_text = "Depth Range: Not available"
+                self.depth_range_label.config(text=depth_text)
+            
+            self.log_processing("Well information display updated in UI")
+            
+        except Exception as e:
+            self.log_processing(f"Error updating well info display: {e}")
+            # Don't fail silently - log the error but continue
+            import traceback
+            self.log_processing(f"Traceback: {traceback.format_exc()}")
     
 
     
