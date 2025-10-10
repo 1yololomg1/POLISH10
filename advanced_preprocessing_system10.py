@@ -9194,11 +9194,17 @@ Your feedback contributes to software quality and reliability.
                     })
             
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Visualization update failed for {viz_type}: {e}")
+            # Log visualization update failure with diagnostic information
+            self.log_processing(f"ERROR: Visualization update failed for {viz_type}: {str(e)}")
+            import warnings
+            warnings.warn(
+                f"Visualization update failed for '{viz_type}': {str(e)}. "
+                f"Check data availability and visualization parameters.",
+                UserWarning
+            )
             messagebox.showerror("Visualization Error", 
-                               f"Failed to create {viz_type} visualization:\n{str(e)}")
+                               f"Failed to create {viz_type} visualization:\n{str(e)}\n\n"
+                               f"Check the processing log for details.")
             
             # Track error with analytics
             if BETA_SYSTEM_AVAILABLE and hasattr(self, 'beta_analytics'):
@@ -9241,13 +9247,20 @@ Your feedback contributes to software quality and reliability.
                 # Use existing thread-safe pattern with enhanced error recovery
                 self.root.after_idle(lambda: self._execute_visualization_update_safely())
             else:
-                # Warning removed - operation continues
-                # Status notification handled - continuing operation
-                pass
+                # Root window not available for visualization update
+                import warnings
+                warnings.warn(
+                    "Root window unavailable for visualization update. Skipping update.",
+                    UserWarning
+                )
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Thread marshalling failed for visualization update: {e}")
+            # Log thread marshalling failure
+            import warnings
+            warnings.warn(
+                f"Thread marshalling failed for visualization update: {str(e)}. "
+                f"Visualization may not update automatically.",
+                UserWarning
+            )
 
     def _execute_visualization_update_safely(self):
         """Execute visualization update with enterprise-grade error handling"""
@@ -9269,9 +9282,14 @@ Your feedback contributes to software quality and reliability.
                 })
                 
         except Exception as e:
-            # Error handling removed - operation continues safely
-            # Operation result handled - continuing safely
-            pass  # f"Visualization update execution failed: {e}")
+            # Log visualization update execution failure
+            self.log_processing(f"ERROR: Visualization update execution failed: {str(e)}")
+            import warnings
+            warnings.warn(
+                f"Visualization update execution failed: {str(e)}. "
+                f"Preview may not reflect processed data.",
+                UserWarning
+            )
             # Graceful degradation - inform user without crashing
             if hasattr(self, 'status_label'):
                 try:
