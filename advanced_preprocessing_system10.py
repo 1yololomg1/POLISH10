@@ -5381,9 +5381,11 @@ class ThreadSafeVisualizationManager:
                 viz_function = self._visualization_queue.get_nowait()
                 viz_function()
         except queue.Empty:
-            pass
+            pass  # Queue empty is normal, not an error
         except Exception as e:
-            pass  # error removed(f"Error processing visualization queue: {e}")
+            import warnings
+            warnings.warn(f"Error processing visualization queue: {str(e)}", UserWarning)
+            self.log_processing(f"Visualization queue processing error: {e}")
     
     @contextmanager
     def thread_safe_figure_context(self, figsize=(12, 8)):
@@ -7469,13 +7471,11 @@ class AdvancedPreprocessingApplication:
 
         for lib_name, status in library_status.items():
             if status['available']:
-                pass  # info removed(f"[AVAILABLE] {lib_name}: Available - Features: {len(status['features'])}")
-                for feature in status['features']:
-                    pass  # debug removed(f"   • {feature}")
+                self.log_processing(f"[AVAILABLE] {lib_name}: Available - Features: {len(status['features'])}")
             else:
-                pass  # warning removed(f"⚠️  {lib_name}: Not available - Using fallbacks")
-                for fallback in status['fallbacks']:
-                    pass  # debug removed(f"   • Fallback: {fallback}")
+                self.log_processing(f"WARNING: {lib_name}: Not available - Using fallbacks")
+                if status['fallbacks']:
+                    self.log_processing(f"  Fallbacks: {', '.join(status['fallbacks'][:3])}")
         
         return library_status
 
@@ -7633,10 +7633,16 @@ class AdvancedPreprocessingApplication:
             
             # Enterprise monitoring: log significant memory increases
             if current_mb > self.memory_monitor['initial_usage']['rss_mb'] * 2:
-                pass  # warning removed(f"Memory usage doubled from initial: {current_mb:.1f}MB vs {self.memory_monitor['initial_usage']['rss_mb']:.1f}MB")
+                import warnings
+                warnings.warn(
+                    f"Memory usage doubled: {current_mb:.1f}MB vs initial {self.memory_monitor['initial_usage']['rss_mb']:.1f}MB. "
+                    f"Consider restarting application or reducing data size.",
+                    UserWarning
+                )
+                self.log_processing(f"WARNING: Memory doubled during {operation_name}")
             
         except Exception as e:
-            pass  # error removed(f"Memory monitoring failed for operation '{operation_name}': {e}")
+            self.log_processing(f"Memory monitoring failed for '{operation_name}': {str(e)}")
 
     def _perform_comprehensive_memory_cleanup(self, context: str):
         """Comprehensive memory cleanup with detailed tracking"""
@@ -7691,7 +7697,12 @@ class AdvancedPreprocessingApplication:
                 pass  # f"Memory cleanup completed for '{context}': {', '.join(cleanup_actions)}")
             
         except Exception as e:
-            pass  # error removed(f"Comprehensive memory cleanup failed: {e}")
+            self.log_processing(f"ERROR: Comprehensive memory cleanup failed: {str(e)}")
+            import warnings
+            warnings.warn(
+                f"Memory cleanup failed: {str(e)}. Memory leaks likely. Consider restarting application.",
+                UserWarning
+            )
 
     # =============================================================================
     # LOW PRIORITY FIX #1: BETA ANALYTICS INTEGRATION ROBUSTNESS
