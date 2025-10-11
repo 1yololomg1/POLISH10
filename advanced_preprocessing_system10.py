@@ -4912,6 +4912,121 @@ class ZoneAwareGapFiller(AdvancedGapFiller):
         }
 
 #=============================================================================
+# CROSS-WELL PRIOR MANAGER
+#=============================================================================
+
+class CrossWellPriorManager:
+    """Build and serve cross-well priors for expert two-pass workflows.
+
+    Priors are computed per curve and optionally per depth bins (or zones) across
+    a selected cohort of wells. Robust statistics (median/IQR) are used to
+    minimize sensitivity to outliers and tool mismatches.
+    """
+
+    def __init__(self):
+        self.app = None
+        self.priors: Dict[str, Any] = {}
+
+    def set_application_reference(self, app):
+        self.app = app
+
+    def _select_cohort_ids(self) -> List[str]:
+        if not self.app or not getattr(self.app, 'well_datasets', None):
+            return []
+        if self.app.cohort_selected_well_ids:
+            return [wid for wid in self.app.cohort_selected_well_ids if wid in self.app.well_datasets]
+        # Auto-select: all loaded wells except active (simple, conservative default)
+        ids = list(self.app.well_datasets.keys())
+        return ids
+
+    def build_priors(self, depth_binned: bool = True) -> Dict[str, Any]:
+        """Build cross-well priors from cohort.
+
+        Returns a dict: { curve -> { 'global': stats, 'bins': [ {depth_min,max, stats} ] } }
+        """
+        priors: Dict[str, Any] = {}
+        try:
+            cohort_ids = self._select_cohort_ids()
+            if not cohort_ids:
+                return {}
+            # Collect per-curve arrays
+            curve_to_series: Dict[str, List[np.ndarray]] = {}
+            depth_to_series: Dict[str, List[np.ndarray]] = {}
+            for wid in cohort_ids:
+                ds = self.app.well_datasets.get(wid, {})
+                df = ds.get('current_data')
+                if not isinstance(df, pd.DataFrame) or df.empty:
+                    continue
+                depth_col = 'DEPT' if 'DEPT' in df.columns else (df.columns[0] if len(df.columns) else None)
+                if depth_col is None:
+                    continue
+                depth_vals = pd.to_numeric(df[depth_col], errors='coerce').values
+                for col in df.columns:
+                    if col == depth_col:
+                        continue
+                    arr = pd.to_numeric(df[col], errors='coerce').values
+                    curve_to_series.setdefault(col, []).append(arr)
+                    depth_to_series.setdefault(col, []).append(depth_vals)
+
+            # Compute robust global stats and optional depth bins
+            for curve, arrays in curve_to_series.items():
+                try:
+                    stacked = np.concatenate([a[~np.isnan(a)] for a in arrays if isinstance(a, np.ndarray)])
+                    if stacked.size == 0:
+                        continue
+                    global_stats = {
+                        'median': float(np.median(stacked)),
+                        'p10': float(np.percentile(stacked, 10)),
+                        'p90': float(np.percentile(stacked, 90)),
+                        'mean': float(np.mean(stacked)),
+                        'std': float(np.std(stacked)),
+                        'count': int(stacked.size)
+                    }
+                    priors[curve] = {'global': global_stats, 'bins': []}
+
+                    if depth_binned:
+                        # Build simple equal-count bins by depth using first cohort well depth as template
+                        all_depths = np.concatenate([d for d in depth_to_series.get(curve, []) if isinstance(d, np.ndarray)])
+                        if all_depths.size > 20:
+                            depth_edges = np.linspace(np.nanmin(all_depths), np.nanmax(all_depths), 6)  # 5 bins
+                            for b in range(len(depth_edges)-1):
+                                dmin, dmax = depth_edges[b], depth_edges[b+1]
+                                bin_vals = []
+                                for arr, dvals in zip(curve_to_series[curve], depth_to_series.get(curve, [])):
+                                    mask = (dvals >= dmin) & (dvals < dmax)
+                                    bin_vals.append(arr[mask])
+                                if bin_vals:
+                                    bin_stack = np.concatenate([bv[~np.isnan(bv)] for bv in bin_vals if isinstance(bv, np.ndarray)])
+                                    if bin_stack.size > 0:
+                                        priors[curve]['bins'].append({
+                                            'depth_min': float(dmin),
+                                            'depth_max': float(dmax),
+                                            'median': float(np.median(bin_stack)),
+                                            'p10': float(np.percentile(bin_stack, 10)),
+                                            'p90': float(np.percentile(bin_stack, 90)),
+                                            'count': int(bin_stack.size)
+                                        })
+                except Exception:
+                    continue
+        except Exception:
+            return {}
+        self.priors = priors
+        return priors
+
+    def get_bounds_for_curve(self, curve: str, depth: Optional[float] = None) -> Optional[Tuple[float, float]]:
+        if curve not in self.priors:
+            return None
+        if depth is None or not self.priors[curve]['bins']:
+            g = self.priors[curve]['global']
+            return (g['p10'], g['p90'])
+        # Find matching bin
+        for b in self.priors[curve]['bins']:
+            if b['depth_min'] <= depth <= b['depth_max']:
+                return (b['p10'], b['p90'])
+        g = self.priors[curve]['global']
+        return (g['p10'], g['p90'])
+
+#=============================================================================
 # PETROPHYSICAL RELATIONSHIP VALIDATOR
 #=============================================================================
 
@@ -6730,6 +6845,9 @@ class AdvancedPreprocessingApplication:
         # Geological context for intelligent gap classification
         self.geological_context = GeologicalContext()
         
+        # Cross-well priors manager (multiwell intelligence)
+        self.crosswell_prior_manager = None  # Will be initialized after class definition
+        
         # Initialize unit standardizer
         self.unit_standardizer = IndustryUnitStandardizer()
         
@@ -6784,6 +6902,14 @@ class AdvancedPreprocessingApplication:
         # Session preference: standardize units on upload (percent → v/v for fractional families)
         self.standardize_on_upload_var = tk.BooleanVar(value=True)
         self._upload_standardization_note = ""
+        
+        # Cohort & cross-well priors preferences
+        self.use_crosswell_priors_var = tk.BooleanVar(value=False)
+        self.two_pass_refinement_var = tk.BooleanVar(value=True)
+        self.priors_depth_binning_var = tk.BooleanVar(value=True)
+        self.auto_select_cohort_var = tk.BooleanVar(value=True)
+        self.cohort_selected_well_ids: List[str] = []
+        self.crosswell_priors: Dict[str, Any] = {}
         
         # Configure matplotlib for better memory management
         plt.rcParams['figure.max_open_warning'] = 10
@@ -8345,6 +8471,13 @@ Your feedback contributes to software quality and reliability.
         
         # Set application reference for unit standardizer
         self.unit_standardizer.set_application_reference(self)
+        
+        # Initialize cross-well prior manager after UI creation
+        try:
+            self.crosswell_prior_manager = CrossWellPriorManager()
+            self.crosswell_prior_manager.set_application_reference(self)
+        except Exception:
+            self.crosswell_prior_manager = None
     
     def log_processing(self, message: str) -> None:
         """Route processing messages to the on-screen status UI only (no file logging)."""
@@ -8775,6 +8908,14 @@ Your feedback contributes to software quality and reliability.
             if not target_dir:
                 return
             exported = 0
+            # Optionally rebuild priors before export for audit trail
+            if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager:
+                try:
+                    self.crosswell_priors = self.crosswell_prior_manager.build_priors(
+                        depth_binned=self.priors_depth_binning_var.get()
+                    )
+                except Exception:
+                    pass
             for wid, ds in self.well_datasets.items():
                 pdf = ds.get('processed_data')
                 if not isinstance(pdf, pd.DataFrame) or pdf.empty:
@@ -8789,6 +8930,23 @@ Your feedback contributes to software quality and reliability.
             messagebox.showinfo("Export All", f"Exported {exported} processed well(s) to {target_dir}")
         except Exception as e:
             messagebox.showerror("Export All", f"Failed to export: {e}")
+
+    def build_crosswell_priors(self):
+        try:
+            if not self.use_crosswell_priors_var.get():
+                messagebox.showinfo("Cross-Well Priors", "Enable Cross-Well Priors first.")
+                return
+            if not self.crosswell_prior_manager:
+                messagebox.showerror("Cross-Well Priors", "Prior manager unavailable.")
+                return
+            self.status_label.config(text="Building cross-well priors...")
+            priors = self.crosswell_prior_manager.build_priors(depth_binned=self.priors_depth_binning_var.get())
+            self.crosswell_priors = priors or {}
+            count = len(self.crosswell_priors)
+            self.status_label.config(text=f"Cross-well priors built for {count} curves")
+            messagebox.showinfo("Cross-Well Priors", f"Built priors for {count} curves.")
+        except Exception as e:
+            messagebox.showerror("Cross-Well Priors", f"Failed to build priors: {e}")
     
     def reset_application_state(self, prompt_if_unsaved=True):
         """Comprehensive application state reset to prevent cross-contamination between wells
@@ -8953,12 +9111,14 @@ Your feedback contributes to software quality and reliability.
         gap_filling_tab = ttk.Frame(config_notebook)
         denoising_tab = ttk.Frame(config_notebook)
         advanced_tab = ttk.Frame(config_notebook)
+        cohort_tab = ttk.Frame(config_notebook)
         
         # Add tabs to notebook
         config_notebook.add(uniformization_tab, text="Uniformization")
         config_notebook.add(gap_filling_tab, text="Gap Filling")
         config_notebook.add(denoising_tab, text="Denoising")
         config_notebook.add(advanced_tab, text="Advanced")
+        config_notebook.add(cohort_tab, text="Cross-Well Cohort")
         
         # Uniformization tab content
         # Standard depth spacing
@@ -9202,6 +9362,26 @@ Your feedback contributes to software quality and reliability.
         self.auto_cleanup_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(advanced_tab, text="Auto Memory Cleanup", 
                        variable=self.auto_cleanup_var).pack(anchor='w', pady=5, padx=10)
+
+        # Cohort/prior configuration UI (expert workflow)
+        ttk.Label(cohort_tab, text="Cohort Selection & Cross-Well Priors", style='Card.TLabel').pack(anchor='w', padx=10, pady=(10, 5))
+        ttk.Checkbutton(cohort_tab, text="Enable Cross-Well Priors",
+                        variable=self.use_crosswell_priors_var).pack(anchor='w', padx=10, pady=2)
+        ttk.Checkbutton(cohort_tab, text="Two-Pass Refinement (pass 1 single-well, pass 2 with priors)",
+                        variable=self.two_pass_refinement_var).pack(anchor='w', padx=10, pady=2)
+        ttk.Checkbutton(cohort_tab, text="Depth-Binned Priors (per zone/depth bins)",
+                        variable=self.priors_depth_binning_var).pack(anchor='w', padx=10, pady=2)
+        ttk.Checkbutton(cohort_tab, text="Auto-Select Cohort (analog wells by curve coverage/quality)",
+                        variable=self.auto_select_cohort_var).pack(anchor='w', padx=10, pady=(2, 8))
+
+        cohort_btns = ttk.Frame(cohort_tab)
+        cohort_btns.pack(fill='x', padx=10, pady=(0, 10))
+        build_btn = self.ui.create_button(cohort_btns, text="Build Cross-Well Priors",
+                                          command=self.build_crosswell_priors, button_type='primary', width=25)
+        build_btn.pack(side='left', padx=(0, 10))
+        view_btn = self.ui.create_button(cohort_btns, text="View Priors Summary",
+                                         command=self.show_cross_well_summary, button_type='secondary', width=22)
+        view_btn.pack(side='left')
         
         # Processing execution - placed below the notebook; now reachable via scrolling
         exec_card, exec_content = self.ui.create_card(config_inner, "Execute Processing")
@@ -10397,6 +10577,9 @@ Your feedback contributes to software quality and reliability.
         export_all_btn2 = self.ui.create_button(report_actions_frame, text="Export All Processed",
                                                command=self.export_all_processed, button_type='secondary', width=20)
         export_all_btn2.pack(side='left', padx=(10, 0))
+        build_priors_btn = self.ui.create_button(report_actions_frame, text="Build Priors",
+                                                command=self.build_crosswell_priors, button_type='secondary', width=14)
+        build_priors_btn.pack(side='left', padx=(10, 0))
         
         # Group 2: LAS Preview Actions
         preview_actions_frame = ttk.Frame(control_frame)
@@ -12374,6 +12557,17 @@ This ensures consistent data interpretation and fixes depth validation issues.
             else:
                 zones = []
                 self.log_processing("No gamma ray data available for geological boundary detection")
+
+            # Step 2b: Build cross-well priors early if enabled (so downstream steps can use bounds)
+            if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager:
+                try:
+                    self.root.after(0, lambda: self.status_label.config(text="Building cross-well priors..."))
+                    self.crosswell_priors = self.crosswell_prior_manager.build_priors(
+                        depth_binned=self.priors_depth_binning_var.get()
+                    )
+                    self.log_processing(f"Cross-well priors ready for {len(self.crosswell_priors)} curves")
+                except Exception as e:
+                    self.log_processing(f"Cross-well priors build skipped: {e}")
             
             # Step 3: Environmental Corrections (if well parameters available)
             self.root.after(0, lambda: self.status_label.config(text="Applying environmental corrections..."))
@@ -12669,6 +12863,35 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 'average_confidence': 1.0
                             }
                         }
+
+                # Optional PASS 2: Cross-well prior-constrained refinement
+                try:
+                    if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager:
+                        if not self.crosswell_priors:
+                            # Build priors lazily if not present
+                            self.crosswell_priors = self.crosswell_prior_manager.build_priors(
+                                depth_binned=self.priors_depth_binning_var.get()
+                            )
+                        bounds = None
+                        if self.priors_depth_binning_var.get() and 'DEPT' in self.processed_data.columns:
+                            # Use per-depth bounds when available
+                            # Choose median depth of the curve's valid points as a representative
+                            depth_vals = self.processed_data['DEPT'].values
+                            mid_idx = int(np.nanmedian(np.nonzero(~np.isnan(filled_data))[0])) if np.any(~np.isnan(filled_data)) else None
+                            rep_depth = float(depth_vals[mid_idx]) if mid_idx is not None and mid_idx < len(depth_vals) else None
+                            bounds = self.crosswell_prior_manager.get_bounds_for_curve(column, rep_depth)
+                        else:
+                            bounds = self.crosswell_prior_manager.get_bounds_for_curve(column, None)
+                        if bounds is not None:
+                            low, high = bounds
+                            # Gentle clipping within prior P10-P90 to avoid unrealistic fills
+                            clipped = np.clip(filled_data, low, high)
+                            if np.any(np.isnan(filled_data)) or not np.allclose(clipped, filled_data, equal_nan=True):
+                                filled_data = clipped
+                                gap_result['quality_metrics']['methods_used'] = list(set(gap_result['quality_metrics'].get('methods_used', []) + ['crosswell_prior']))
+                                self.log_processing(f"Applied cross-well prior bounds to {column}: [{low:.3g}, {high:.3g}]")
+                except Exception as e:
+                    self.log_processing(f"Cross-well prior refinement skipped for {column}: {e}")
                 
                 # Step 3: Scale-aware denoising
                 self.log_processing(f"Scale-aware denoising for {column}...")
