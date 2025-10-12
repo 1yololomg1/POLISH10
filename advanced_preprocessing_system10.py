@@ -6295,13 +6295,46 @@ class PetrophysicalButtons:
                 
         return frame
     
-    def create_card(self, parent, title: str, **kwargs) -> ttk.Frame:
-        """Create a professional card widget"""
+    def create_card(self, parent, title: str, help_text: str = None, **kwargs) -> ttk.Frame:
+        """Create a professional card widget with optional info icon.
+        
+        Args:
+            parent: Parent widget
+            title: Card title
+            help_text: Optional help text shown when clicking the info icon
+        """
         card = ttk.Frame(parent, style='Card.TFrame', **kwargs)
         
-        # Title
-        title_label = ttk.Label(card, text=title, style='Subtitle.TLabel')
-        title_label.pack(anchor='w', padx=20, pady=(15, 5))
+        # Title row with optional info icon
+        header = ttk.Frame(card)
+        header.pack(fill='x', padx=20, pady=(15, 5))
+        title_label = ttk.Label(header, text=title, style='Subtitle.TLabel')
+        title_label.pack(side='left')
+        
+        if help_text:
+            def _show_card_help():
+                try:
+                    from tkinter import Toplevel
+                    dialog = Toplevel(card)
+                    dialog.title(f"Help - {title}")
+                    dialog.transient(card)
+                    dialog.grab_set()
+                    dialog.resizable(True, True)
+                    body = ttk.Frame(dialog, padding=15)
+                    body.pack(fill='both', expand=True)
+                    lbl = ttk.Label(body, text=help_text, wraplength=560, justify='left')
+                    lbl.pack(fill='both', expand=True)
+                    btn = ttk.Button(body, text='Close', command=dialog.destroy)
+                    btn.pack(anchor='e', pady=(10, 0))
+                    dialog.update_idletasks()
+                    x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+                    y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+                    dialog.geometry(f"+{x}+{y}")
+                except Exception:
+                    pass
+            info_btn = ttk.Button(header, text='i', width=2, command=_show_card_help)
+            self._create_tooltip(info_btn, f"Help: {title}")
+            info_btn.pack(side='right')
         
         # Content area
         content = ttk.Frame(card)
@@ -8746,7 +8779,10 @@ Your feedback contributes to software quality and reliability.
         self.notebook.add(data_frame, text="Data Loading")
         
         # File loading section
-        load_card, load_content = self.ui.create_card(data_frame, "Load Data File")
+        load_card, load_content = self.ui.create_card(
+            data_frame, "Load Data File",
+            help_text="Select and load a single LAS/CSV/Excel file. The app will analyze curves, compute stats, and prepare for processing."
+        )
         load_card.pack(fill='x', pady=(0, 10))
         
         file_frame = ttk.Frame(load_content)
@@ -8778,7 +8814,10 @@ Your feedback contributes to software quality and reliability.
         multi_btn.pack(side='left', padx=(15, 0))
         
         # CRITICAL: Well Information Card for safety
-        well_card, well_content = self.ui.create_card(data_frame, "Well Identification")
+        well_card, well_content = self.ui.create_card(
+            data_frame, "Well Identification",
+            help_text="Shows key metadata parsed from the LAS header (well name, UWI, field, depth range)."
+        )
         well_card.pack(fill='x', pady=(0, 10))
         
         # Create labels for well information (will be populated on load)
@@ -8803,7 +8842,10 @@ Your feedback contributes to software quality and reliability.
         self.depth_range_label.pack(anchor='w', pady=2)
 
         # New: Loaded Wells manager
-        wells_card, wells_content = self.ui.create_card(data_frame, "Loaded Wells")
+        wells_card, wells_content = self.ui.create_card(
+            data_frame, "Loaded Wells",
+            help_text="Manage multiple wells in the session. Set the active well, remove entries, or process all/selected wells."
+        )
         wells_card.pack(fill='x', pady=(0, 10))
         wells_toolbar = ttk.Frame(wells_content)
         wells_toolbar.pack(fill='x', pady=(5, 5))
@@ -8823,7 +8865,10 @@ Your feedback contributes to software quality and reliability.
         process_sel_btn.pack(side='left', padx=(10, 0))
         
         # Data summary section
-        summary_card, summary_content = self.ui.create_card(data_frame, "Data Summary")
+        summary_card, summary_content = self.ui.create_card(
+            data_frame, "Data Summary",
+            help_text="Per-curve overview: mnemonic, type, units, range, data quality with geological gap awareness."
+        )
         summary_card.pack(fill='both', expand=True)
         
         # Create treeview for curve information
@@ -9688,7 +9733,10 @@ Your feedback contributes to software quality and reliability.
         apply_btn.pack(anchor='e', padx=10, pady=(0, 10))
         
         # Processing execution - placed below the notebook; now reachable via scrolling
-        exec_card, exec_content = self.ui.create_card(config_inner, "Execute Processing")
+        exec_card, exec_content = self.ui.create_card(
+            config_inner, "Execute Processing",
+            help_text="Run processing for the active well or all wells. Use Cross-Well Cohort to enable priors and two-pass refinement."
+        )
         exec_card.pack(fill='x', pady=10)
         
         process_btn = self.ui.create_button(exec_content, text="Start Processing (Active Well)",
@@ -9845,7 +9893,10 @@ Your feedback contributes to software quality and reliability.
         update_btn.pack(pady=10)
         
         # Visualization area
-        viz_card, self.viz_content = self.ui.create_card(viz_frame, "Interactive Visualization")
+        viz_card, self.viz_content = self.ui.create_card(
+            viz_frame, "Interactive Visualization",
+            help_text="Render professional depth-based plots, multi-curve tracks, and comparisons. Use Export for PNG/PDF."
+        )
         viz_card.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         
         # Initialize figure and canvas as None - will be created dynamically
