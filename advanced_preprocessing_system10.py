@@ -8667,6 +8667,56 @@ Your feedback contributes to software quality and reliability.
         except Exception:
             # Absolutely no file logging, and avoid raising during UI init
             pass
+
+    def _begin_operation(self, message: str) -> None:
+        """Unified user feedback when a long-running operation starts."""
+        try:
+            self.log_processing(message)
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=message)
+            if hasattr(self, 'progress_bar'):
+                try:
+                    self.progress_bar.config(mode='indeterminate')
+                    self.progress_bar.start(10)
+                except Exception:
+                    pass
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+    def _end_operation(self, message: str) -> None:
+        """Unified user feedback when an operation completes successfully."""
+        try:
+            if hasattr(self, 'progress_bar'):
+                try:
+                    self.progress_bar.stop()
+                    self.progress_bar.config(mode='determinate', value=100)
+                except Exception:
+                    pass
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=message)
+            self.log_processing(message)
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+    def _fail_operation(self, title: str, message: str) -> None:
+        """Unified error feedback with dialog and status label."""
+        try:
+            if hasattr(self, 'progress_bar'):
+                try:
+                    self.progress_bar.stop()
+                    self.progress_bar.config(mode='determinate', value=0)
+                except Exception:
+                    pass
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=message)
+        except Exception:
+            pass
+        try:
+            messagebox.showerror(title, message)
+        except Exception:
+            pass
     
     def check_system_resources(self):
         """Monitor system resources periodically"""
@@ -8757,7 +8807,7 @@ Your feedback contributes to software quality and reliability.
         wells_card.pack(fill='x', pady=(0, 10))
         wells_toolbar = ttk.Frame(wells_content)
         wells_toolbar.pack(fill='x', pady=(5, 5))
-        self.well_listbox = tk.Listbox(wells_content, height=6, selectmode='browse')
+        self.well_listbox = tk.Listbox(wells_content, height=6, selectmode='extended')
         self.well_listbox.pack(fill='x', padx=10, pady=(0, 8))
         set_active_btn = self.ui.create_button(wells_toolbar, text="Set Active Well",
                                               command=self.on_set_active_well, button_type='secondary', width=18)
@@ -8768,6 +8818,9 @@ Your feedback contributes to software quality and reliability.
         process_all_quick_btn = self.ui.create_button(wells_toolbar, text="Process All Wells",
                                                      command=self.process_all_wells, button_type='success', width=18)
         process_all_quick_btn.pack(side='left', padx=(10, 0))
+        process_sel_btn = self.ui.create_button(wells_toolbar, text="Process Selected",
+                                               command=self.process_selected_wells, button_type='primary', width=18)
+        process_sel_btn.pack(side='left', padx=(10, 0))
         
         # Data summary section
         summary_card, summary_content = self.ui.create_card(data_frame, "Data Summary")
@@ -8991,6 +9044,12 @@ Your feedback contributes to software quality and reliability.
             if not self.well_datasets:
                 messagebox.showwarning("Process All Wells", "No wells loaded. Use 'Load Multiple Files' first.")
                 return
+            # Show processing tab for visual feedback
+            try:
+                self.notebook.select(1)
+            except Exception:
+                pass
+            self._begin_operation("Processing all wells...")
             ordered_ids = list(self.well_datasets.keys())
             total = len(ordered_ids)
             for i, wid in enumerate(ordered_ids, start=1):
@@ -9000,12 +9059,52 @@ Your feedback contributes to software quality and reliability.
                 except Exception:
                     pass
                 self.process_current_well_blocking()
+            self._end_operation(f"Processed all wells ({total})")
             try:
-                self.status_label.config(text=f"Processed all wells ({total})")
+                messagebox.showinfo("Process All Wells", f"Completed processing {total} well(s).")
             except Exception:
                 pass
         except Exception as e:
-            messagebox.showerror("Process All Wells", f"Failed to process all wells: {e}")
+            self._fail_operation("Process All Wells", f"Failed to process all wells: {e}")
+
+    def process_selected_wells(self):
+        try:
+            if not hasattr(self, 'well_listbox') or self.well_listbox is None:
+                self._fail_operation("Process Selected", "Well list is not available.")
+                return
+            sel = self.well_listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Process Selected", "Select one or more wells in the list.")
+                return
+            selected_ids = []
+            for idx in sel:
+                display = self.well_listbox.get(idx)
+                wid = display.split("  |  ")[0]
+                if wid in self.well_datasets:
+                    selected_ids.append(wid)
+            if not selected_ids:
+                messagebox.showwarning("Process Selected", "No valid wells selected.")
+                return
+            # Switch to Processing tab for progress visibility
+            try:
+                self.notebook.select(1)
+            except Exception:
+                pass
+            self._begin_operation(f"Processing {len(selected_ids)} selected well(s)...")
+            for i, wid in enumerate(selected_ids, start=1):
+                self.set_active_well(wid)
+                try:
+                    self.status_label.config(text=f"Processing well {i}/{len(selected_ids)}: {wid}")
+                except Exception:
+                    pass
+                self.process_current_well_blocking()
+            self._end_operation(f"Processed {len(selected_ids)} selected well(s)")
+            try:
+                messagebox.showinfo("Process Selected", f"Completed processing {len(selected_ids)} well(s).")
+            except Exception:
+                pass
+        except Exception as e:
+            self._fail_operation("Process Selected", f"Failed to process selected wells: {e}")
 
     def _format_cross_well_summary(self) -> str:
         lines: List[str] = []
