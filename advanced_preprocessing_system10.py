@@ -10958,6 +10958,34 @@ Your feedback contributes to software quality and reliability.
         # Report controls - redesigned with logical grouping
         control_frame = ttk.Frame(report_frame)
         control_frame.pack(side='top', fill='x', padx=10, pady=10)
+
+        # Tab-level Help button
+        def _show_report_help():
+            try:
+                from tkinter import Toplevel
+                dialog = Toplevel(report_frame)
+                dialog.title("Help - Report")
+                dialog.transient(report_frame)
+                dialog.grab_set()
+                dialog.resizable(True, True)
+                body = ttk.Frame(dialog, padding=15)
+                body.pack(fill='both', expand=True)
+                text = (
+                    "Generate a comprehensive processing report for the active well. "
+                    "Use Cross-Well Summary to view field-wide statistics across loaded wells. "
+                    "Export Data exports the active well’s processed data; Export All Processed writes LAS for every well."
+                )
+                lbl = ttk.Label(body, text=text, wraplength=560, justify='left')
+                lbl.pack(fill='x', expand=True)
+                ttk.Button(body, text='Close', command=dialog.destroy).pack(anchor='e', pady=(10, 0))
+                dialog.update_idletasks()
+                x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+                y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+                dialog.geometry(f"+{x}+{y}")
+            except Exception:
+                pass
+        help_btn = ttk.Button(control_frame, text='Help', command=_show_report_help)
+        help_btn.pack(side='right')
         
         # Group 1: Report Actions
         report_actions_frame = ttk.Frame(control_frame)
