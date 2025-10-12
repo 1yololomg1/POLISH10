@@ -10172,7 +10172,7 @@ Your feedback contributes to software quality and reliability.
         else:
             ax.set_ylabel('Depth (index)')
 
-        # Add legends
+        # Add legends (outside, consistent)
         handles, labels = ax.get_legend_handles_labels()
         for twin_ax in twin_axes:
             twin_handles, twin_labels = twin_ax.get_legend_handles_labels()
@@ -10180,8 +10180,9 @@ Your feedback contributes to software quality and reliability.
             labels.extend(twin_labels)
 
         if handles:
-            ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15),
-                      ncol=min(3, len(handles)))
+            ax.legend(handles, labels, loc='center left', bbox_to_anchor=(1.02, 0.5),
+                      borderaxespad=0.0, frameon=False, ncol=1)
+            self.fig.subplots_adjust(right=0.82)
 
         # Add processing status note if any curves are unprocessed
         unprocessed_curves = [curve for curve in plot_curves if curve not in self.processing_results]
@@ -10337,9 +10338,10 @@ Your feedback contributes to software quality and reliability.
                 ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.05),
                          ncol=len(handles))
         
-        # Apply proper spacing for multi-track display
+        # Apply enhanced spacing for multi-track display
         self.fig.tight_layout()
-        self.fig.subplots_adjust(left=0.08, right=0.95, bottom=0.20, top=0.92, wspace=0.25)
+        # Reserve space on the right for any legends
+        self.fig.subplots_adjust(left=0.08, right=0.88, bottom=0.15, top=0.90, wspace=0.25)
     
     def _visualize_unprocessed_data(self, curve: str, viz_type: str):
         """Visualize unprocessed data from current_data"""
