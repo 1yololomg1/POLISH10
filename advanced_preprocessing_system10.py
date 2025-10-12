@@ -8550,6 +8550,31 @@ Your feedback contributes to software quality and reliability.
         
         self.main_canvas.bind_all("<MouseWheel>", on_mousewheel)
         self.main_canvas.bind_all("<Shift-MouseWheel>", on_shift_mousewheel)
+        # Linux/X11 alternative bindings for wheel events
+        def _on_button4(event):
+            try:
+                self.main_canvas.yview_scroll(-1, "units")
+            except Exception:
+                pass
+        def _on_button5(event):
+            try:
+                self.main_canvas.yview_scroll(1, "units")
+            except Exception:
+                pass
+        def _on_shift_button4(event):
+            try:
+                self.main_canvas.xview_scroll(-1, "units")
+            except Exception:
+                pass
+        def _on_shift_button5(event):
+            try:
+                self.main_canvas.xview_scroll(1, "units")
+            except Exception:
+                pass
+        self.main_canvas.bind_all("<Button-4>", _on_button4)
+        self.main_canvas.bind_all("<Button-5>", _on_button5)
+        self.main_canvas.bind_all("<Shift-Button-4>", _on_shift_button4)
+        self.main_canvas.bind_all("<Shift-Button-5>", _on_shift_button5)
         
         # Enable keyboard navigation
         def on_key_press(event):
@@ -10627,12 +10652,16 @@ Your feedback contributes to software quality and reliability.
         """Create and display the visualization canvas with status message"""
         if hasattr(self, 'viz_content') and self.viz_content:
             self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
-            self.canvas.draw()
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
             
             # Create navigation toolbar
-            toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
-            toolbar.update()
-            toolbar.pack(side='top', fill='x')
+            if NavigationToolbar2Tk is not None:
+                toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                toolbar.update()
+                toolbar.pack(side='top', fill='x')
             
             # Pack canvas below toolbar
             self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
