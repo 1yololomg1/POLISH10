@@ -4933,98 +4933,239 @@ class CrossWellPriorManager:
     def _select_cohort_ids(self) -> List[str]:
         if not self.app or not getattr(self.app, 'well_datasets', None):
             return []
+        # Manual selection takes precedence when provided
         if self.app.cohort_selected_well_ids:
-            return [wid for wid in self.app.cohort_selected_well_ids if wid in self.app.well_datasets]
-        # Auto-select: all loaded wells except active (simple, conservative default)
-        ids = list(self.app.well_datasets.keys())
-        return ids
+            return [wid for wid in self.app.cohort_selected_well_ids if wid in self.app.well_datasets and wid != self.app.active_well_id]
+        # Auto-select if enabled: all loaded wells except active
+        if getattr(self.app, 'auto_select_cohort_var', None) and self.app.auto_select_cohort_var.get():
+            return [wid for wid in self.app.well_datasets.keys() if wid != self.app.active_well_id]
+        # Otherwise, no cohort
+        return []
 
     def build_priors(self, depth_binned: bool = True) -> Dict[str, Any]:
         """Build cross-well priors from cohort.
 
         Returns a dict: { curve -> { 'global': stats, 'bins': [ {depth_min,max, stats} ] } }
         """
-        priors: Dict[str, Any] = {}
+        priors: Dict[str, Any] = {'curves': {}, 'families': {}}
         try:
             cohort_ids = self._select_cohort_ids()
             if not cohort_ids:
                 return {}
-            # Collect per-curve arrays
+            # Collect per-curve and per-family arrays (from processed data for standardization)
             curve_to_series: Dict[str, List[np.ndarray]] = {}
             depth_to_series: Dict[str, List[np.ndarray]] = {}
+            family_to_series: Dict[str, List[np.ndarray]] = {}
+            family_depth_series: Dict[str, List[np.ndarray]] = {}
             for wid in cohort_ids:
                 ds = self.app.well_datasets.get(wid, {})
-                df = ds.get('current_data')
+                df = ds.get('processed_data') if isinstance(ds.get('processed_data'), pd.DataFrame) else ds.get('current_data')
                 if not isinstance(df, pd.DataFrame) or df.empty:
                     continue
                 depth_col = 'DEPT' if 'DEPT' in df.columns else (df.columns[0] if len(df.columns) else None)
                 if depth_col is None:
                     continue
                 depth_vals = pd.to_numeric(df[depth_col], errors='coerce').values
+                ds_ci = ds.get('curve_info', {}) or {}
                 for col in df.columns:
                     if col == depth_col:
                         continue
                     arr = pd.to_numeric(df[col], errors='coerce').values
+                    # Determine curve family from curve info if available
+                    cinfo = ds_ci.get(col, {}) if isinstance(ds_ci, dict) else {}
+                    ctype = str(cinfo.get('curve_type', 'UNKNOWN'))
+                    family = ctype.split('_')[0] if '_' in ctype else ctype
                     curve_to_series.setdefault(col, []).append(arr)
                     depth_to_series.setdefault(col, []).append(depth_vals)
+                    family_to_series.setdefault(family, []).append(arr)
+                    family_depth_series.setdefault(family, []).append(depth_vals)
 
             # Compute robust global stats and optional depth bins
-            for curve, arrays in curve_to_series.items():
+            def _compute_stats_from_arrays(arrays_list: List[np.ndarray], depths_list: List[np.ndarray], family_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
                 try:
-                    stacked = np.concatenate([a[~np.isnan(a)] for a in arrays if isinstance(a, np.ndarray)])
+                    stacked = np.concatenate([a[~np.isnan(a)] for a in arrays_list if isinstance(a, np.ndarray)])
                     if stacked.size == 0:
-                        continue
+                        return None
+                    # Detect if resistivity-like (log-space) using family key if provided
+                    use_log = family_key is not None and ('RESISTIVITY' in str(family_key).upper())
+                    if use_log:
+                        stacked_pos = stacked[stacked > 0]
+                        if stacked_pos.size == 0:
+                            return None
+                        stacked_stat = np.log10(stacked_pos)
+                    else:
+                        stacked_stat = stacked
                     global_stats = {
-                        'median': float(np.median(stacked)),
-                        'p10': float(np.percentile(stacked, 10)),
-                        'p90': float(np.percentile(stacked, 90)),
-                        'mean': float(np.mean(stacked)),
-                        'std': float(np.std(stacked)),
-                        'count': int(stacked.size)
+                        'median': float(np.median(stacked_stat)),
+                        'p10': float(np.percentile(stacked_stat, 10)),
+                        'p90': float(np.percentile(stacked_stat, 90)),
+                        'mean': float(np.mean(stacked_stat)),
+                        'std': float(np.std(stacked_stat)),
+                        'count': int(stacked_stat.size),
+                        'space': 'log' if use_log else 'linear'
                     }
-                    priors[curve] = {'global': global_stats, 'bins': []}
+                    entry = {'global': global_stats, 'bins': []}
 
                     if depth_binned:
-                        # Build simple equal-count bins by depth using first cohort well depth as template
-                        all_depths = np.concatenate([d for d in depth_to_series.get(curve, []) if isinstance(d, np.ndarray)])
+                        # Equal-count bins by depth quantiles (5 bins)
+                        all_depths = np.concatenate([d for d in depths_list if isinstance(d, np.ndarray)])
                         if all_depths.size > 20:
-                            depth_edges = np.linspace(np.nanmin(all_depths), np.nanmax(all_depths), 6)  # 5 bins
+                            # Use quantiles for equal-count binning
+                            try:
+                                depth_edges = np.quantile(all_depths[~np.isnan(all_depths)], [0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+                            except Exception:
+                                depth_edges = np.linspace(np.nanmin(all_depths), np.nanmax(all_depths), 6)
                             for b in range(len(depth_edges)-1):
                                 dmin, dmax = depth_edges[b], depth_edges[b+1]
                                 bin_vals = []
-                                for arr, dvals in zip(curve_to_series[curve], depth_to_series.get(curve, [])):
+                                for arr, dvals in zip(arrays_list, depths_list):
                                     mask = (dvals >= dmin) & (dvals < dmax)
                                     bin_vals.append(arr[mask])
                                 if bin_vals:
                                     bin_stack = np.concatenate([bv[~np.isnan(bv)] for bv in bin_vals if isinstance(bv, np.ndarray)])
                                     if bin_stack.size > 0:
-                                        priors[curve]['bins'].append({
+                                        if use_log:
+                                            bin_stack_pos = bin_stack[bin_stack > 0]
+                                            if bin_stack_pos.size == 0:
+                                                continue
+                                            bin_stat = np.log10(bin_stack_pos)
+                                        else:
+                                            bin_stat = bin_stack
+                                        entry['bins'].append({
                                             'depth_min': float(dmin),
                                             'depth_max': float(dmax),
-                                            'median': float(np.median(bin_stack)),
-                                            'p10': float(np.percentile(bin_stack, 10)),
-                                            'p90': float(np.percentile(bin_stack, 90)),
-                                            'count': int(bin_stack.size)
+                                            'median': float(np.median(bin_stat)),
+                                            'p10': float(np.percentile(bin_stat, 10)),
+                                            'p90': float(np.percentile(bin_stat, 90)),
+                                            'mean': float(np.mean(bin_stat)),
+                                            'std': float(np.std(bin_stat)),
+                                            'count': int(bin_stat.size)
                                         })
+                    return entry
                 except Exception:
-                    continue
+                    return None
+
+            # Curves
+            for curve, arrays in curve_to_series.items():
+                entry = _compute_stats_from_arrays(arrays, depth_to_series.get(curve, []), None)
+                if entry:
+                    priors['curves'][curve] = entry
+
+            # Families
+            for family, arrays in family_to_series.items():
+                entry = _compute_stats_from_arrays(arrays, family_depth_series.get(family, []), family)
+                if entry:
+                    priors['families'][family] = entry
         except Exception:
             return {}
         self.priors = priors
         return priors
 
-    def get_bounds_for_curve(self, curve: str, depth: Optional[float] = None) -> Optional[Tuple[float, float]]:
-        if curve not in self.priors:
-            return None
-        if depth is None or not self.priors[curve]['bins']:
-            g = self.priors[curve]['global']
-            return (g['p10'], g['p90'])
-        # Find matching bin
-        for b in self.priors[curve]['bins']:
+    def _bounds_from_entry(self, entry: Dict[str, Any], depth: Optional[float]) -> Tuple[float, float]:
+        # Convert from stat-space to linear if needed
+        def _to_linear(v: float, space: str) -> float:
+            return float(10 ** v) if space == 'log' else float(v)
+        if depth is None or not entry['bins']:
+            g = entry['global']
+            return (_to_linear(g['p10'], g['space']), _to_linear(g['p90'], g['space']))
+        for b in entry['bins']:
             if b['depth_min'] <= depth <= b['depth_max']:
-                return (b['p10'], b['p90'])
-        g = self.priors[curve]['global']
-        return (g['p10'], g['p90'])
+                space = entry['global'].get('space', 'linear')
+                return (_to_linear(b['p10'], space), _to_linear(b['p90'], space))
+        g = entry['global']
+        return (_to_linear(g['p10'], g['space']), _to_linear(g['p90'], g['space']))
+
+    def get_bounds_for_curve(self, curve: str, depth: Optional[float] = None, family: Optional[str] = None) -> Optional[Tuple[float, float]]:
+        # Try curve-specific
+        if isinstance(self.priors, dict) and 'curves' in self.priors and curve in self.priors['curves']:
+            return self._bounds_from_entry(self.priors['curves'][curve], depth)
+        # Try family-level
+        fam = family
+        if fam is None and self.app and hasattr(self.app, 'curve_info') and isinstance(self.app.curve_info, dict):
+            ctype = str(self.app.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN'))
+            fam = ctype.split('_')[0] if '_' in ctype else ctype
+        if fam and 'families' in self.priors and fam in self.priors['families']:
+            return self._bounds_from_entry(self.priors['families'][fam], depth)
+        return None
+
+    def get_bounds_vector_for_curve(self, curve: str, depths: np.ndarray, family: Optional[str] = None) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        # Return arrays of low/high bounds per depth sample
+        if not isinstance(depths, np.ndarray) or depths.size == 0:
+            return None
+        # Prefer curve entry
+        entry = None
+        if 'curves' in self.priors and curve in self.priors['curves']:
+            entry = self.priors['curves'][curve]
+        else:
+            fam = family
+            if fam is None and self.app and hasattr(self.app, 'curve_info'):
+                ctype = str(self.app.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN'))
+                fam = ctype.split('_')[0] if '_' in ctype else ctype
+            if fam and 'families' in self.priors and fam in self.priors['families']:
+                entry = self.priors['families'][fam]
+        if entry is None:
+            return None
+        # Prepare bin edges and convert bounds to linear space
+        def _to_linear(v: float, space: str) -> float:
+            return float(10 ** v) if space == 'log' else float(v)
+        space = entry['global'].get('space', 'linear')
+        if entry['bins']:
+            edges = [b['depth_min'] for b in entry['bins']] + [entry['bins'][-1]['depth_max']]
+            p10 = np.array([b['p10'] for b in entry['bins']], dtype=float)
+            p90 = np.array([b['p90'] for b in entry['bins']], dtype=float)
+            # Digitize depths
+            idx = np.clip(np.digitize(depths, edges) - 1, 0, len(p10) - 1)
+            lows = np.array([_to_linear(p10[i], space) for i in idx], dtype=float)
+            highs = np.array([_to_linear(p90[i], space) for i in idx], dtype=float)
+            return lows, highs
+        # Fallback to global
+        g = entry['global']
+        low = _to_linear(g['p10'], space)
+        high = _to_linear(g['p90'], space)
+        return np.full_like(depths, low, dtype=float), np.full_like(depths, high, dtype=float)
+
+    def estimate_coherence(self, curve: str, data: np.ndarray, depths: np.ndarray, family: Optional[str] = None) -> Optional[float]:
+        # Compute average exp(-0.5*z^2) where z = (x-mean)/std per depth bin vs priors
+        if data is None or depths is None or not isinstance(data, np.ndarray) or data.size == 0:
+            return None
+        entry = None
+        if 'curves' in self.priors and curve in self.priors['curves']:
+            entry = self.priors['curves'][curve]
+        else:
+            fam = family
+            if fam is None and self.app and hasattr(self.app, 'curve_info'):
+                ctype = str(self.app.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN'))
+                fam = ctype.split('_')[0] if '_' in ctype else ctype
+            if fam and 'families' in self.priors and fam in self.priors['families']:
+                entry = self.priors['families'][fam]
+        if entry is None:
+            return None
+        space = entry['global'].get('space', 'linear')
+        def _to_stat(v: np.ndarray) -> np.ndarray:
+            if space == 'log':
+                vp = v.copy()
+                vp[vp <= 0] = np.nan
+                return np.log10(vp)
+            return v
+        x = _to_stat(data.astype(float))
+        mask_valid = ~np.isnan(x)
+        if not np.any(mask_valid):
+            return None
+        if entry['bins']:
+            edges = [b['depth_min'] for b in entry['bins']] + [entry['bins'][-1]['depth_max']]
+            means = np.array([b.get('mean', entry['global']['mean']) for b in entry['bins']], dtype=float)
+            stds = np.array([b.get('std', entry['global']['std']) for b in entry['bins']], dtype=float)
+            idx = np.clip(np.digitize(depths, edges) - 1, 0, len(means) - 1)
+            mu = means[idx]
+            sd = stds[idx]
+        else:
+            mu = np.full_like(x, entry['global']['mean'], dtype=float)
+            sd = np.full_like(x, max(entry['global']['std'], 1e-6), dtype=float)
+        sd = np.where(sd <= 1e-12, 1e-12, sd)
+        z = np.zeros_like(x)
+        z[mask_valid] = (x[mask_valid] - mu[mask_valid]) / sd[mask_valid]
+        coh = np.nanmean(np.exp(-0.5 * (z ** 2)))
+        return float(coh)
 
 #=============================================================================
 # PETROPHYSICAL RELATIONSHIP VALIDATOR
@@ -9382,6 +9523,29 @@ Your feedback contributes to software quality and reliability.
         view_btn = self.ui.create_button(cohort_btns, text="View Priors Summary",
                                          command=self.show_cross_well_summary, button_type='secondary', width=22)
         view_btn.pack(side='left')
+
+        # Manual cohort picker listbox (optional)
+        cohort_list_frame = ttk.Frame(cohort_tab)
+        cohort_list_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        ttk.Label(cohort_list_frame, text="Select Cohort Wells (exclude active)").pack(anchor='w')
+        self.cohort_listbox = tk.Listbox(cohort_list_frame, selectmode='multiple', height=6)
+        self.cohort_listbox.pack(fill='both', expand=True)
+        # Populate from well_datasets
+        try:
+            for wid in self.well_datasets.keys():
+                self.cohort_listbox.insert(tk.END, wid)
+        except Exception:
+            pass
+        def _apply_cohort_selection():
+            try:
+                sel = self.cohort_listbox.curselection()
+                self.cohort_selected_well_ids = [self.cohort_listbox.get(i) for i in sel if self.cohort_listbox.get(i) != self.active_well_id]
+                self.status_label.config(text=f"Cohort set: {len(self.cohort_selected_well_ids)} well(s)")
+            except Exception:
+                pass
+        apply_btn = self.ui.create_button(cohort_tab, text="Apply Cohort Selection",
+                                          command=_apply_cohort_selection, button_type='secondary', width=25)
+        apply_btn.pack(anchor='e', padx=10, pady=(0, 10))
         
         # Processing execution - placed below the notebook; now reachable via scrolling
         exec_card, exec_content = self.ui.create_card(config_inner, "Execute Processing")
@@ -12743,7 +12907,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     self.log_processing(f"Zone-aware gap filling for {column}...")
                     
                     depth_data = self.processed_data['DEPT'].values
-                    gamma_ray_data = gamma_ray_curves[0] if gamma_ray_curves else None
+                    gamma_ray_data = self.processed_data[gamma_ray_curves[0]].values if gamma_ray_curves else None
                     
                     # Get auxiliary curves for zone-aware processing
                     auxiliary_curves = auxiliary_curves_dict.get(column, {}) if self.multi_curve_var.get() else {}
@@ -12866,30 +13030,32 @@ This ensures consistent data interpretation and fixes depth validation issues.
 
                 # Optional PASS 2: Cross-well prior-constrained refinement
                 try:
-                    if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager:
+                    if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager and self.two_pass_refinement_var.get():
                         if not self.crosswell_priors:
                             # Build priors lazily if not present
                             self.crosswell_priors = self.crosswell_prior_manager.build_priors(
                                 depth_binned=self.priors_depth_binning_var.get()
                             )
-                        bounds = None
-                        if self.priors_depth_binning_var.get() and 'DEPT' in self.processed_data.columns:
-                            # Use per-depth bounds when available
-                            # Choose median depth of the curve's valid points as a representative
-                            depth_vals = self.processed_data['DEPT'].values
-                            mid_idx = int(np.nanmedian(np.nonzero(~np.isnan(filled_data))[0])) if np.any(~np.isnan(filled_data)) else None
-                            rep_depth = float(depth_vals[mid_idx]) if mid_idx is not None and mid_idx < len(depth_vals) else None
-                            bounds = self.crosswell_prior_manager.get_bounds_for_curve(column, rep_depth)
+                        # Vector bounds per depth if available
+                        depth_vals = self.processed_data['DEPT'].values if 'DEPT' in self.processed_data.columns else None
+                        if depth_vals is not None and self.priors_depth_binning_var.get():
+                            vec = self.crosswell_prior_manager.get_bounds_vector_for_curve(column, depth_vals)
+                            if vec is not None:
+                                lows, highs = vec
+                                clipped = np.minimum(np.maximum(filled_data, lows), highs)
+                                if np.any(~np.isclose(clipped, filled_data, equal_nan=True)):
+                                    filled_data = clipped
+                                    gap_result['quality_metrics']['methods_used'] = list(set(gap_result['quality_metrics'].get('methods_used', []) + ['crosswell_prior']))
+                                    self.log_processing(f"Applied cross-well prior vector bounds to {column}")
                         else:
                             bounds = self.crosswell_prior_manager.get_bounds_for_curve(column, None)
-                        if bounds is not None:
-                            low, high = bounds
-                            # Gentle clipping within prior P10-P90 to avoid unrealistic fills
-                            clipped = np.clip(filled_data, low, high)
-                            if np.any(np.isnan(filled_data)) or not np.allclose(clipped, filled_data, equal_nan=True):
-                                filled_data = clipped
-                                gap_result['quality_metrics']['methods_used'] = list(set(gap_result['quality_metrics'].get('methods_used', []) + ['crosswell_prior']))
-                                self.log_processing(f"Applied cross-well prior bounds to {column}: [{low:.3g}, {high:.3g}]")
+                            if bounds is not None:
+                                low, high = bounds
+                                clipped = np.clip(filled_data, low, high)
+                                if np.any(~np.isclose(clipped, filled_data, equal_nan=True)):
+                                    filled_data = clipped
+                                    gap_result['quality_metrics']['methods_used'] = list(set(gap_result['quality_metrics'].get('methods_used', []) + ['crosswell_prior']))
+                                    self.log_processing(f"Applied cross-well prior bounds to {column}: [{low:.3g}, {high:.3g}]")
                 except Exception as e:
                     self.log_processing(f"Cross-well prior refinement skipped for {column}: {e}")
                 
