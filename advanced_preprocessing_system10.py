@@ -9217,14 +9217,17 @@ Your feedback contributes to software quality and reliability.
             if not self.crosswell_prior_manager:
                 messagebox.showerror("Cross-Well Priors", "Prior manager unavailable.")
                 return
-            self.status_label.config(text="Building cross-well priors...")
+            self._begin_operation("Building cross-well priors...")
             priors = self.crosswell_prior_manager.build_priors(depth_binned=self.priors_depth_binning_var.get())
             self.crosswell_priors = priors or {}
             count = len(self.crosswell_priors)
-            self.status_label.config(text=f"Cross-well priors built for {count} curves")
-            messagebox.showinfo("Cross-Well Priors", f"Built priors for {count} curves.")
+            self._end_operation(f"Cross-well priors built for {count} curves")
+            try:
+                messagebox.showinfo("Cross-Well Priors", f"Built priors for {count} curves.")
+            except Exception:
+                pass
         except Exception as e:
-            messagebox.showerror("Cross-Well Priors", f"Failed to build priors: {e}")
+            self._fail_operation("Cross-Well Priors", f"Failed to build priors: {e}")
     
     def reset_application_state(self, prompt_if_unsaved=True):
         """Comprehensive application state reset to prevent cross-contamination between wells
