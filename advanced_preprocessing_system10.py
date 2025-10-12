@@ -8765,6 +8765,9 @@ Your feedback contributes to software quality and reliability.
         remove_btn = self.ui.create_button(wells_toolbar, text="Remove Selected",
                                           command=self.on_remove_selected_wells, button_type='warning', width=18)
         remove_btn.pack(side='left')
+        process_all_quick_btn = self.ui.create_button(wells_toolbar, text="Process All Wells",
+                                                     command=self.process_all_wells, button_type='success', width=18)
+        process_all_quick_btn.pack(side='left', padx=(10, 0))
         
         # Data summary section
         summary_card, summary_content = self.ui.create_card(data_frame, "Data Summary")
@@ -8872,6 +8875,16 @@ Your feedback contributes to software quality and reliability.
         self._apply_dataset_to_single_state(self.well_datasets[well_id])
         try:
             self.status_label.config(text=f"Active well: {well_id}")
+        except Exception:
+            pass
+        # Refresh lists
+        self.update_well_list_display()
+        try:
+            if hasattr(self, 'cohort_listbox') and self.cohort_listbox:
+                self.cohort_listbox.delete(0, tk.END)
+                for wid in self.well_datasets.keys():
+                    if wid != self.active_well_id:
+                        self.cohort_listbox.insert(tk.END, wid)
         except Exception:
             pass
 
