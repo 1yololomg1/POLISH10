@@ -10172,6 +10172,20 @@ Your feedback contributes to software quality and reliability.
         else:
             ax.set_ylabel('Depth (index)')
 
+        # Optional: draw formation tops and zone shading
+        try:
+            if hasattr(self, 'geological_context') and self.geological_context:
+                # Tops as horizontal lines
+                for top_name, top_depth in getattr(self.geological_context, 'formation_tops', {}).items():
+                    ax.axhline(y=top_depth, color='#666666', linestyle='--', linewidth=0.8, alpha=0.7)
+                # Open-hole interval shading
+                ohs = getattr(self.geological_context, 'open_hole_start', None)
+                ohe = getattr(self.geological_context, 'open_hole_end', None)
+                if ohs is not None and ohe is not None and ohs < ohe:
+                    ax.axhspan(ohs, ohe, color='#f0f8ff', alpha=0.25)
+        except Exception:
+            pass
+
         # Add legends (outside, consistent)
         handles, labels = ax.get_legend_handles_labels()
         for twin_ax in twin_axes:
@@ -10314,6 +10328,17 @@ Your feedback contributes to software quality and reliability.
             ax.invert_yaxis()  # Depth increases downward
             ax.grid(True, alpha=0.3)
             ax.set_ylabel(f'Depth ({depth_unit})')
+            # Overlays: tops and open-hole shading
+            try:
+                if hasattr(self, 'geological_context') and self.geological_context:
+                    for top_name, top_depth in getattr(self.geological_context, 'formation_tops', {}).items():
+                        ax.axhline(y=top_depth, color='#666666', linestyle='--', linewidth=0.8, alpha=0.7)
+                    ohs = getattr(self, 'geological_context').open_hole_start
+                    ohe = getattr(self, 'geological_context').open_hole_end
+                    if ohs is not None and ohe is not None and ohs < ohe:
+                        ax.axhspan(ohs, ohe, color='#f0f8ff', alpha=0.25)
+            except Exception:
+                pass
         
         # Hide y-axis labels for all but the first track
         for ax in axes[1:]:
@@ -10615,6 +10640,24 @@ Your feedback contributes to software quality and reliability.
             # Add status note
             status_note = ttk.Label(self.viz_content, text=status_message, style='Info.TLabel')
             status_note.pack(side='bottom', pady=5)
+
+            # Add export buttons
+            export_frame = ttk.Frame(self.viz_content)
+            export_frame.pack(side='bottom', fill='x', pady=(5, 10))
+            def _export_fig(dpi=150):
+                try:
+                    from tkinter import filedialog as _fd
+                    path = _fd.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png"), ("PDF", "*.pdf")])
+                    if not path:
+                        return
+                    fmt = 'pdf' if path.lower().endswith('.pdf') else 'png'
+                    # Set publication or screen margins via bbox_inches
+                    self.fig.savefig(path, dpi=dpi, format=fmt, bbox_inches='tight', facecolor='white')
+                    self.status_label.config(text=f"Figure exported: {path}")
+                except Exception as e:
+                    messagebox.showerror("Export Error", f"Failed to export figure: {e}")
+            ttk.Button(export_frame, text="Export (Screen)", command=lambda: _export_fig(150)).pack(side='left', padx=(0, 8))
+            ttk.Button(export_frame, text="Export (Publication)", command=lambda: _export_fig(300)).pack(side='left')
     
     def plot_comparison(self, curve: str):
         """Plot original vs processed comparison with depth on Y-axis (industry standard)"""
