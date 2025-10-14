@@ -98,6 +98,56 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 import warnings
+import sys
+import platform
+
+# ===== PLACEHOLDER/BACKSTOP CLASSES FOR OPTIONAL SYSTEMS =====
+# These lightweight definitions ensure static type checkers (pyright) and
+# runtime both have symbols available even when optional subsystems are
+# disabled or not bundled. They introduce no side effects.
+
+class BetaFeatureFlags:
+    """Placeholder for beta feature flags when beta system is disabled."""
+    def __init__(self):
+        pass
+
+
+class BetaAnalytics:
+    """Placeholder analytics sink used when beta analytics is not enabled."""
+    def __init__(self, feature_flags: Optional["BetaFeatureFlags"] = None):
+        self._feature_flags = feature_flags
+
+
+class BetaFeedbackCollector:
+    """Placeholder feedback collector used when beta feedback is not enabled."""
+    def __init__(self, feature_flags: Optional["BetaFeatureFlags"] = None):
+        self._feature_flags = feature_flags
+
+
+class SafeFileHandler:
+    """Robust file operations wrapper used by analytics and reporting paths.
+    
+    Implemented here to avoid optional import failures and undefined symbol
+    errors during static analysis. Methods are conservative and avoid raising
+    exceptions; they return simple success/failure signals.
+    """
+
+    @staticmethod
+    def safe_write_json(filepath: str, data: Any) -> bool:
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def safe_read_json(filepath: str) -> Optional[Any]:
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return None
 
 
 
@@ -13226,7 +13276,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 },
                                 'gaps_filled': []
                             }
-                        
                     except Exception as e:
                         self.log_processing(f"Zone-aware gap filling failed for {column}: {e}")
                         self.log_processing("Falling back to standard gap filling...")
@@ -13247,7 +13296,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 curve_name=column
                             )
                             filled_data = gap_result['filled_data']
-                            
                         except Exception as e:
                             self.log_processing(f"Fallback gap filling failed for {column}: {e}")
                             filled_data = data.copy()  # Use original data as fallback
@@ -13281,7 +13329,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
                             curve_name=column
                         )
                         filled_data = gap_result['filled_data']
-                        
                     except Exception as e:
                         self.log_processing(f"Gap filling failed for {column}: {e}")
                         filled_data = data.copy()  # Use original data as fallback
