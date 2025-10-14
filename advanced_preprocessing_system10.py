@@ -2346,17 +2346,69 @@ class SecureVisualizationManager:
         self._setup_matplotlib_params()
     
     def _setup_matplotlib_params(self):
-        """Maintain original professional matplotlib setup"""
-        plt.rcParams['figure.max_open_warning'] = 10
-        plt.rcParams['figure.dpi'] = 100
-        # Keep all the original styling from the script
+        """Configure matplotlib for professional petroleum industry plots"""
         try:
-            plt.style.use('seaborn-v0_8')
-        except Exception:
+            # Use modern seaborn style with fallback
             try:
-                plt.style.use('seaborn')
-            except Exception:
-                plt.style.use('default')
+                plt.style.use('seaborn-v0_8')
+            except OSError:
+                try:
+                    plt.style.use('seaborn')
+                except OSError:
+                    plt.style.use('default')
+            
+            # Professional matplotlib configuration for petroleum industry
+            plt.rcParams.update({
+                'figure.max_open_warning': 10,
+                'figure.dpi': 100,
+                'figure.facecolor': 'white',
+                'axes.facecolor': 'white',
+                'font.size': 10,
+                'axes.grid': True,
+                'grid.alpha': 0.3,
+                'grid.linewidth': 0.5,
+                'axes.linewidth': 0.8,
+                'axes.edgecolor': 'black',
+                'xtick.major.size': 4,
+                'ytick.major.size': 4,
+                'xtick.minor.size': 2,
+                'ytick.minor.size': 2,
+                'xtick.direction': 'in',
+                'ytick.direction': 'in',
+                'legend.frameon': True,
+                'legend.fancybox': False,
+                'legend.shadow': False,
+                'legend.edgecolor': 'black',
+                'legend.facecolor': 'white',
+                'legend.alpha': 0.9,
+                'lines.linewidth': 1.5,
+                'lines.markersize': 4,
+                'axes.titlesize': 12,
+                'axes.labelsize': 10,
+                'xtick.labelsize': 9,
+                'ytick.labelsize': 9,
+                'legend.fontsize': 9,
+                'figure.titlesize': 14,
+                'savefig.dpi': 100,
+                'savefig.bbox': 'tight',
+                'savefig.pad_inches': 0.1
+            })
+            
+            # Professional color cycle for petroleum industry
+            plt.rcParams['axes.prop_cycle'] = plt.cycler('color', 
+                ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])
+            
+        except Exception as e:
+            warnings.warn(f"Error configuring matplotlib: {e}", UserWarning)
+            # Fallback to basic configuration
+            plt.rcParams.update({
+                'figure.facecolor': 'white',
+                'axes.facecolor': 'white',
+                'font.size': 10,
+                'axes.grid': True,
+                'grid.alpha': 0.3
+            })
     
     @contextmanager
     def safe_visualization_context(self):
@@ -9111,56 +9163,167 @@ Your feedback contributes to software quality and reliability.
 
     def _format_cross_well_summary(self) -> str:
         lines: List[str] = []
-        lines.append("CROSS-WELL SUMMARY")
-        lines.append("-" * 60)
+        lines.append("CROSS-WELL ANALYSIS SUMMARY")
+        lines.append("=" * 80)
+        
         if not self.well_datasets:
             lines.append("No wells loaded.")
             return "\n".join(lines)
-        # Per-well basic stats
-        lines.append("Per-well overview:")
+        
+        num_wells = len(self.well_datasets)
+        lines.append(f"Dataset Overview: {num_wells} well(s) loaded")
+        lines.append("")
+        
+        # 1. WELL INFORMATION SUMMARY
+        lines.append("1. WELL INFORMATION")
+        lines.append("-" * 40)
         for wid, ds in self.well_datasets.items():
             wi = ds.get('well_info', {}) or {}
-            label = wi.get('well_name') or wi.get('uwi') or wid
+            well_name = wi.get('well_name', 'Unknown')
+            uwi = wi.get('uwi', 'N/A')
+            field = wi.get('field', 'Unknown')
+            company = wi.get('company', 'Unknown')
+            depth_range = wi.get('depth_range', 'N/A')
+            
+            lines.append(f"  • {well_name}")
+            lines.append(f"    UWI: {uwi}")
+            lines.append(f"    Field: {field}")
+            lines.append(f"    Company: {company}")
+            lines.append(f"    Depth Range: {depth_range}")
+            lines.append("")
+        
+        # 2. DATA QUALITY ASSESSMENT
+        lines.append("2. DATA QUALITY ASSESSMENT")
+        lines.append("-" * 40)
+        
+        total_curves = 0
+        total_data_points = 0
+        total_missing = 0
+        curve_quality_stats = {}
+        
+        for wid, ds in self.well_datasets.items():
             df = ds.get('current_data')
-            rows = len(df) if isinstance(df, pd.DataFrame) else 0
-            cols = len(df.columns) if isinstance(df, pd.DataFrame) else 0
-            missing_pct = 0.0
-            try:
-                if isinstance(df, pd.DataFrame) and rows > 0:
-                    missing_pct = float(df.isna().sum().sum()) / float(rows * max(cols, 1)) * 100.0
-            except Exception:
-                missing_pct = 0.0
-            lines.append(f"  • {wid}: {label} — shape {rows}x{cols}, missing {missing_pct:.1f}%")
-
-        # Common curves across wells
+            if isinstance(df, pd.DataFrame):
+                total_curves += len(df.columns)
+                total_data_points += df.size
+                missing_count = df.isna().sum().sum()
+                total_missing += missing_count
+                
+                # Per-well quality
+                well_missing_pct = (missing_count / df.size) * 100 if df.size > 0 else 0
+                lines.append(f"  {wid}: {len(df.columns)} curves, {len(df)} points, {well_missing_pct:.1f}% missing")
+                
+                # Track curve quality
+                for col in df.columns:
+                    if col not in curve_quality_stats:
+                        curve_quality_stats[col] = {'total_points': 0, 'missing_points': 0, 'wells': 0}
+                    
+                    series = pd.to_numeric(df[col], errors='coerce')
+                    curve_quality_stats[col]['total_points'] += len(series)
+                    curve_quality_stats[col]['missing_points'] += series.isna().sum()
+                    curve_quality_stats[col]['wells'] += 1
+        
+        overall_missing_pct = (total_missing / total_data_points) * 100 if total_data_points > 0 else 0
+        lines.append(f"")
+        lines.append(f"  Overall: {total_curves} total curves, {total_data_points:,} data points")
+        lines.append(f"  Missing Data: {total_missing:,} points ({overall_missing_pct:.1f}%)")
+        lines.append("")
+        
+        # 3. COMMON CURVES ANALYSIS
+        lines.append("3. COMMON CURVES ANALYSIS")
+        lines.append("-" * 40)
+        
+        # Find common curves
         common_curves = None
         for ds in self.well_datasets.values():
             df = ds.get('current_data')
             if isinstance(df, pd.DataFrame):
                 cols = set(df.columns)
                 common_curves = cols if common_curves is None else (common_curves & cols)
+        
         if not common_curves:
+            lines.append("No common curves across all wells.")
+        else:
+            lines.append(f"Found {len(common_curves)} common curves across all wells:")
             lines.append("")
-            lines.append("No common curve mnemonics across all wells.")
-            return "\n".join(lines)
+            
+            # Analyze each common curve
+            for curve in sorted(list(common_curves)):
+                if curve in curve_quality_stats:
+                    stats = curve_quality_stats[curve]
+                    completeness = ((stats['total_points'] - stats['missing_points']) / stats['total_points']) * 100
+                    lines.append(f"  • {curve}:")
+                    lines.append(f"    - Present in {stats['wells']} wells")
+                    lines.append(f"    - Data completeness: {completeness:.1f}%")
+                    
+                    # Get statistical summary
+                    all_values = []
+                    for ds in self.well_datasets.values():
+                        df = ds.get('current_data')
+                        if isinstance(df, pd.DataFrame) and curve in df.columns:
+                            series = pd.to_numeric(df[curve], errors='coerce')
+                            vals = series.dropna()
+                            if len(vals) > 0:
+                                all_values.extend(vals.tolist())
+                    
+                    if all_values:
+                        all_values = np.array(all_values)
+                        lines.append(f"    - Range: {all_values.min():.3g} to {all_values.max():.3g}")
+                        lines.append(f"    - Mean: {all_values.mean():.3g}")
+                        lines.append(f"    - Std Dev: {all_values.std():.3g}")
+                        lines.append(f"    - Median: {np.median(all_values):.3g}")
+                    lines.append("")
+        
+        # 4. PROCESSING STATUS
+        lines.append("4. PROCESSING STATUS")
+        lines.append("-" * 40)
+        
+        processed_wells = 0
+        for wid, ds in self.well_datasets.items():
+            if ds.get('processed_data') is not None:
+                processed_wells += 1
+        
+        lines.append(f"Processed Wells: {processed_wells}/{num_wells} ({processed_wells/num_wells*100:.1f}%)")
+        
+        if processed_wells > 0:
+            lines.append("")
+            lines.append("Processing Results Summary:")
+            for wid, ds in self.well_datasets.items():
+                if ds.get('processed_data') is not None:
+                    processed_df = ds['processed_data']
+                    original_df = ds.get('current_data')
+                    
+                    if isinstance(processed_df, pd.DataFrame) and isinstance(original_df, pd.DataFrame):
+                        original_missing = original_df.isna().sum().sum()
+                        processed_missing = processed_df.isna().sum().sum()
+                        improvement = original_missing - processed_missing
+                        
+                        lines.append(f"  • {wid}: {improvement:,} data points filled")
+        
+        # 5. RECOMMENDATIONS
         lines.append("")
-        lines.append("Common curves across all wells (aggregate stats):")
-        for curve in sorted(list(common_curves))[:25]:  # limit to first 25 for readability
-            mins, maxs, means = [], [], []
-            for ds in self.well_datasets.values():
-                df = ds.get('current_data')
-                try:
-                    series = pd.to_numeric(df[curve], errors='coerce')
-                    vals = series.dropna()
-                    if len(vals) == 0:
-                        continue
-                    mins.append(float(vals.min()))
-                    maxs.append(float(vals.max()))
-                    means.append(float(vals.mean()))
-                except Exception:
-                    continue
-            if mins and maxs and means:
-                lines.append(f"  - {curve}: min {min(mins):.3g}, max {max(maxs):.3g}, avg(mean) {np.mean(means):.3g}")
+        lines.append("5. RECOMMENDATIONS")
+        lines.append("-" * 40)
+        
+        if overall_missing_pct > 50:
+            lines.append("• High missing data percentage - consider data quality improvement")
+        elif overall_missing_pct > 20:
+            lines.append("• Moderate missing data - gap filling recommended")
+        else:
+            lines.append("• Good data quality - ready for analysis")
+        
+        if len(common_curves) < 3:
+            lines.append("• Limited common curves - consider standardizing curve names")
+        else:
+            lines.append("• Good curve coverage across wells")
+        
+        if processed_wells < num_wells:
+            lines.append("• Some wells not processed - run processing pipeline")
+        
+        lines.append("")
+        lines.append("=" * 80)
+        lines.append("End of Cross-Well Analysis Summary")
+        
         return "\n".join(lines)
 
     def show_cross_well_summary(self):
@@ -10187,14 +10350,23 @@ Your feedback contributes to software quality and reliability.
         # Ensure we have a valid figure
         self.ensure_figure_exists()
         
-        if num_curves <= 3:
+        # Set figure title
+        self.fig.suptitle(f'Multi-Curve Log Display - {len(valid_curves)} Curves', fontsize=14, fontweight='bold')
+        
+        if len(valid_curves) <= 3:
             # For 1-3 curves, use a single track with shared Y-axis
             ax = self.fig.add_subplot(111)
-            self._plot_depth_based_curves(ax, selected_curves, industry_colors)
+            self._plot_depth_based_curves(ax, valid_curves, industry_colors)
+            
+            # Add professional styling
+            ax.set_ylabel('Depth (m)', fontsize=10, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='best', frameon=True, fancybox=False, shadow=False)
+            
         else:
             # For 4+ curves, use multiple tracks (industry standard)
             # Determine number of tracks needed (maximum 3 curves per track)
-            num_tracks = (num_curves + 2) // 3  # Ceiling division
+            num_tracks = (len(valid_curves) + 2) // 3  # Ceiling division
             
             # Create a grid of tracks sharing the same y-axis
             axes = []
@@ -10210,18 +10382,24 @@ Your feedback contributes to software quality and reliability.
             for i, track_ax in enumerate(axes):
                 # Get curves for this track
                 start_idx = i * 3
-                end_idx = min((i + 1) * 3, num_curves)
-                track_curves = selected_curves[start_idx:end_idx]
+                end_idx = min((i + 1) * 3, len(valid_curves))
+                track_curves = valid_curves[start_idx:end_idx]
                 
                 # Plot curves on this track
                 self._plot_depth_based_curves(track_ax, track_curves, industry_colors)
                 
+                # Add professional styling
+                track_ax.grid(True, alpha=0.3)
+                track_ax.legend(loc='best', frameon=True, fancybox=False, shadow=False)
+                
                 # Only show depth labels on the first track
-                if i > 0:
+                if i == 0:
+                    track_ax.set_ylabel('Depth (m)', fontsize=10, fontweight='bold')
+                else:
                     track_ax.set_ylabel('')
         
-            # Apply tight layout once after all tracks are plotted
-            self.fig.tight_layout()
+        # Apply tight layout with proper spacing
+        self.fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     def _plot_depth_based_curves(self, ax, curves, industry_colors):
         """Plot curves in petroleum industry standard with depth on Y-axis"""
@@ -10415,8 +10593,16 @@ Your feedback contributes to software quality and reliability.
         self.ensure_figure_exists()
         self.fig.set_size_inches(18, 10)
         
+        # Set figure title
+        self.fig.suptitle('Industry Standard Log Display', fontsize=16, fontweight='bold')
+        
         # Create a 3-track display using proper method
         axes = self.fig.subplots(1, 3, sharey=True)
+        
+        # Add professional styling to all axes
+        for ax in axes:
+            ax.grid(True, alpha=0.3)
+            ax.set_facecolor('white')
         
         # Use depth for Y-axis
         depth_curves = curve_by_type.get('DEPTH_MEASURED', []) + curve_by_type.get('DEPTH_TRUE_VERTICAL', [])
@@ -10429,12 +10615,16 @@ Your feedback contributes to software quality and reliability.
         
         # Track 1: GR, SP, Caliper
         ax1 = axes[0]
+        ax1.set_title('GR, SP, Caliper', fontsize=12, fontweight='bold')
+        ax1.set_ylabel(f'Depth ({depth_unit})', fontsize=10, fontweight='bold')
+        
         # GR (green, 0-150 API)
         gr_curves = curve_by_type.get('GAMMA_RAY_TOTAL', [])
         if gr_curves:
             gr_data = data_source[gr_curves[0]].values
             ax1.plot(gr_data, depth, 'g-', linewidth=1.5, label=gr_curves[0])
             ax1.set_xlim([0, 150])
+            ax1.set_xlabel('GR (API)', fontsize=10)
         
         # SP (blue, -100 to 100 mV)
         sp_curves = curve_by_type.get('SPONTANEOUS_POTENTIAL', [])
@@ -10458,6 +10648,9 @@ Your feedback contributes to software quality and reliability.
         
         # Track 2: Resistivity curves (log scale)
         ax2 = axes[1]
+        ax2.set_title('Resistivity', fontsize=12, fontweight='bold')
+        ax2.set_xlabel('Resistivity (ohm-m)', fontsize=10)
+        
         res_types = ['RESISTIVITY_DEEP', 'RESISTIVITY_MEDIUM', 'RESISTIVITY_SHALLOW', 'RESISTIVITY_MICRO']
         res_colors = ['red', 'green', 'blue', 'magenta']
         
@@ -10477,6 +10670,9 @@ Your feedback contributes to software quality and reliability.
         
         # Track 3: Porosity curves
         ax3 = axes[2]
+        ax3.set_title('Porosity', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('Porosity (v/v)', fontsize=10)
+        
         # Neutron (blue, reverse scale)
         neutron_curves = curve_by_type.get('NEUTRON_POROSITY', [])
         if neutron_curves:
@@ -12945,6 +13141,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 self.log_processing(f"WARNING: Normalization failed: {e}")
             
             # Step 2: Geological Zone Detection (if gamma ray available)
+            zones = []  # Initialize zones as empty list
             gamma_ray_curves = [col for col in self.processed_data.columns if 'GR' in col.upper() or 'GAMMA' in col.upper()]
             if gamma_ray_curves and 'DEPT' in self.processed_data.columns:
                 self.root.after(0, lambda: self.status_label.config(text="Detecting geological boundaries..."))
@@ -13166,8 +13363,8 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 scale_type = self.scale_aware_processor.determine_curve_scale(column, data)
                 self.log_processing(f"Detected scale type for {column}: {scale_type}")
                 
-                # Step 2: Zone-aware gap filling (if zones detected)
-                if zones and 'DEPT' in self.processed_data.columns:
+            # Step 2: Zone-aware gap filling (if zones detected)
+            if zones and 'DEPT' in self.processed_data.columns:
                     self.log_processing(f"Zone-aware gap filling for {column}...")
                     
                     depth_data = self.processed_data['DEPT'].values
@@ -13177,11 +13374,15 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     auxiliary_curves = auxiliary_curves_dict.get(column, {}) if self.multi_curve_var.get() else {}
                     
                     try:
-                        zone_gap_result = self.zone_aware_gap_filler.fill_gaps_with_zone_awareness(
-                            data, curve_type, depth_data, gamma_ray_data, auxiliary_curves
-                        )
-                        filled_data = zone_gap_result['filled_data']
-                        self.log_processing(f"Zone-aware gap filling completed for {column}")
+                        if hasattr(self, 'zone_aware_gap_filler') and self.zone_aware_gap_filler is not None:
+                            zone_gap_result = self.zone_aware_gap_filler.fill_gaps_with_zone_awareness(
+                                data, curve_type, depth_data, gamma_ray_data, auxiliary_curves
+                            )
+                            filled_data = zone_gap_result['filled_data']
+                            self.log_processing(f"Zone-aware gap filling completed for {column}")
+                        else:
+                            warnings.warn("Zone-aware gap filler not available, skipping zone-aware processing", UserWarning)
+                            filled_data = data  # Use original data if zone-aware processing not available
                         # Ensure gap_result is defined for downstream use
                         try:
                             valid_before = int(np.sum(~np.isnan(data)))
