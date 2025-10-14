@@ -354,14 +354,75 @@ class PetrophysicalConstants:
     
     # Industry-standard colors for log curves (API & SPWLA standards)
     # Based on American Petroleum Institute and Society of Petrophysicists standards
+    # Enhanced with comprehensive industry color schemes
     LOG_COLORS = {
-        "GAMMA_RAY": "#008000",    # Green
-        "RESISTIVITY": "#FF0000",  # Red
-        "NEUTRON": "#0000FF",      # Blue
-        "DENSITY": "#FF0000",      # Red
-        "SONIC": "#800080",        # Purple
-        "CALIPER": "#000000",      # Black
-        "PHOTOELECTRIC": "#FF00FF" # Magenta
+        # Primary Log Curves (Schlumberger/Weatherford/Halliburton standards)
+        "GAMMA_RAY": "#008000",        # Green (GR)
+        "RESISTIVITY": "#FF0000",      # Red (RT, RM, RS, RXO)
+        "NEUTRON": "#0000FF",          # Blue (NPHI, CNL)
+        "DENSITY": "#FF0000",          # Red (RHOB, DEN)
+        "SONIC": "#800080",            # Purple (DT, DTC)
+        "CALIPER": "#000000",          # Black (CAL)
+        "PHOTOELECTRIC": "#FF00FF",    # Magenta (PE)
+        
+        # Secondary Log Curves
+        "SPONTANEOUS_POTENTIAL": "#00FFFF",  # Cyan (SP)
+        "BULK_DENSITY": "#FF0000",           # Red (RHOB)
+        "NEUTRON_POROSITY": "#0000FF",       # Blue (NPHI)
+        "DEEP_RESISTIVITY": "#FF0000",       # Red (RT)
+        "MEDIUM_RESISTIVITY": "#FF4444",     # Light Red (RM)
+        "SHALLOW_RESISTIVITY": "#FF8888",    # Pink (RS)
+        "MICRO_RESISTIVITY": "#FFAAAA",      # Light Pink (RXO)
+        
+        # Porosity Curves
+        "TOTAL_POROSITY": "#0000FF",         # Blue (PHIT)
+        "EFFECTIVE_POROSITY": "#0080FF",     # Light Blue (PHIE)
+        "WATER_SATURATION": "#00FF00",       # Green (SW)
+        "HYDROCARBON_SATURATION": "#FF8000", # Orange (SH)
+        
+        # Lithology Curves
+        "LITHOLOGY": "#8B4513",              # Brown
+        "FACIES": "#A0522D",                 # Sienna
+        "MINERAL_VOLUME": "#D2691E",         # Chocolate
+        
+        # Pressure/Temperature
+        "PRESSURE": "#FF4500",               # Orange Red
+        "TEMPERATURE": "#FF6347",            # Tomato
+        
+        # Specialized Curves
+        "CEMENT_BOND": "#696969",            # Dim Gray
+        "CROSS_DIP": "#9370DB",              # Medium Purple
+        "BOREHOLE_IMAGE": "#2F4F4F",         # Dark Slate Gray
+        
+        # Default fallback
+        "UNKNOWN": "#808080"                 # Gray
+    }
+    
+    # 3D Visualization Color Schemes (Industry Standards)
+    VISUALIZATION_COLORS = {
+        "3D_SCATTER": {
+            "primary": "#FF0000",      # Red for primary curve
+            "secondary": "#0000FF",    # Blue for secondary curve  
+            "tertiary": "#00FF00",     # Green for third curve
+            "depth": "#800080"         # Purple for depth
+        },
+        "CORRELATION_HEATMAP": "coolwarm",  # Standard correlation colormap
+        "UNCERTAINTY": "RdYlGn",            # Red-Yellow-Green for uncertainty
+        "QUALITY_METRICS": "viridis",       # Viridis for quality assessment
+        "DEPTH_GRADIENT": "plasma"          # Plasma for depth-based coloring
+    }
+    
+    # Industry Standard Colormaps for Different Visualization Types
+    COLORMAP_STANDARDS = {
+        "resistivity": "hot",           # Hot colormap for resistivity
+        "porosity": "Blues",           # Blue colormap for porosity
+        "density": "Reds",             # Red colormap for density
+        "gamma_ray": "Greens",         # Green colormap for gamma ray
+        "sonic": "Purples",            # Purple colormap for sonic
+        "correlation": "coolwarm",     # Cool-warm for correlations
+        "uncertainty": "RdYlGn",       # Red-Yellow-Green for uncertainty
+        "quality": "viridis",          # Viridis for quality metrics
+        "depth": "plasma"              # Plasma for depth-based plots
     }
     
     # Standard track configurations for log display (Schlumberger standards)
@@ -10059,6 +10120,7 @@ Your feedback contributes to software quality and reliability.
         # Update comboboxes
         self.viz_curve_combo['values'] = curves
         self.viz_curve2_combo['values'] = curves
+        self.viz_curve3_combo['values'] = curves
         
         if curves:
             self.viz_curve_combo.current(0)
@@ -14391,35 +14453,38 @@ This ensures consistent data interpretation and fixes depth validation issues.
             messagebox.showerror("Visualization Error", f"Failed to create scatter plot: {str(e)}")
     
     def plot_3d_visualization(self, curve: str):
-        """Create a 3D visualization with multiple curves"""
+        """Create a 3D visualization with 3 curves plus depth (industry standard)"""
         try:
-            # Get secondary curve
+            # Get secondary and tertiary curves
             curve2 = self.viz_curve2_var.get()
+            curve3 = self.viz_curve3_var.get()
             
             if not curve2 or curve2 not in self.processed_data.columns:
                 messagebox.showwarning("Warning", "Please select a valid secondary curve for 3D visualization")
                 return
+                
+            if not curve3 or curve3 not in self.processed_data.columns:
+                messagebox.showwarning("Warning", "Please select a valid third curve for 3D visualization")
+                return
             
             # Check if curves have been processed, otherwise use original data
-            if curve in self.processing_results:
-                curve1_data = self.processing_results[curve]['final_data']
-                curve1_status = 'processed'
-            elif self.current_data is not None and curve in self.current_data.columns:
-                curve1_data = self.current_data[curve].values
-                curve1_status = 'original'
-            else:
-                messagebox.showwarning("Warning", f"Curve '{curve}' not found in data")
-                return
-                
-            if curve2 in self.processing_results:
-                curve2_data = self.processing_results[curve2]['final_data']
-                curve2_status = 'processed'
-            elif self.current_data is not None and curve2 in self.current_data.columns:
-                curve2_data = self.current_data[curve2].values
-                curve2_status = 'original'
-            else:
-                messagebox.showwarning("Warning", f"Curve '{curve2}' not found in data")
-                return
+            curves_data = {}
+            curves_status = {}
+            
+            for curve_name in [curve, curve2, curve3]:
+                if curve_name in self.processing_results:
+                    curves_data[curve_name] = self.processing_results[curve_name]['final_data']
+                    curves_status[curve_name] = 'processed'
+                elif self.current_data is not None and curve_name in self.current_data.columns:
+                    curves_data[curve_name] = self.current_data[curve_name].values
+                    curves_status[curve_name] = 'original'
+                else:
+                    messagebox.showwarning("Warning", f"Curve '{curve_name}' not found in data")
+                    return
+            
+            curve1_data = curves_data[curve]
+            curve2_data = curves_data[curve2]
+            curve3_data = curves_data[curve3]
             
             # Ensure we have a valid figure with good size for 3D visualization
             self.ensure_figure_exists()
@@ -14445,38 +14510,46 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 depth = np.arange(len(curve1_data))
                 z_label = 'Depth (index)'
             
-            # Filter out NaN values
-            valid_mask = ~np.isnan(curve1_data) & ~np.isnan(curve2_data)
+            # Filter out NaN values for all three curves
+            valid_mask = (~np.isnan(curve1_data) & 
+                         ~np.isnan(curve2_data) & 
+                         ~np.isnan(curve3_data))
             if not np.any(valid_mask):
                 messagebox.showwarning("Warning", "No valid data points for 3D visualization")
                 return
             
             valid_x = curve1_data[valid_mask]
             valid_y = curve2_data[valid_mask]
-            valid_z = depth[valid_mask]
+            valid_z = curve3_data[valid_mask]
+            valid_depth = depth[valid_mask]
             
-            # Create scatter plot in 3D
-            scatter = ax.scatter(valid_x, valid_y, valid_z, c=valid_z, cmap='viridis', 
-                                s=30, alpha=0.8, marker='o')
+            # Get industry-standard colors
+            colors = PHYSICAL_CONSTANTS.VISUALIZATION_COLORS["3D_SCATTER"]
             
-            # Add a color bar
-            cbar = self.fig.colorbar(scatter, ax=ax, pad=0.1)
-            cbar.set_label(z_label)
+            # Create 3D scatter plot with industry-standard coloring
+            # Use depth for color mapping (industry standard)
+            scatter = ax.scatter(valid_x, valid_y, valid_z, c=valid_depth, 
+                                cmap=PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["depth"], 
+                                s=30, alpha=0.8, marker='o', edgecolors='black', linewidth=0.5)
             
-            # Set labels
-            ax.set_xlabel(f'{curve} ({self.curve_info.get(curve, {}).get("unit", "UNIT")})')
-            ax.set_ylabel(f'{curve2} ({self.curve_info.get(curve2, {}).get("unit", "UNIT")})')
-            ax.set_zlabel(z_label)
+            # Add professional color bar
+            cbar = self.fig.colorbar(scatter, ax=ax, pad=0.1, shrink=0.8)
+            cbar.set_label(f'Depth ({depth_unit})', fontsize=12, fontweight='bold')
+            cbar.ax.tick_params(labelsize=10)
             
-            # Set title with processing status
-            title = f'3D Visualization: {curve} vs {curve2}'
-            if curve1_status != curve2_status:
-                title += f' ({curve1_status} vs {curve2_status})'
-            elif curve1_status == 'original':
-                title += ' (Original Data)'
-            else:
-                title += ' (Processed Data)'
-            ax.set_title(title, fontsize=14, fontweight='bold')
+            # Set professional labels with units
+            curve1_unit = self.curve_info.get(curve, {}).get("unit", "UNIT")
+            curve2_unit = self.curve_info.get(curve2, {}).get("unit", "UNIT")
+            curve3_unit = self.curve_info.get(curve3, {}).get("unit", "UNIT")
+            
+            ax.set_xlabel(f'{curve} ({curve1_unit})', fontsize=12, fontweight='bold')
+            ax.set_ylabel(f'{curve2} ({curve2_unit})', fontsize=12, fontweight='bold')
+            ax.set_zlabel(f'{curve3} ({curve3_unit})', fontsize=12, fontweight='bold')
+            
+            # Set professional title
+            status_text = "Processed" if all(s == 'processed' for s in curves_status.values()) else "Mixed Data"
+            title = f'3D Log Visualization: {curve} vs {curve2} vs {curve3} ({status_text})'
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
             
             # Add grid
             ax.grid(True, alpha=0.3)
@@ -15119,14 +15192,16 @@ This ensures consistent data interpretation and fixes depth validation issues.
             ax.fill_betweenx(depth, lower_bound, upper_bound, alpha=0.3, color='lightblue', 
                             label='Uncertainty Band')
             
-            # Color code by confidence
+            # Color code by confidence using industry-standard uncertainty colormap
             confidence_colors = confidence.copy()
-            scatter = ax.scatter(processed, depth, c=confidence_colors, cmap='RdYlGn', 
-                               s=20, alpha=0.7, label='Confidence')
+            uncertainty_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["uncertainty"]
+            scatter = ax.scatter(processed, depth, c=confidence_colors, cmap=uncertainty_cmap, 
+                               s=20, alpha=0.7, label='Confidence', vmin=0, vmax=1)
             
-            # Add colorbar for confidence
-            cbar = self.fig.colorbar(scatter, ax=ax)
-            cbar.set_label('Confidence Level')
+            # Add professional colorbar for confidence
+            cbar = self.fig.colorbar(scatter, ax=ax, shrink=0.8)
+            cbar.set_label('Confidence Level (0-1)', fontsize=12, fontweight='bold')
+            cbar.ax.tick_params(labelsize=10)
             
             # Set title with processing status
             if has_processed:
@@ -15184,27 +15259,33 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 gap_metrics = {'data_completeness': completeness, 'total_gaps_filled': 0, 'total_points_filled': 0, 'methods_used': [], 'average_confidence': 0.5, 'average_uncertainty': 0.5}
                 denoise_metrics = {'quality': 0.5, 'noise_reduction_db': 0, 'signal_preservation': 0.5}
             
-            # Plot 1: Data Completeness
+            # Use industry-standard quality colormap
+            quality_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["quality"]
+            
+            # Plot 1: Data Completeness (Industry Standard: Green=Good, Red=Poor)
             ax1 = axes[0, 0]
             completeness = gap_metrics.get('data_completeness', 0)
+            colors = ['#00FF00' if completeness > 80 else '#FFA500' if completeness > 60 else '#FF0000', '#FF0000']
             ax1.pie([completeness, 100-completeness], labels=['Valid Data', 'Missing Data'],
-                    colors=['green', 'red'], autopct='%1.1f%%')
-            ax1.set_title('Data Completeness')
+                    colors=colors, autopct='%1.1f%%', startangle=90)
+            ax1.set_title('Data Completeness', fontsize=12, fontweight='bold')
             
-            # Plot 2: Gap Filling Quality
+            # Plot 2: Gap Filling Quality (Industry Standard: Blue=Confidence, Orange=Uncertainty)
             ax2 = axes[0, 1]
             confidence_values = gap_metrics.get('average_confidence', 0)
             uncertainty_values = gap_metrics.get('average_uncertainty', 0)
             
             metrics = ['Confidence', 'Uncertainty (inv)']
             values = [confidence_values, 1.0 - uncertainty_values]
+            colors = ['#0000FF', '#FFA500']  # Blue for confidence, Orange for uncertainty
             
-            bars = ax2.bar(metrics, values, color=['blue', 'orange'])
+            bars = ax2.bar(metrics, values, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
             ax2.set_ylim(0, 1)
-            ax2.set_title('Gap Filling Quality')
-            ax2.set_ylabel('Quality Score')
+            ax2.set_title('Gap Filling Quality', fontsize=12, fontweight='bold')
+            ax2.set_ylabel('Quality Score (0-1)', fontsize=10)
+            ax2.grid(True, alpha=0.3)
             
-            # Plot 3: Denoising Performance
+            # Plot 3: Denoising Performance (Industry Standard: Green=Good, Blue=Noise, Red=Signal)
             ax3 = axes[1, 0]
             denoise_quality = denoise_metrics.get('quality', 0)
             noise_reduction = denoise_metrics.get('noise_reduction_db', 0) / 20.0  # Normalize
@@ -15212,14 +15293,16 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             categories = ['Overall Quality', 'Noise Reduction', 'Signal Preservation']
             values = [denoise_quality, min(1.0, noise_reduction), signal_preservation]
+            colors = ['#00FF00', '#0000FF', '#FF0000']  # Green, Blue, Red
             
-            bars = ax3.bar(categories, values, color=['green', 'blue', 'red'])
+            bars = ax3.bar(categories, values, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
             ax3.set_ylim(0, 1)
-            ax3.set_title('Denoising Performance')
-            ax3.set_ylabel('Quality Score')
+            ax3.set_title('Denoising Performance', fontsize=12, fontweight='bold')
+            ax3.set_ylabel('Quality Score (0-1)', fontsize=10)
+            ax3.grid(True, alpha=0.3)
             plt.setp(ax3.get_xticklabels(), rotation=45, ha='right')
             
-            # Plot 4: Processing Summary
+            # Plot 4: Processing Summary (Industry Standard: Purple=Gaps, Cyan=Points, Yellow=Methods)
             ax4 = axes[1, 1]
             gaps_filled = gap_metrics.get('total_gaps_filled', 0)
             points_filled = gap_metrics.get('total_points_filled', 0)
@@ -15227,10 +15310,12 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             summary_data = [gaps_filled, points_filled, methods_used]
             summary_labels = ['Gaps Filled', 'Points Filled', 'Methods Used']
+            colors = ['#800080', '#00FFFF', '#FFFF00']  # Purple, Cyan, Yellow
             
-            bars = ax4.bar(summary_labels, summary_data, color=['purple', 'cyan', 'yellow'])
-            ax4.set_title('Processing Summary')
-            ax4.set_ylabel('Count')
+            bars = ax4.bar(summary_labels, summary_data, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
+            ax4.set_title('Processing Summary', fontsize=12, fontweight='bold')
+            ax4.set_ylabel('Count', fontsize=10)
+            ax4.grid(True, alpha=0.3)
             plt.setp(ax4.get_xticklabels(), rotation=45, ha='right')
             
             # Apply proper spacing for quality metrics display
@@ -15264,15 +15349,19 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Use seaborn for better visualization if available
             try:
                 import seaborn as sns
-                sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0,
-                           square=True, ax=ax, fmt='.2f', cbar_kws={'label': 'Correlation'})
+                # Use industry-standard correlation colormap
+                correlation_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["correlation"]
+                sns.heatmap(correlation_matrix, annot=True, cmap=correlation_cmap, center=0,
+                           square=True, ax=ax, fmt='.2f', 
+                           cbar_kws={'label': 'Correlation Coefficient', 'shrink': 0.8})
             except ImportError:
-                # Fallback to matplotlib
-                im = ax.imshow(correlation_matrix, cmap='coolwarm', aspect='auto')
+                # Fallback to matplotlib with industry standards
+                correlation_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["correlation"]
+                im = ax.imshow(correlation_matrix, cmap=correlation_cmap, aspect='auto', vmin=-1, vmax=1)
                 
-                # Add colorbar
-                cbar = self.fig.colorbar(im, ax=ax)
-                cbar.set_label('Correlation')
+                # Add professional colorbar
+                cbar = self.fig.colorbar(im, ax=ax, shrink=0.8)
+                cbar.set_label('Correlation Coefficient', fontsize=12, fontweight='bold')
                 
                 # Add labels
                 ax.set_xticks(range(len(correlation_matrix.columns)))
