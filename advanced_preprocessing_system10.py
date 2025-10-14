@@ -8862,16 +8862,16 @@ Your feedback contributes to software quality and reliability.
         self.well_listbox = tk.Listbox(wells_content, height=6, selectmode='extended')
         self.well_listbox.pack(fill='x', padx=10, pady=(0, 8))
         set_active_btn = self.ui.create_button(wells_toolbar, text="Set Active Well",
-                                              command=self.on_set_active_well, button_type='secondary', width=18)
+                                              command=self.on_set_active_well, button_type='secondary', width=20)
         set_active_btn.pack(side='left', padx=(0, 10))
         remove_btn = self.ui.create_button(wells_toolbar, text="Remove Selected",
-                                          command=self.on_remove_selected_wells, button_type='warning', width=18)
+                                          command=self.on_remove_selected_wells, button_type='warning', width=20)
         remove_btn.pack(side='left')
         process_all_quick_btn = self.ui.create_button(wells_toolbar, text="Process All Wells",
-                                                     command=self.process_all_wells, button_type='success', width=18)
+                                                     command=self.process_all_wells, button_type='success', width=20)
         process_all_quick_btn.pack(side='left', padx=(10, 0))
         process_sel_btn = self.ui.create_button(wells_toolbar, text="Process Selected",
-                                               command=self.process_selected_wells, button_type='primary', width=18)
+                                               command=self.process_selected_wells, button_type='primary', width=20)
         process_sel_btn.pack(side='left', padx=(10, 0))
         
         # Data summary section
@@ -9966,6 +9966,15 @@ Your feedback contributes to software quality and reliability.
         self.viz_curve2_var = tk.StringVar()
         self.viz_curve2_combo = ttk.Combobox(row2, textvariable=self.viz_curve2_var, width=20)
         self.viz_curve2_combo.pack(side='left', padx=10)
+        
+        # Third row for 3D visualization third curve
+        self.third_curve_frame = ttk.Frame(control_frame)
+        self.third_curve_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(self.third_curve_frame, text="Third Curve (3D only):", style='Card.TLabel').pack(side='left')
+        self.viz_curve3_var = tk.StringVar()
+        self.viz_curve3_combo = ttk.Combobox(self.third_curve_frame, textvariable=self.viz_curve3_var, width=20)
+        self.viz_curve3_combo.pack(side='left', padx=10)
         
         # Third row for multi-curve selection
         self.multi_curve_frame = ttk.Frame(control_frame)
@@ -16224,17 +16233,29 @@ This ensures consistent data interpretation and fixes depth validation issues.
         # Show/hide appropriate controls based on viz type
         if viz_type == "multi_curve":
             self.multi_curve_frame.pack(fill='x', pady=5)
+            self.third_curve_frame.pack_forget()
+        elif viz_type == "3d_visualization":
+            self.multi_curve_frame.pack_forget()
+            self.third_curve_frame.pack(fill='x', pady=5)
         elif viz_type in ["unprocessed_curves", "quality_overview", "curve_comparison_all"]:
             # Hide multi-curve frame for these new types
             self.multi_curve_frame.pack_forget()
+            self.third_curve_frame.pack_forget()
         else:
             self.multi_curve_frame.pack_forget()
+            self.third_curve_frame.pack_forget()
         
         # Enable/disable secondary curve combobox based on viz type
         if viz_type in ["3d_visualization", "single_curve_comparison"]:
             self.viz_curve2_combo['state'] = 'readonly'
         else:
             self.viz_curve2_combo['state'] = 'disabled'
+            
+        # Enable/disable third curve combobox for 3D visualization
+        if viz_type == "3d_visualization":
+            self.viz_curve3_combo['state'] = 'readonly'
+        else:
+            self.viz_curve3_combo['state'] = 'disabled'
 
     # ============================================================================
     # QUICK VISUALIZATION METHODS
