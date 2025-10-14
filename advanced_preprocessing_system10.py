@@ -7641,59 +7641,43 @@ class AdvancedPreprocessingApplication:
             self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
     
     def cleanup_visualization(self):
-        """Enterprise-grade visualization cleanup with comprehensive resource management"""
-        cleanup_success = True
-        cleanup_errors = []
+        """Clean up visualization resources to prevent memory leaks"""
         try:
-            # Phase 1: Matplotlib Canvas Cleanup
+            # Clean up canvas if it exists
             if hasattr(self, 'canvas') and self.canvas is not None:
                 try:
                     canvas_widget = self.canvas.get_tk_widget()
                     if canvas_widget and canvas_widget.winfo_exists():
                         canvas_widget.destroy()
+                except Exception as e:
+                    warnings.warn(f"Error cleaning up canvas: {e}", UserWarning)
+                finally:
                     self.canvas = None
 
-                except Exception as e:
-                    cleanup_errors.append(f"Canvas cleanup: {e}")
-                    cleanup_success = False
-
-            # Phase 2: Matplotlib Figure Cleanup
+            # Clean up figure if it exists
             if hasattr(self, 'fig') and self.fig is not None:
                 try:
                     plt.close(self.fig)
+                except Exception as e:
+                    warnings.warn(f"Error closing figure: {e}", UserWarning)
+                finally:
                     self.fig = None
 
-                except Exception as e:
-                    cleanup_errors.append(f"Figure cleanup: {e}")
-                    cleanup_success = False
-
-            # Phase 3: Global Matplotlib Cleanup
+            # Clean up any remaining matplotlib figures
             try:
                 plt.close('all')
             except Exception as e:
-                cleanup_errors.append(f"Global matplotlib cleanup: {e}")
-                cleanup_success = False
+                warnings.warn(f"Error in global matplotlib cleanup: {e}", UserWarning)
 
-            # Phase 4: Memory Management
+            # Force garbage collection
             try:
-                for _ in range(3):
-                    gc.collect()
+                gc.collect()
             except Exception as e:
-                cleanup_errors.append(f"Memory cleanup: {e}")
-                cleanup_success = False
+                warnings.warn(f"Error in garbage collection: {e}", UserWarning)
 
-            if cleanup_success:
-                self.log_processing("Visualization cleanup completed successfully")
-            else:
-                import warnings
-                warnings.warn(
-                    f"Visualization cleanup completed with {len(cleanup_errors)} error(s). "
-                    f"This may cause memory leaks. Errors: {'; '.join(cleanup_errors[:3])}",
-                    UserWarning
-                )
-            return cleanup_success
+            return True
         except Exception as e:
-            # Log critical visualization cleanup failure
+            warnings.warn(f"Critical error in visualization cleanup: {e}", UserWarning)
             import warnings
             warnings.warn(
                 f"CRITICAL: Visualization cleanup failed completely: {str(e)}. "
@@ -8210,43 +8194,17 @@ class AdvancedPreprocessingApplication:
                 'stats_error': str(e)
             }
     def ensure_figure_exists(self):
-        """Enterprise-grade figure creation with optimization and error recovery"""
+        """Create a clean matplotlib figure with proper memory management"""
         try:
-            # Performance optimization: reuse existing figure if suitable
-            if (hasattr(self, 'fig') and self.fig is not None and 
-                hasattr(self.fig, 'get_axes') and len(self.fig.get_axes()) == 0):
-                # Figure exists and is clean - reuse it
-                # Debug information removed for security
-                # Status notification handled - continuing operation
-                return self.fig
-            
-            # Clean up any existing figure using enhanced cleanup
+            # Always clean up existing figure first
             if hasattr(self, 'fig') and self.fig is not None:
                 try:
                     plt.close(self.fig)
                 except Exception as e:
-                    # Previous figure cleanup completed with warnings - continuing
-                    pass
+                    warnings.warn(f"Error closing previous figure: {e}", UserWarning)
             
-            # Create optimized figure with professional settings
-            # Use memory-efficient DPI and size based on system capabilities
-            dpi = 100
-            figsize = (12, 8)
-            
-            # Adjust for system memory constraints if available
-            if 'psutil' in globals():
-                try:
-                    available_memory = psutil.virtual_memory().available / (1024**3)  # GB
-                    if available_memory < 4:  # Less than 4GB available
-                        dpi = 80
-                        figsize = (10, 6)
-                        # Debug information removed for security
-                        # Status notification handled - continuing operation
-                except Exception:
-                    pass
-            
-            # Create figure with professional backend configuration
-            self.fig = Figure(figsize=figsize, dpi=dpi, tight_layout=True)
+            # Create new figure with standard settings
+            self.fig = Figure(figsize=(12, 8), dpi=100, tight_layout=True)
             
             # Configure for professional output
             self.fig.patch.set_facecolor('white')
@@ -10198,6 +10156,11 @@ Your feedback contributes to software quality and reliability.
         # Clean up previous visualization resources
         self.cleanup_visualization()
         
+        # Validate data availability
+        if not hasattr(self, 'current_data') or self.current_data is None:
+            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
+            return
+        
         # Get selected curves from listbox
         selected_indices = self.curve_listbox.curselection()
         
@@ -10206,6 +10169,14 @@ Your feedback contributes to software quality and reliability.
             return
         
         selected_curves = [self.curve_listbox.get(i) for i in selected_indices]
+        
+        # Validate that selected curves exist in data
+        available_curves = self.current_data.columns.tolist()
+        valid_curves = [curve for curve in selected_curves if curve in available_curves]
+        
+        if not valid_curves:
+            messagebox.showwarning("Warning", "None of the selected curves are available in the loaded data.")
+            return
         
         # Use industry-standard colors for log curves (API & SPWLA standards)
         industry_colors = PHYSICAL_CONSTANTS.LOG_COLORS
@@ -10264,12 +10235,15 @@ Your feedback contributes to software quality and reliability.
         
         # If no explicit depth curve, use index
         if depth_curve:
-            depth = self.processed_data[depth_curve].values
+            # Use current_data as primary source
+            data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
+            depth = data_source[depth_curve].values
             # Remove depth from plotting curves
             plot_curves = [c for c in curves if c != depth_curve]
         else:
             # Use row index as depth
-            depth = np.arange(len(self.processed_data))
+            data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
+            depth = np.arange(len(data_source))
             plot_curves = curves
         
         # Create twin axes for different scales if needed
@@ -10277,17 +10251,31 @@ Your feedback contributes to software quality and reliability.
         
         # Plot each curve with appropriate styling
         for i, curve in enumerate(plot_curves):
-            # Get curve data - use processed if available, otherwise use original/unprocessed
-            if curve in self.processing_results:
-                curve_data = self.processing_results[curve]['final_data']
-                curve_status = 'processed'
-            elif self.processed_data is not None and curve in self.processed_data.columns:
-                curve_data = self.processed_data[curve].values
-                curve_status = 'unprocessed'
-            elif self.current_data is not None and curve in self.current_data.columns:
-                curve_data = self.current_data[curve].values
-                curve_status = 'original'
-            else:
+            # Get curve data with proper validation
+            curve_data = None
+            curve_status = 'unknown'
+            
+            try:
+                if hasattr(self, 'processing_results') and self.processing_results and curve in self.processing_results:
+                    curve_data = self.processing_results[curve]['final_data']
+                    curve_status = 'processed'
+                elif hasattr(self, 'processed_data') and self.processed_data is not None and curve in self.processed_data.columns:
+                    curve_data = self.processed_data[curve].values
+                    curve_status = 'unprocessed'
+                elif hasattr(self, 'current_data') and self.current_data is not None and curve in self.current_data.columns:
+                    curve_data = self.current_data[curve].values
+                    curve_status = 'original'
+                else:
+                    warnings.warn(f"Curve '{curve}' not found in any data source", UserWarning)
+                    continue
+                    
+                # Validate curve data
+                if curve_data is None or len(curve_data) == 0:
+                    warnings.warn(f"Curve '{curve}' has no valid data", UserWarning)
+                    continue
+                    
+            except Exception as e:
+                warnings.warn(f"Error accessing curve '{curve}': {e}", UserWarning)
                 continue
             curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
             curve_family = curve_type.split('_')[0] if '_' in curve_type else curve_type
@@ -10402,6 +10390,14 @@ Your feedback contributes to software quality and reliability.
         # Clean up previous visualization resources
         self.cleanup_visualization()
         
+        # Validate data availability
+        if not hasattr(self, 'current_data') or self.current_data is None:
+            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
+            return
+        
+        # Use current_data as the primary source
+        data_source = self.current_data
+        
         # Standard track configuration
         # Track 1: GR, SP, Caliper
         # Track 2: Resistivity (multiple depths)
@@ -10409,7 +10405,7 @@ Your feedback contributes to software quality and reliability.
         
         # Identify curves by type
         curve_by_type = {}
-        for curve in self.processed_data.columns:
+        for curve in data_source.columns:
             curve_type = self.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN')
             if curve_type not in curve_by_type:
                 curve_by_type[curve_type] = []
@@ -10425,10 +10421,10 @@ Your feedback contributes to software quality and reliability.
         # Use depth for Y-axis
         depth_curves = curve_by_type.get('DEPTH_MEASURED', []) + curve_by_type.get('DEPTH_TRUE_VERTICAL', [])
         if depth_curves:
-            depth = self.processed_data[depth_curves[0]].values
+            depth = data_source[depth_curves[0]].values
             depth_unit = self.curve_info.get(depth_curves[0], {}).get('unit', 'm')
         else:
-            depth = np.arange(len(self.processed_data))
+            depth = np.arange(len(data_source))
             depth_unit = 'index'
         
         # Track 1: GR, SP, Caliper
@@ -10436,7 +10432,7 @@ Your feedback contributes to software quality and reliability.
         # GR (green, 0-150 API)
         gr_curves = curve_by_type.get('GAMMA_RAY_TOTAL', [])
         if gr_curves:
-            gr_data = self.processed_data[gr_curves[0]].values
+            gr_data = data_source[gr_curves[0]].values
             ax1.plot(gr_data, depth, 'g-', linewidth=1.5, label=gr_curves[0])
             ax1.set_xlim([0, 150])
         
@@ -10444,7 +10440,7 @@ Your feedback contributes to software quality and reliability.
         sp_curves = curve_by_type.get('SPONTANEOUS_POTENTIAL', [])
         if sp_curves:
             twin1 = ax1.twiny()
-            sp_data = self.processed_data[sp_curves[0]].values
+            sp_data = data_source[sp_curves[0]].values
             twin1.plot(sp_data, depth, 'b-', linewidth=1.5, label=sp_curves[0])
             twin1.set_xlim([-100, 100])
             twin1.xaxis.set_ticks_position('top')
@@ -10454,7 +10450,7 @@ Your feedback contributes to software quality and reliability.
         cal_curves = curve_by_type.get('CALIPER_SINGLE', []) + curve_by_type.get('CALIPER_MULTI', [])
         if cal_curves:
             twin1_2 = ax1.twiny()
-            cal_data = self.processed_data[cal_curves[0]].values
+            cal_data = data_source[cal_curves[0]].values
             twin1_2.plot(cal_data, depth, 'k-', linewidth=1.5, label=cal_curves[0])
             # Position x-axis
             twin1_2.xaxis.set_ticks_position('top')
@@ -10470,7 +10466,7 @@ Your feedback contributes to software quality and reliability.
             res_curves = curve_by_type.get(res_type, [])
             if res_curves:
                 has_res = True
-                res_data = self.processed_data[res_curves[0]].values
+                res_data = data_source[res_curves[0]].values
                 # Handle zeros and negatives for log scale
                 res_data = np.maximum(res_data, 0.1)  # Clamp to minimum 0.1 ohm-m
                 ax2.plot(res_data, depth, color=res_colors[i], linewidth=1.5, label=res_curves[0])
@@ -10484,13 +10480,13 @@ Your feedback contributes to software quality and reliability.
         # Neutron (blue, reverse scale)
         neutron_curves = curve_by_type.get('NEUTRON_POROSITY', [])
         if neutron_curves:
-            neutron_data = self.processed_data[neutron_curves[0]].values
+            neutron_data = data_source[neutron_curves[0]].values
             ax3.plot(neutron_data, depth, 'b-', linewidth=1.5, label=neutron_curves[0])
         
         # Density (red)
         density_curves = curve_by_type.get('BULK_DENSITY', [])
         if density_curves:
-            density_data = self.processed_data[density_curves[0]].values
+            density_data = data_source[density_curves[0]].values
             if not neutron_curves:
                 ax3.plot(density_data, depth, 'r-', linewidth=1.5, label=density_curves[0])
             else:
@@ -10508,7 +10504,7 @@ Your feedback contributes to software quality and reliability.
         sonic_curves = curve_by_type.get('SONIC_COMPRESSIONAL', [])
         if sonic_curves:
             twin3_2 = ax3.twiny()
-            sonic_data = self.processed_data[sonic_curves[0]].values
+            sonic_data = data_source[sonic_curves[0]].values
             twin3_2.plot(sonic_data, depth, 'purple', linewidth=1.5, label=sonic_curves[0])
             # Position x-axis
             twin3_2.xaxis.set_ticks_position('top')
