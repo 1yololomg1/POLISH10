@@ -1,0 +1,22 @@
+[
+  {
+    "fileName": "main-overview.mdc",
+    "description": "Complete system overview documenting the well data preprocessing system architecture, component interactions, and high-level workflow"
+  },
+  {
+    "fileName": "well-identification-system.mdc",
+    "description": "Detailed documentation of the well identification algorithm, LAS header parsing logic, and data extraction patterns for well metadata"
+  },
+  {
+    "fileName": "data-validation-models.mdc",
+    "description": "Comprehensive documentation of the DepthValidationResult dataclass, validation algorithms, and feedback generation system"
+  },
+  {
+    "fileName": "state-management.mdc",
+    "description": "Documentation of the state management system, including well_datasets mapping, state cleanup mechanisms, and cross-contamination prevention"
+  },
+  {
+    "fileName": "error-handling-patterns.mdc",
+    "description": "Detailed documentation of the custom error handling system, warning generation, and error tracking mechanisms"
+  }
+]
