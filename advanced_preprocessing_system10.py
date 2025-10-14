@@ -98,6 +98,56 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 import warnings
+import sys
+import platform
+
+# ===== PLACEHOLDER/BACKSTOP CLASSES FOR OPTIONAL SYSTEMS =====
+# These lightweight definitions ensure static type checkers (pyright) and
+# runtime both have symbols available even when optional subsystems are
+# disabled or not bundled. They introduce no side effects.
+
+class BetaFeatureFlags:
+    """Placeholder for beta feature flags when beta system is disabled."""
+    def __init__(self):
+        pass
+
+
+class BetaAnalytics:
+    """Placeholder analytics sink used when beta analytics is not enabled."""
+    def __init__(self, feature_flags: Optional["BetaFeatureFlags"] = None):
+        self._feature_flags = feature_flags
+
+
+class BetaFeedbackCollector:
+    """Placeholder feedback collector used when beta feedback is not enabled."""
+    def __init__(self, feature_flags: Optional["BetaFeatureFlags"] = None):
+        self._feature_flags = feature_flags
+
+
+class SafeFileHandler:
+    """Robust file operations wrapper used by analytics and reporting paths.
+    
+    Implemented here to avoid optional import failures and undefined symbol
+    errors during static analysis. Methods are conservative and avoid raising
+    exceptions; they return simple success/failure signals.
+    """
+
+    @staticmethod
+    def safe_write_json(filepath: str, data: Any) -> bool:
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def safe_read_json(filepath: str) -> Optional[Any]:
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return None
 
 
 
@@ -354,14 +404,75 @@ class PetrophysicalConstants:
     
     # Industry-standard colors for log curves (API & SPWLA standards)
     # Based on American Petroleum Institute and Society of Petrophysicists standards
+    # Enhanced with comprehensive industry color schemes
     LOG_COLORS = {
-        "GAMMA_RAY": "#008000",    # Green
-        "RESISTIVITY": "#FF0000",  # Red
-        "NEUTRON": "#0000FF",      # Blue
-        "DENSITY": "#FF0000",      # Red
-        "SONIC": "#800080",        # Purple
-        "CALIPER": "#000000",      # Black
-        "PHOTOELECTRIC": "#FF00FF" # Magenta
+        # Primary Log Curves (Schlumberger/Weatherford/Halliburton standards)
+        "GAMMA_RAY": "#008000",        # Green (GR)
+        "RESISTIVITY": "#FF0000",      # Red (RT, RM, RS, RXO)
+        "NEUTRON": "#0000FF",          # Blue (NPHI, CNL)
+        "DENSITY": "#FF0000",          # Red (RHOB, DEN)
+        "SONIC": "#800080",            # Purple (DT, DTC)
+        "CALIPER": "#000000",          # Black (CAL)
+        "PHOTOELECTRIC": "#FF00FF",    # Magenta (PE)
+        
+        # Secondary Log Curves
+        "SPONTANEOUS_POTENTIAL": "#00FFFF",  # Cyan (SP)
+        "BULK_DENSITY": "#FF0000",           # Red (RHOB)
+        "NEUTRON_POROSITY": "#0000FF",       # Blue (NPHI)
+        "DEEP_RESISTIVITY": "#FF0000",       # Red (RT)
+        "MEDIUM_RESISTIVITY": "#FF4444",     # Light Red (RM)
+        "SHALLOW_RESISTIVITY": "#FF8888",    # Pink (RS)
+        "MICRO_RESISTIVITY": "#FFAAAA",      # Light Pink (RXO)
+        
+        # Porosity Curves
+        "TOTAL_POROSITY": "#0000FF",         # Blue (PHIT)
+        "EFFECTIVE_POROSITY": "#0080FF",     # Light Blue (PHIE)
+        "WATER_SATURATION": "#00FF00",       # Green (SW)
+        "HYDROCARBON_SATURATION": "#FF8000", # Orange (SH)
+        
+        # Lithology Curves
+        "LITHOLOGY": "#8B4513",              # Brown
+        "FACIES": "#A0522D",                 # Sienna
+        "MINERAL_VOLUME": "#D2691E",         # Chocolate
+        
+        # Pressure/Temperature
+        "PRESSURE": "#FF4500",               # Orange Red
+        "TEMPERATURE": "#FF6347",            # Tomato
+        
+        # Specialized Curves
+        "CEMENT_BOND": "#696969",            # Dim Gray
+        "CROSS_DIP": "#9370DB",              # Medium Purple
+        "BOREHOLE_IMAGE": "#2F4F4F",         # Dark Slate Gray
+        
+        # Default fallback
+        "UNKNOWN": "#808080"                 # Gray
+    }
+    
+    # 3D Visualization Color Schemes (Industry Standards)
+    VISUALIZATION_COLORS = {
+        "3D_SCATTER": {
+            "primary": "#FF0000",      # Red for primary curve
+            "secondary": "#0000FF",    # Blue for secondary curve  
+            "tertiary": "#00FF00",     # Green for third curve
+            "depth": "#800080"         # Purple for depth
+        },
+        "CORRELATION_HEATMAP": "coolwarm",  # Standard correlation colormap
+        "UNCERTAINTY": "RdYlGn",            # Red-Yellow-Green for uncertainty
+        "QUALITY_METRICS": "viridis",       # Viridis for quality assessment
+        "DEPTH_GRADIENT": "plasma"          # Plasma for depth-based coloring
+    }
+    
+    # Industry Standard Colormaps for Different Visualization Types
+    COLORMAP_STANDARDS = {
+        "resistivity": "hot",           # Hot colormap for resistivity
+        "porosity": "Blues",           # Blue colormap for porosity
+        "density": "Reds",             # Red colormap for density
+        "gamma_ray": "Greens",         # Green colormap for gamma ray
+        "sonic": "Purples",            # Purple colormap for sonic
+        "correlation": "coolwarm",     # Cool-warm for correlations
+        "uncertainty": "RdYlGn",       # Red-Yellow-Green for uncertainty
+        "quality": "viridis",          # Viridis for quality metrics
+        "depth": "plasma"              # Plasma for depth-based plots
     }
     
     # Standard track configurations for log display (Schlumberger standards)
@@ -2346,17 +2457,69 @@ class SecureVisualizationManager:
         self._setup_matplotlib_params()
     
     def _setup_matplotlib_params(self):
-        """Maintain original professional matplotlib setup"""
-        plt.rcParams['figure.max_open_warning'] = 10
-        plt.rcParams['figure.dpi'] = 100
-        # Keep all the original styling from the script
+        """Configure matplotlib for professional petroleum industry plots"""
         try:
-            plt.style.use('seaborn-v0_8')
-        except Exception:
+            # Use modern seaborn style with fallback
             try:
-                plt.style.use('seaborn')
-            except Exception:
-                plt.style.use('default')
+                plt.style.use('seaborn-v0_8')
+            except OSError:
+                try:
+                    plt.style.use('seaborn')
+                except OSError:
+                    plt.style.use('default')
+            
+            # Professional matplotlib configuration for petroleum industry
+            plt.rcParams.update({
+                'figure.max_open_warning': 10,
+                'figure.dpi': 100,
+                'figure.facecolor': 'white',
+                'axes.facecolor': 'white',
+                'font.size': 10,
+                'axes.grid': True,
+                'grid.alpha': 0.3,
+                'grid.linewidth': 0.5,
+                'axes.linewidth': 0.8,
+                'axes.edgecolor': 'black',
+                'xtick.major.size': 4,
+                'ytick.major.size': 4,
+                'xtick.minor.size': 2,
+                'ytick.minor.size': 2,
+                'xtick.direction': 'in',
+                'ytick.direction': 'in',
+                'legend.frameon': True,
+                'legend.fancybox': False,
+                'legend.shadow': False,
+                'legend.edgecolor': 'black',
+                'legend.facecolor': 'white',
+                'legend.alpha': 0.9,
+                'lines.linewidth': 1.5,
+                'lines.markersize': 4,
+                'axes.titlesize': 12,
+                'axes.labelsize': 10,
+                'xtick.labelsize': 9,
+                'ytick.labelsize': 9,
+                'legend.fontsize': 9,
+                'figure.titlesize': 14,
+                'savefig.dpi': 100,
+                'savefig.bbox': 'tight',
+                'savefig.pad_inches': 0.1
+            })
+            
+            # Professional color cycle for petroleum industry
+            plt.rcParams['axes.prop_cycle'] = plt.cycler('color', 
+                ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])
+            
+        except Exception as e:
+            warnings.warn(f"Error configuring matplotlib: {e}", UserWarning)
+            # Fallback to basic configuration
+            plt.rcParams.update({
+                'figure.facecolor': 'white',
+                'axes.facecolor': 'white',
+                'font.size': 10,
+                'axes.grid': True,
+                'grid.alpha': 0.3
+            })
     
     @contextmanager
     def safe_visualization_context(self):
@@ -4912,6 +5075,262 @@ class ZoneAwareGapFiller(AdvancedGapFiller):
         }
 
 #=============================================================================
+# CROSS-WELL PRIOR MANAGER
+#=============================================================================
+
+class CrossWellPriorManager:
+    """Build and serve cross-well priors for expert two-pass workflows.
+
+    Priors are computed per curve and optionally per depth bins (or zones) across
+    a selected cohort of wells. Robust statistics (median/IQR) are used to
+    minimize sensitivity to outliers and tool mismatches.
+    """
+
+    def __init__(self):
+        self.app = None
+        self.priors: Dict[str, Any] = {}
+
+    def set_application_reference(self, app):
+        self.app = app
+
+    def _select_cohort_ids(self) -> List[str]:
+        if not self.app or not getattr(self.app, 'well_datasets', None):
+            return []
+        # Manual selection takes precedence when provided
+        if self.app.cohort_selected_well_ids:
+            return [wid for wid in self.app.cohort_selected_well_ids if wid in self.app.well_datasets and wid != self.app.active_well_id]
+        # Auto-select if enabled: all loaded wells except active
+        if getattr(self.app, 'auto_select_cohort_var', None) and self.app.auto_select_cohort_var.get():
+            return [wid for wid in self.app.well_datasets.keys() if wid != self.app.active_well_id]
+        # Otherwise, no cohort
+        return []
+
+    def build_priors(self, depth_binned: bool = True) -> Dict[str, Any]:
+        """Build cross-well priors from cohort.
+
+        Returns a dict: { curve -> { 'global': stats, 'bins': [ {depth_min,max, stats} ] } }
+        """
+        priors: Dict[str, Any] = {'curves': {}, 'families': {}}
+        try:
+            cohort_ids = self._select_cohort_ids()
+            if not cohort_ids:
+                return {}
+            # Collect per-curve and per-family arrays (from processed data for standardization)
+            curve_to_series: Dict[str, List[np.ndarray]] = {}
+            depth_to_series: Dict[str, List[np.ndarray]] = {}
+            family_to_series: Dict[str, List[np.ndarray]] = {}
+            family_depth_series: Dict[str, List[np.ndarray]] = {}
+            for wid in cohort_ids:
+                ds = self.app.well_datasets.get(wid, {})
+                df = ds.get('processed_data') if isinstance(ds.get('processed_data'), pd.DataFrame) else ds.get('current_data')
+                if not isinstance(df, pd.DataFrame) or df.empty:
+                    continue
+                depth_col = 'DEPT' if 'DEPT' in df.columns else (df.columns[0] if len(df.columns) else None)
+                if depth_col is None:
+                    continue
+                depth_vals = pd.to_numeric(df[depth_col], errors='coerce').values
+                ds_ci = ds.get('curve_info', {}) or {}
+                for col in df.columns:
+                    if col == depth_col:
+                        continue
+                    arr = pd.to_numeric(df[col], errors='coerce').values
+                    # Determine curve family from curve info if available
+                    cinfo = ds_ci.get(col, {}) if isinstance(ds_ci, dict) else {}
+                    ctype = str(cinfo.get('curve_type', 'UNKNOWN'))
+                    family = ctype.split('_')[0] if '_' in ctype else ctype
+                    curve_to_series.setdefault(col, []).append(arr)
+                    depth_to_series.setdefault(col, []).append(depth_vals)
+                    family_to_series.setdefault(family, []).append(arr)
+                    family_depth_series.setdefault(family, []).append(depth_vals)
+
+            # Compute robust global stats and optional depth bins
+            def _compute_stats_from_arrays(arrays_list: List[np.ndarray], depths_list: List[np.ndarray], family_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                try:
+                    stacked = np.concatenate([a[~np.isnan(a)] for a in arrays_list if isinstance(a, np.ndarray)])
+                    if stacked.size == 0:
+                        return None
+                    # Detect if resistivity-like (log-space) using family key if provided
+                    use_log = family_key is not None and ('RESISTIVITY' in str(family_key).upper())
+                    if use_log:
+                        stacked_pos = stacked[stacked > 0]
+                        if stacked_pos.size == 0:
+                            return None
+                        stacked_stat = np.log10(stacked_pos)
+                    else:
+                        stacked_stat = stacked
+                    global_stats = {
+                        'median': float(np.median(stacked_stat)),
+                        'p10': float(np.percentile(stacked_stat, 10)),
+                        'p90': float(np.percentile(stacked_stat, 90)),
+                        'mean': float(np.mean(stacked_stat)),
+                        'std': float(np.std(stacked_stat)),
+                        'count': int(stacked_stat.size),
+                        'space': 'log' if use_log else 'linear'
+                    }
+                    entry = {'global': global_stats, 'bins': []}
+
+                    if depth_binned:
+                        # Equal-count bins by depth quantiles (5 bins)
+                        all_depths = np.concatenate([d for d in depths_list if isinstance(d, np.ndarray)])
+                        if all_depths.size > 20:
+                            # Use quantiles for equal-count binning
+                            try:
+                                depth_edges = np.quantile(all_depths[~np.isnan(all_depths)], [0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+                            except Exception:
+                                depth_edges = np.linspace(np.nanmin(all_depths), np.nanmax(all_depths), 6)
+                            for b in range(len(depth_edges)-1):
+                                dmin, dmax = depth_edges[b], depth_edges[b+1]
+                                bin_vals = []
+                                for arr, dvals in zip(arrays_list, depths_list):
+                                    mask = (dvals >= dmin) & (dvals < dmax)
+                                    bin_vals.append(arr[mask])
+                                if bin_vals:
+                                    bin_stack = np.concatenate([bv[~np.isnan(bv)] for bv in bin_vals if isinstance(bv, np.ndarray)])
+                                    if bin_stack.size > 0:
+                                        if use_log:
+                                            bin_stack_pos = bin_stack[bin_stack > 0]
+                                            if bin_stack_pos.size == 0:
+                                                continue
+                                            bin_stat = np.log10(bin_stack_pos)
+                                        else:
+                                            bin_stat = bin_stack
+                                        entry['bins'].append({
+                                            'depth_min': float(dmin),
+                                            'depth_max': float(dmax),
+                                            'median': float(np.median(bin_stat)),
+                                            'p10': float(np.percentile(bin_stat, 10)),
+                                            'p90': float(np.percentile(bin_stat, 90)),
+                                            'mean': float(np.mean(bin_stat)),
+                                            'std': float(np.std(bin_stat)),
+                                            'count': int(bin_stat.size)
+                                        })
+                    return entry
+                except Exception:
+                    return None
+
+            # Curves
+            for curve, arrays in curve_to_series.items():
+                entry = _compute_stats_from_arrays(arrays, depth_to_series.get(curve, []), None)
+                if entry:
+                    priors['curves'][curve] = entry
+
+            # Families
+            for family, arrays in family_to_series.items():
+                entry = _compute_stats_from_arrays(arrays, family_depth_series.get(family, []), family)
+                if entry:
+                    priors['families'][family] = entry
+        except Exception:
+            return {}
+        self.priors = priors
+        return priors
+
+    def _bounds_from_entry(self, entry: Dict[str, Any], depth: Optional[float]) -> Tuple[float, float]:
+        # Convert from stat-space to linear if needed
+        def _to_linear(v: float, space: str) -> float:
+            return float(10 ** v) if space == 'log' else float(v)
+        if depth is None or not entry['bins']:
+            g = entry['global']
+            return (_to_linear(g['p10'], g['space']), _to_linear(g['p90'], g['space']))
+        for b in entry['bins']:
+            if b['depth_min'] <= depth <= b['depth_max']:
+                space = entry['global'].get('space', 'linear')
+                return (_to_linear(b['p10'], space), _to_linear(b['p90'], space))
+        g = entry['global']
+        return (_to_linear(g['p10'], g['space']), _to_linear(g['p90'], g['space']))
+
+    def get_bounds_for_curve(self, curve: str, depth: Optional[float] = None, family: Optional[str] = None) -> Optional[Tuple[float, float]]:
+        # Try curve-specific
+        if isinstance(self.priors, dict) and 'curves' in self.priors and curve in self.priors['curves']:
+            return self._bounds_from_entry(self.priors['curves'][curve], depth)
+        # Try family-level
+        fam = family
+        if fam is None and self.app and hasattr(self.app, 'curve_info') and isinstance(self.app.curve_info, dict):
+            ctype = str(self.app.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN'))
+            fam = ctype.split('_')[0] if '_' in ctype else ctype
+        if fam and 'families' in self.priors and fam in self.priors['families']:
+            return self._bounds_from_entry(self.priors['families'][fam], depth)
+        return None
+
+    def get_bounds_vector_for_curve(self, curve: str, depths: np.ndarray, family: Optional[str] = None) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        # Return arrays of low/high bounds per depth sample
+        if not isinstance(depths, np.ndarray) or depths.size == 0:
+            return None
+        # Prefer curve entry
+        entry = None
+        if 'curves' in self.priors and curve in self.priors['curves']:
+            entry = self.priors['curves'][curve]
+        else:
+            fam = family
+            if fam is None and self.app and hasattr(self.app, 'curve_info'):
+                ctype = str(self.app.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN'))
+                fam = ctype.split('_')[0] if '_' in ctype else ctype
+            if fam and 'families' in self.priors and fam in self.priors['families']:
+                entry = self.priors['families'][fam]
+        if entry is None:
+            return None
+        # Prepare bin edges and convert bounds to linear space
+        def _to_linear(v: float, space: str) -> float:
+            return float(10 ** v) if space == 'log' else float(v)
+        space = entry['global'].get('space', 'linear')
+        if entry['bins']:
+            edges = [b['depth_min'] for b in entry['bins']] + [entry['bins'][-1]['depth_max']]
+            p10 = np.array([b['p10'] for b in entry['bins']], dtype=float)
+            p90 = np.array([b['p90'] for b in entry['bins']], dtype=float)
+            # Digitize depths
+            idx = np.clip(np.digitize(depths, edges) - 1, 0, len(p10) - 1)
+            lows = np.array([_to_linear(p10[i], space) for i in idx], dtype=float)
+            highs = np.array([_to_linear(p90[i], space) for i in idx], dtype=float)
+            return lows, highs
+        # Fallback to global
+        g = entry['global']
+        low = _to_linear(g['p10'], space)
+        high = _to_linear(g['p90'], space)
+        return np.full_like(depths, low, dtype=float), np.full_like(depths, high, dtype=float)
+
+    def estimate_coherence(self, curve: str, data: np.ndarray, depths: np.ndarray, family: Optional[str] = None) -> Optional[float]:
+        # Compute average exp(-0.5*z^2) where z = (x-mean)/std per depth bin vs priors
+        if data is None or depths is None or not isinstance(data, np.ndarray) or data.size == 0:
+            return None
+        entry = None
+        if 'curves' in self.priors and curve in self.priors['curves']:
+            entry = self.priors['curves'][curve]
+        else:
+            fam = family
+            if fam is None and self.app and hasattr(self.app, 'curve_info'):
+                ctype = str(self.app.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN'))
+                fam = ctype.split('_')[0] if '_' in ctype else ctype
+            if fam and 'families' in self.priors and fam in self.priors['families']:
+                entry = self.priors['families'][fam]
+        if entry is None:
+            return None
+        space = entry['global'].get('space', 'linear')
+        def _to_stat(v: np.ndarray) -> np.ndarray:
+            if space == 'log':
+                vp = v.copy()
+                vp[vp <= 0] = np.nan
+                return np.log10(vp)
+            return v
+        x = _to_stat(data.astype(float))
+        mask_valid = ~np.isnan(x)
+        if not np.any(mask_valid):
+            return None
+        if entry['bins']:
+            edges = [b['depth_min'] for b in entry['bins']] + [entry['bins'][-1]['depth_max']]
+            means = np.array([b.get('mean', entry['global']['mean']) for b in entry['bins']], dtype=float)
+            stds = np.array([b.get('std', entry['global']['std']) for b in entry['bins']], dtype=float)
+            idx = np.clip(np.digitize(depths, edges) - 1, 0, len(means) - 1)
+            mu = means[idx]
+            sd = stds[idx]
+        else:
+            mu = np.full_like(x, entry['global']['mean'], dtype=float)
+            sd = np.full_like(x, max(entry['global']['std'], 1e-6), dtype=float)
+        sd = np.where(sd <= 1e-12, 1e-12, sd)
+        z = np.zeros_like(x)
+        z[mask_valid] = (x[mask_valid] - mu[mask_valid]) / sd[mask_valid]
+        coh = np.nanmean(np.exp(-0.5 * (z ** 2)))
+        return float(coh)
+
+#=============================================================================
 # PETROPHYSICAL RELATIONSHIP VALIDATOR
 #=============================================================================
 
@@ -6039,13 +6458,46 @@ class PetrophysicalButtons:
                 
         return frame
     
-    def create_card(self, parent, title: str, **kwargs) -> ttk.Frame:
-        """Create a professional card widget"""
+    def create_card(self, parent, title: str, help_text: str = None, **kwargs) -> ttk.Frame:
+        """Create a professional card widget with optional info icon.
+        
+        Args:
+            parent: Parent widget
+            title: Card title
+            help_text: Optional help text shown when clicking the info icon
+        """
         card = ttk.Frame(parent, style='Card.TFrame', **kwargs)
         
-        # Title
-        title_label = ttk.Label(card, text=title, style='Subtitle.TLabel')
-        title_label.pack(anchor='w', padx=20, pady=(15, 5))
+        # Title row with optional info icon
+        header = ttk.Frame(card)
+        header.pack(fill='x', padx=20, pady=(15, 5))
+        title_label = ttk.Label(header, text=title, style='Subtitle.TLabel')
+        title_label.pack(side='left')
+        
+        if help_text:
+            def _show_card_help():
+                try:
+                    from tkinter import Toplevel
+                    dialog = Toplevel(card)
+                    dialog.title(f"Help - {title}")
+                    dialog.transient(card)
+                    dialog.grab_set()
+                    dialog.resizable(True, True)
+                    body = ttk.Frame(dialog, padding=15)
+                    body.pack(fill='both', expand=True)
+                    lbl = ttk.Label(body, text=help_text, wraplength=560, justify='left')
+                    lbl.pack(fill='both', expand=True)
+                    btn = ttk.Button(body, text='Close', command=dialog.destroy)
+                    btn.pack(anchor='e', pady=(10, 0))
+                    dialog.update_idletasks()
+                    x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+                    y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+                    dialog.geometry(f"+{x}+{y}")
+                except Exception:
+                    pass
+            info_btn = ttk.Button(header, text='i', width=2, command=_show_card_help)
+            self._create_tooltip(info_btn, f"Help: {title}")
+            info_btn.pack(side='right')
         
         # Content area
         content = ttk.Frame(card)
@@ -6514,7 +6966,7 @@ class IndustryUnitStandardizer:
         conversion_errors = len(self.unit_analysis_results['conversion_errors'])
         
         if conversions_applied > 0 and self.app:
-            self.app.log_processing(f"\ Unit standardization completed!")
+            self.app.log_processing(f"Unit standardization completed!")
             self.app.log_processing(f"   Conversions applied: {conversions_applied}")
             if conversion_errors > 0:
                 self.app.log_processing(f"    Conversion errors: {conversion_errors}")
@@ -6730,6 +7182,9 @@ class AdvancedPreprocessingApplication:
         # Geological context for intelligent gap classification
         self.geological_context = GeologicalContext()
         
+        # Cross-well priors manager (multiwell intelligence)
+        self.crosswell_prior_manager = None  # Will be initialized after class definition
+        
         # Initialize unit standardizer
         self.unit_standardizer = IndustryUnitStandardizer()
         
@@ -6746,6 +7201,9 @@ class AdvancedPreprocessingApplication:
         self.file_path_var = tk.StringVar()  # Initialize file path variable
         self.fig = None  # Initialize matplotlib figure
         self.well_info = {}  # CRITICAL: Well identification for safety
+        # Multiwell state
+        self.well_datasets: Dict[str, Dict[str, Any]] = {}
+        self.active_well_id: Optional[str] = None
         
         # Initialize UI variables that are referenced in report generation
         self.max_gap_var = tk.IntVar(value=500)
@@ -6781,6 +7239,14 @@ class AdvancedPreprocessingApplication:
         # Session preference: standardize units on upload (percent → v/v for fractional families)
         self.standardize_on_upload_var = tk.BooleanVar(value=True)
         self._upload_standardization_note = ""
+        
+        # Cohort & cross-well priors preferences
+        self.use_crosswell_priors_var = tk.BooleanVar(value=False)
+        self.two_pass_refinement_var = tk.BooleanVar(value=True)
+        self.priors_depth_binning_var = tk.BooleanVar(value=True)
+        self.auto_select_cohort_var = tk.BooleanVar(value=True)
+        self.cohort_selected_well_ids: List[str] = []
+        self.crosswell_priors: Dict[str, Any] = {}
         
         # Configure matplotlib for better memory management
         plt.rcParams['figure.max_open_warning'] = 10
@@ -7338,59 +7804,43 @@ class AdvancedPreprocessingApplication:
             self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
     
     def cleanup_visualization(self):
-        """Enterprise-grade visualization cleanup with comprehensive resource management"""
-        cleanup_success = True
-        cleanup_errors = []
+        """Clean up visualization resources to prevent memory leaks"""
         try:
-            # Phase 1: Matplotlib Canvas Cleanup
+            # Clean up canvas if it exists
             if hasattr(self, 'canvas') and self.canvas is not None:
                 try:
                     canvas_widget = self.canvas.get_tk_widget()
                     if canvas_widget and canvas_widget.winfo_exists():
                         canvas_widget.destroy()
+                except Exception as e:
+                    warnings.warn(f"Error cleaning up canvas: {e}", UserWarning)
+                finally:
                     self.canvas = None
 
-                except Exception as e:
-                    cleanup_errors.append(f"Canvas cleanup: {e}")
-                    cleanup_success = False
-
-            # Phase 2: Matplotlib Figure Cleanup
+            # Clean up figure if it exists
             if hasattr(self, 'fig') and self.fig is not None:
                 try:
                     plt.close(self.fig)
+                except Exception as e:
+                    warnings.warn(f"Error closing figure: {e}", UserWarning)
+                finally:
                     self.fig = None
 
-                except Exception as e:
-                    cleanup_errors.append(f"Figure cleanup: {e}")
-                    cleanup_success = False
-
-            # Phase 3: Global Matplotlib Cleanup
+            # Clean up any remaining matplotlib figures
             try:
                 plt.close('all')
             except Exception as e:
-                cleanup_errors.append(f"Global matplotlib cleanup: {e}")
-                cleanup_success = False
+                warnings.warn(f"Error in global matplotlib cleanup: {e}", UserWarning)
 
-            # Phase 4: Memory Management
+            # Force garbage collection
             try:
-                for _ in range(3):
-                    gc.collect()
+                gc.collect()
             except Exception as e:
-                cleanup_errors.append(f"Memory cleanup: {e}")
-                cleanup_success = False
+                warnings.warn(f"Error in garbage collection: {e}", UserWarning)
 
-            if cleanup_success:
-                self.log_processing("Visualization cleanup completed successfully")
-            else:
-                import warnings
-                warnings.warn(
-                    f"Visualization cleanup completed with {len(cleanup_errors)} error(s). "
-                    f"This may cause memory leaks. Errors: {'; '.join(cleanup_errors[:3])}",
-                    UserWarning
-                )
-            return cleanup_success
+            return True
         except Exception as e:
-            # Log critical visualization cleanup failure
+            warnings.warn(f"Critical error in visualization cleanup: {e}", UserWarning)
             import warnings
             warnings.warn(
                 f"CRITICAL: Visualization cleanup failed completely: {str(e)}. "
@@ -7907,43 +8357,17 @@ class AdvancedPreprocessingApplication:
                 'stats_error': str(e)
             }
     def ensure_figure_exists(self):
-        """Enterprise-grade figure creation with optimization and error recovery"""
+        """Create a clean matplotlib figure with proper memory management"""
         try:
-            # Performance optimization: reuse existing figure if suitable
-            if (hasattr(self, 'fig') and self.fig is not None and 
-                hasattr(self.fig, 'get_axes') and len(self.fig.get_axes()) == 0):
-                # Figure exists and is clean - reuse it
-                # Debug information removed for security
-                # Status notification handled - continuing operation
-                return self.fig
-            
-            # Clean up any existing figure using enhanced cleanup
+            # Always clean up existing figure first
             if hasattr(self, 'fig') and self.fig is not None:
                 try:
                     plt.close(self.fig)
                 except Exception as e:
-                    # Previous figure cleanup completed with warnings - continuing
-                    pass
+                    warnings.warn(f"Error closing previous figure: {e}", UserWarning)
             
-            # Create optimized figure with professional settings
-            # Use memory-efficient DPI and size based on system capabilities
-            dpi = 100
-            figsize = (12, 8)
-            
-            # Adjust for system memory constraints if available
-            if 'psutil' in globals():
-                try:
-                    available_memory = psutil.virtual_memory().available / (1024**3)  # GB
-                    if available_memory < 4:  # Less than 4GB available
-                        dpi = 80
-                        figsize = (10, 6)
-                        # Debug information removed for security
-                        # Status notification handled - continuing operation
-                except Exception:
-                    pass
-            
-            # Create figure with professional backend configuration
-            self.fig = Figure(figsize=figsize, dpi=dpi, tight_layout=True)
+            # Create new figure with standard settings
+            self.fig = Figure(figsize=(12, 8), dpi=100, tight_layout=True)
             
             # Configure for professional output
             self.fig.patch.set_facecolor('white')
@@ -8280,6 +8704,31 @@ Your feedback contributes to software quality and reliability.
         
         self.main_canvas.bind_all("<MouseWheel>", on_mousewheel)
         self.main_canvas.bind_all("<Shift-MouseWheel>", on_shift_mousewheel)
+        # Linux/X11 alternative bindings for wheel events
+        def _on_button4(event):
+            try:
+                self.main_canvas.yview_scroll(-1, "units")
+            except Exception:
+                pass
+        def _on_button5(event):
+            try:
+                self.main_canvas.yview_scroll(1, "units")
+            except Exception:
+                pass
+        def _on_shift_button4(event):
+            try:
+                self.main_canvas.xview_scroll(-1, "units")
+            except Exception:
+                pass
+        def _on_shift_button5(event):
+            try:
+                self.main_canvas.xview_scroll(1, "units")
+            except Exception:
+                pass
+        self.main_canvas.bind_all("<Button-4>", _on_button4)
+        self.main_canvas.bind_all("<Button-5>", _on_button5)
+        self.main_canvas.bind_all("<Shift-Button-4>", _on_shift_button4)
+        self.main_canvas.bind_all("<Shift-Button-5>", _on_shift_button5)
         
         # Enable keyboard navigation
         def on_key_press(event):
@@ -8342,6 +8791,13 @@ Your feedback contributes to software quality and reliability.
         
         # Set application reference for unit standardizer
         self.unit_standardizer.set_application_reference(self)
+        
+        # Initialize cross-well prior manager after UI creation
+        try:
+            self.crosswell_prior_manager = CrossWellPriorManager()
+            self.crosswell_prior_manager.set_application_reference(self)
+        except Exception:
+            self.crosswell_prior_manager = None
     
     def log_processing(self, message: str) -> None:
         """Route processing messages to the on-screen status UI only (no file logging)."""
@@ -8364,6 +8820,56 @@ Your feedback contributes to software quality and reliability.
                     pass
         except Exception:
             # Absolutely no file logging, and avoid raising during UI init
+            pass
+
+    def _begin_operation(self, message: str) -> None:
+        """Unified user feedback when a long-running operation starts."""
+        try:
+            self.log_processing(message)
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=message)
+            if hasattr(self, 'progress_bar'):
+                try:
+                    self.progress_bar.config(mode='indeterminate')
+                    self.progress_bar.start(10)
+                except Exception:
+                    pass
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+    def _end_operation(self, message: str) -> None:
+        """Unified user feedback when an operation completes successfully."""
+        try:
+            if hasattr(self, 'progress_bar'):
+                try:
+                    self.progress_bar.stop()
+                    self.progress_bar.config(mode='determinate', value=100)
+                except Exception:
+                    pass
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=message)
+            self.log_processing(message)
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+    def _fail_operation(self, title: str, message: str) -> None:
+        """Unified error feedback with dialog and status label."""
+        try:
+            if hasattr(self, 'progress_bar'):
+                try:
+                    self.progress_bar.stop()
+                    self.progress_bar.config(mode='determinate', value=0)
+                except Exception:
+                    pass
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=message)
+        except Exception:
+            pass
+        try:
+            messagebox.showerror(title, message)
+        except Exception:
             pass
     
     def check_system_resources(self):
@@ -8394,7 +8900,10 @@ Your feedback contributes to software quality and reliability.
         self.notebook.add(data_frame, text="Data Loading")
         
         # File loading section
-        load_card, load_content = self.ui.create_card(data_frame, "Load Data File")
+        load_card, load_content = self.ui.create_card(
+            data_frame, "Load Data File",
+            help_text="Select and load a single LAS/CSV/Excel file. The app will analyze curves, compute stats, and prepare for processing."
+        )
         load_card.pack(fill='x', pady=(0, 10))
         
         file_frame = ttk.Frame(load_content)
@@ -8405,7 +8914,7 @@ Your feedback contributes to software quality and reliability.
         file_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
         
         browse_btn = self.ui.create_button(file_frame, text="Browse", 
-                                          command=self.browse_file, button_type='secondary', width=15)
+                                          command=self.browse_file, button_type='secondary', width=20)
         browse_btn.pack(side='right')
         
         # Create a button frame for Load and Clear buttons
@@ -8413,15 +8922,23 @@ Your feedback contributes to software quality and reliability.
         button_frame.pack(fill='x', pady=15)
         
         load_btn = self.ui.create_button(button_frame, text="Load & Analyze File",
-                                        command=self.load_file, button_type='success', width=20)
+                                        command=self.load_file, button_type='success', width=25)
         load_btn.pack(side='left', padx=(0, 15))
         
         clear_btn = self.ui.create_button(button_frame, text="Clear Data",
-                                         command=self.clear_data, button_type='warning', width=15)
+                                         command=self.clear_data, button_type='warning', width=20)
         clear_btn.pack(side='left')
         
+        # New: Load multiple files (multiwell)
+        multi_btn = self.ui.create_button(button_frame, text="Load Multiple Files",
+                                         command=self.load_multiple_files, button_type='primary', width=25)
+        multi_btn.pack(side='left', padx=(15, 0))
+        
         # CRITICAL: Well Information Card for safety
-        well_card, well_content = self.ui.create_card(data_frame, "Well Identification")
+        well_card, well_content = self.ui.create_card(
+            data_frame, "Well Identification",
+            help_text="Shows key metadata parsed from the LAS header (well name, UWI, field, depth range)."
+        )
         well_card.pack(fill='x', pady=(0, 10))
         
         # Create labels for well information (will be populated on load)
@@ -8444,9 +8961,35 @@ Your feedback contributes to software quality and reliability.
         self.depth_range_label = ttk.Label(well_content, text="Depth Range: Not loaded", 
                                            font=('Segoe UI', 9))
         self.depth_range_label.pack(anchor='w', pady=2)
+
+        # New: Loaded Wells manager
+        wells_card, wells_content = self.ui.create_card(
+            data_frame, "Loaded Wells",
+            help_text="Manage multiple wells in the session. Set the active well, remove entries, or process all/selected wells."
+        )
+        wells_card.pack(fill='x', pady=(0, 10))
+        wells_toolbar = ttk.Frame(wells_content)
+        wells_toolbar.pack(fill='x', pady=(5, 5))
+        self.well_listbox = tk.Listbox(wells_content, height=6, selectmode='extended')
+        self.well_listbox.pack(fill='x', padx=10, pady=(0, 8))
+        set_active_btn = self.ui.create_button(wells_toolbar, text="Set Active Well",
+                                              command=self.on_set_active_well, button_type='secondary', width=20)
+        set_active_btn.pack(side='left', padx=(0, 10))
+        remove_btn = self.ui.create_button(wells_toolbar, text="Remove Selected",
+                                          command=self.on_remove_selected_wells, button_type='warning', width=20)
+        remove_btn.pack(side='left')
+        process_all_quick_btn = self.ui.create_button(wells_toolbar, text="Process All Wells",
+                                                     command=self.process_all_wells, button_type='success', width=20)
+        process_all_quick_btn.pack(side='left', padx=(10, 0))
+        process_sel_btn = self.ui.create_button(wells_toolbar, text="Process Selected",
+                                               command=self.process_selected_wells, button_type='primary', width=20)
+        process_sel_btn.pack(side='left', padx=(10, 0))
         
         # Data summary section
-        summary_card, summary_content = self.ui.create_card(data_frame, "Data Summary")
+        summary_card, summary_content = self.ui.create_card(
+            data_frame, "Data Summary",
+            help_text="Per-curve overview: mnemonic, type, units, range, data quality with geological gap awareness."
+        )
         summary_card.pack(fill='both', expand=True)
         
         # Create treeview for curve information
@@ -8470,6 +9013,498 @@ Your feedback contributes to software quality and reliability.
         """Clear loaded and processed data and reset UI elements safely."""
         # Use the comprehensive reset method
         self.reset_application_state(prompt_if_unsaved=False)
+
+    # ============================
+    # Multiwell management methods
+    # ============================
+    def _snapshot_single_state(self) -> Dict[str, Any]:
+        return {
+            'current_data': self.current_data.copy() if isinstance(self.current_data, pd.DataFrame) else None,
+            'processed_data': self.processed_data.copy() if isinstance(self.processed_data, pd.DataFrame) else None,
+            'curve_info': copy.deepcopy(self.curve_info) if isinstance(self.curve_info, dict) else {},
+            'processing_results': copy.deepcopy(self.processing_results) if isinstance(self.processing_results, dict) else {},
+            'original_las_header': self.original_las_header,
+            'well_info': copy.deepcopy(self.well_info) if isinstance(self.well_info, dict) else {},
+            'file_path': self.file_path_var.get() if hasattr(self, 'file_path_var') else ''
+        }
+
+    def _apply_dataset_to_single_state(self, dataset: Dict[str, Any]) -> None:
+        # Replace current in-memory single-well state with dataset contents
+        self.current_data = dataset.get('current_data')
+        self.processed_data = dataset.get('processed_data')
+        self.curve_info = copy.deepcopy(dataset.get('curve_info', {}))
+        self.processing_results = copy.deepcopy(dataset.get('processing_results', {}))
+        self.original_las_header = dataset.get('original_las_header')
+        self.well_info = copy.deepcopy(dataset.get('well_info', {}))
+        try:
+            self.file_path_var.set(dataset.get('file_path', ''))
+        except Exception:
+            pass
+        # Refresh UI elements tied to single state
+        try:
+            self._update_well_info_display()
+            self.update_curve_options()
+            self.update_data_display()
+        except Exception:
+            pass
+
+    def _dataset_from_current_state(self, file_path: str) -> Dict[str, Any]:
+        return {
+            'file_path': file_path,
+            'current_data': self.current_data.copy() if isinstance(self.current_data, pd.DataFrame) else None,
+            'processed_data': self.processed_data.copy() if isinstance(self.processed_data, pd.DataFrame) else None,
+            'curve_info': copy.deepcopy(self.curve_info) if isinstance(self.curve_info, dict) else {},
+            'processing_results': copy.deepcopy(self.processing_results) if isinstance(self.processing_results, dict) else {},
+            'original_las_header': self.original_las_header,
+            'well_info': copy.deepcopy(self.well_info) if isinstance(self.well_info, dict) else {},
+        }
+
+    def _gen_well_id_from_info(self, filepath: str) -> str:
+        try:
+            uwi = str(self.well_info.get('uwi', '')).strip()
+            name = str(self.well_info.get('well_name', '')).strip()
+            base = os.path.splitext(os.path.basename(filepath or ''))[0]
+            candidate = uwi or name or base or f"well_{len(self.well_datasets)+1}"
+            candidate = candidate.replace(' ', '_')
+        except Exception:
+            candidate = f"well_{len(self.well_datasets)+1}"
+        # Ensure uniqueness
+        unique = candidate
+        idx = 2
+        while unique in self.well_datasets:
+            unique = f"{candidate}_{idx}"
+            idx += 1
+        return unique
+
+    def _save_active_well_to_dataset(self) -> None:
+        try:
+            if not self.active_well_id:
+                return
+            self.well_datasets[self.active_well_id] = self._dataset_from_current_state(
+                self.file_path_var.get() if hasattr(self, 'file_path_var') else ''
+            )
+        except Exception:
+            pass
+
+    def set_active_well(self, well_id: str) -> None:
+        if well_id not in self.well_datasets:
+            messagebox.showwarning("Well Selection", f"Well '{well_id}' not found")
+            return
+        self.active_well_id = well_id
+        self._apply_dataset_to_single_state(self.well_datasets[well_id])
+        try:
+            self.status_label.config(text=f"Active well: {well_id}")
+        except Exception:
+            pass
+        # Refresh lists
+        self.update_well_list_display()
+        try:
+            if hasattr(self, 'cohort_listbox') and self.cohort_listbox:
+                self.cohort_listbox.delete(0, tk.END)
+                for wid in self.well_datasets.keys():
+                    if wid != self.active_well_id:
+                        self.cohort_listbox.insert(tk.END, wid)
+        except Exception:
+            pass
+
+    def update_well_list_display(self) -> None:
+        try:
+            if not hasattr(self, 'well_listbox') or self.well_listbox is None:
+                return
+            self.well_listbox.delete(0, tk.END)
+            for wid, ds in self.well_datasets.items():
+                wi = ds.get('well_info', {}) or {}
+                label = wi.get('well_name') or wi.get('uwi') or wid
+                rows = len(ds.get('current_data')) if isinstance(ds.get('current_data'), pd.DataFrame) else 0
+                cols = len(ds.get('current_data').columns) if isinstance(ds.get('current_data'), pd.DataFrame) else 0
+                self.well_listbox.insert(tk.END, f"{wid}  |  {label}  |  {rows}x{cols}")
+        except Exception:
+            pass
+
+    def on_set_active_well(self):
+        try:
+            sel = self.well_listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Well Selection", "Select a well from the list")
+                return
+            display = self.well_listbox.get(sel[0])
+            wid = display.split("  |  ")[0]
+            self.set_active_well(wid)
+        except Exception as e:
+            messagebox.showerror("Selection Error", f"Failed to set active well: {e}")
+
+    def on_remove_selected_wells(self):
+        try:
+            sel = self.well_listbox.curselection()
+            if not sel:
+                return
+            display = self.well_listbox.get(sel[0])
+            wid = display.split("  |  ")[0]
+            if wid in self.well_datasets:
+                del self.well_datasets[wid]
+            if self.active_well_id == wid:
+                self.active_well_id = None
+                self.reset_application_state(prompt_if_unsaved=False)
+            self.update_well_list_display()
+        except Exception:
+            pass
+
+    def load_multiple_files(self):
+        try:
+            filetypes = [("LAS files", "*.las"), ("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+            filenames = filedialog.askopenfilenames(title="Select Multiple Data Files", filetypes=filetypes)
+            if not filenames:
+                return
+            # Load each file into datasets without disturbing final active selection until the end
+            first_well_id = None
+            for fp in filenames:
+                try:
+                    # Clear transient state
+                    self.reset_application_state(prompt_if_unsaved=False)
+                    ext = os.path.splitext(fp)[1].lower()
+                    if ext == '.las':
+                        df = self.load_las_file(fp)
+                    elif ext == '.csv':
+                        df = self.load_csv_file(fp)
+                    elif ext in ['.xlsx', '.xls']:
+                        df = self.load_excel_file(fp)
+                    else:
+                        self.log_processing(f"Unsupported file format skipped: {fp}")
+                        continue
+                    self.current_data = df
+                    # Identify curves (lightweight)
+                    self.analyze_curves()
+                    # Build dataset
+                    wid = self._gen_well_id_from_info(fp)
+                    self.well_datasets[wid] = self._dataset_from_current_state(fp)
+                    if first_well_id is None:
+                        first_well_id = wid
+                    self.log_processing(f"Loaded well '{wid}' from {fp}")
+                except Exception as e:
+                    messagebox.showerror("Load Error", f"Failed to load file {fp}: {e}")
+            # Set active to the first loaded well and refresh list
+            if first_well_id:
+                self.set_active_well(first_well_id)
+            self.update_well_list_display()
+        except Exception as e:
+            messagebox.showerror("Load Error", f"Failed to load multiple files: {e}")
+
+    def process_current_well_blocking(self):
+        try:
+            # Spawn processing thread but keep UI responsive
+            t = threading.Thread(target=self.process_data_thread, daemon=True)
+            t.start()
+            while t.is_alive():
+                try:
+                    self.root.update()
+                except Exception:
+                    pass
+                time.sleep(0.05)
+            # Persist results into dataset
+            self._save_active_well_to_dataset()
+        except Exception as e:
+            messagebox.showerror("Processing Error", f"Failed to process well: {e}")
+
+    def process_all_wells(self):
+        try:
+            if not self.well_datasets:
+                messagebox.showwarning("Process All Wells", "No wells loaded. Use 'Load Multiple Files' first.")
+                return
+            # Show processing tab for visual feedback
+            try:
+                self.notebook.select(1)
+            except Exception:
+                pass
+            self._begin_operation("Processing all wells...")
+            ordered_ids = list(self.well_datasets.keys())
+            total = len(ordered_ids)
+            for i, wid in enumerate(ordered_ids, start=1):
+                self.set_active_well(wid)
+                try:
+                    self.status_label.config(text=f"Processing well {i}/{total}: {wid}")
+                except Exception:
+                    pass
+                self.process_current_well_blocking()
+            self._end_operation(f"Processed all wells ({total})")
+            try:
+                messagebox.showinfo("Process All Wells", f"Completed processing {total} well(s).")
+            except Exception:
+                pass
+        except Exception as e:
+            self._fail_operation("Process All Wells", f"Failed to process all wells: {e}")
+
+    def process_selected_wells(self):
+        try:
+            if not hasattr(self, 'well_listbox') or self.well_listbox is None:
+                self._fail_operation("Process Selected", "Well list is not available.")
+                return
+            sel = self.well_listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Process Selected", "Select one or more wells in the list.")
+                return
+            selected_ids = []
+            for idx in sel:
+                display = self.well_listbox.get(idx)
+                wid = display.split("  |  ")[0]
+                if wid in self.well_datasets:
+                    selected_ids.append(wid)
+            if not selected_ids:
+                messagebox.showwarning("Process Selected", "No valid wells selected.")
+                return
+            # Switch to Processing tab for progress visibility
+            try:
+                self.notebook.select(1)
+            except Exception:
+                pass
+            self._begin_operation(f"Processing {len(selected_ids)} selected well(s)...")
+            for i, wid in enumerate(selected_ids, start=1):
+                self.set_active_well(wid)
+                try:
+                    self.status_label.config(text=f"Processing well {i}/{len(selected_ids)}: {wid}")
+                except Exception:
+                    pass
+                self.process_current_well_blocking()
+            self._end_operation(f"Processed {len(selected_ids)} selected well(s)")
+            try:
+                messagebox.showinfo("Process Selected", f"Completed processing {len(selected_ids)} well(s).")
+            except Exception:
+                pass
+        except Exception as e:
+            self._fail_operation("Process Selected", f"Failed to process selected wells: {e}")
+
+    def _format_cross_well_summary(self) -> str:
+        lines: List[str] = []
+        lines.append("CROSS-WELL ANALYSIS SUMMARY")
+        lines.append("=" * 80)
+        
+        if not self.well_datasets:
+            lines.append("No wells loaded.")
+            return "\n".join(lines)
+        
+        num_wells = len(self.well_datasets)
+        lines.append(f"Dataset Overview: {num_wells} well(s) loaded")
+        lines.append("")
+        
+        # 1. WELL INFORMATION SUMMARY
+        lines.append("1. WELL INFORMATION")
+        lines.append("-" * 40)
+        for wid, ds in self.well_datasets.items():
+            wi = ds.get('well_info', {}) or {}
+            well_name = wi.get('well_name', 'Unknown')
+            uwi = wi.get('uwi', 'N/A')
+            field = wi.get('field', 'Unknown')
+            company = wi.get('company', 'Unknown')
+            depth_range = wi.get('depth_range', 'N/A')
+            
+            lines.append(f"  • {well_name}")
+            lines.append(f"    UWI: {uwi}")
+            lines.append(f"    Field: {field}")
+            lines.append(f"    Company: {company}")
+            lines.append(f"    Depth Range: {depth_range}")
+            lines.append("")
+        
+        # 2. DATA QUALITY ASSESSMENT
+        lines.append("2. DATA QUALITY ASSESSMENT")
+        lines.append("-" * 40)
+        
+        total_curves = 0
+        total_data_points = 0
+        total_missing = 0
+        curve_quality_stats = {}
+        
+        for wid, ds in self.well_datasets.items():
+            df = ds.get('current_data')
+            if isinstance(df, pd.DataFrame):
+                total_curves += len(df.columns)
+                total_data_points += df.size
+                missing_count = df.isna().sum().sum()
+                total_missing += missing_count
+                
+                # Per-well quality
+                well_missing_pct = (missing_count / df.size) * 100 if df.size > 0 else 0
+                lines.append(f"  {wid}: {len(df.columns)} curves, {len(df)} points, {well_missing_pct:.1f}% missing")
+                
+                # Track curve quality
+                for col in df.columns:
+                    if col not in curve_quality_stats:
+                        curve_quality_stats[col] = {'total_points': 0, 'missing_points': 0, 'wells': 0}
+                    
+                    series = pd.to_numeric(df[col], errors='coerce')
+                    curve_quality_stats[col]['total_points'] += len(series)
+                    curve_quality_stats[col]['missing_points'] += series.isna().sum()
+                    curve_quality_stats[col]['wells'] += 1
+        
+        overall_missing_pct = (total_missing / total_data_points) * 100 if total_data_points > 0 else 0
+        lines.append(f"")
+        lines.append(f"  Overall: {total_curves} total curves, {total_data_points:,} data points")
+        lines.append(f"  Missing Data: {total_missing:,} points ({overall_missing_pct:.1f}%)")
+        lines.append("")
+        
+        # 3. COMMON CURVES ANALYSIS
+        lines.append("3. COMMON CURVES ANALYSIS")
+        lines.append("-" * 40)
+        
+        # Find common curves
+        common_curves = None
+        for ds in self.well_datasets.values():
+            df = ds.get('current_data')
+            if isinstance(df, pd.DataFrame):
+                cols = set(df.columns)
+                common_curves = cols if common_curves is None else (common_curves & cols)
+        
+        if not common_curves:
+            lines.append("No common curves across all wells.")
+        else:
+            lines.append(f"Found {len(common_curves)} common curves across all wells:")
+            lines.append("")
+            
+            # Analyze each common curve
+            for curve in sorted(list(common_curves)):
+                if curve in curve_quality_stats:
+                    stats = curve_quality_stats[curve]
+                    completeness = ((stats['total_points'] - stats['missing_points']) / stats['total_points']) * 100
+                    lines.append(f"  • {curve}:")
+                    lines.append(f"    - Present in {stats['wells']} wells")
+                    lines.append(f"    - Data completeness: {completeness:.1f}%")
+                    
+                    # Get statistical summary
+                    all_values = []
+                    for ds in self.well_datasets.values():
+                        df = ds.get('current_data')
+                        if isinstance(df, pd.DataFrame) and curve in df.columns:
+                            series = pd.to_numeric(df[curve], errors='coerce')
+                            vals = series.dropna()
+                            if len(vals) > 0:
+                                all_values.extend(vals.tolist())
+                    
+                    if all_values:
+                        all_values = np.array(all_values)
+                        lines.append(f"    - Range: {all_values.min():.3g} to {all_values.max():.3g}")
+                        lines.append(f"    - Mean: {all_values.mean():.3g}")
+                        lines.append(f"    - Std Dev: {all_values.std():.3g}")
+                        lines.append(f"    - Median: {np.median(all_values):.3g}")
+                    lines.append("")
+        
+        # 4. PROCESSING STATUS
+        lines.append("4. PROCESSING STATUS")
+        lines.append("-" * 40)
+        
+        processed_wells = 0
+        for wid, ds in self.well_datasets.items():
+            if ds.get('processed_data') is not None:
+                processed_wells += 1
+        
+        lines.append(f"Processed Wells: {processed_wells}/{num_wells} ({processed_wells/num_wells*100:.1f}%)")
+        
+        if processed_wells > 0:
+            lines.append("")
+            lines.append("Processing Results Summary:")
+            for wid, ds in self.well_datasets.items():
+                if ds.get('processed_data') is not None:
+                    processed_df = ds['processed_data']
+                    original_df = ds.get('current_data')
+                    
+                    if isinstance(processed_df, pd.DataFrame) and isinstance(original_df, pd.DataFrame):
+                        original_missing = original_df.isna().sum().sum()
+                        processed_missing = processed_df.isna().sum().sum()
+                        improvement = original_missing - processed_missing
+                        
+                        lines.append(f"  • {wid}: {improvement:,} data points filled")
+        
+        # 5. RECOMMENDATIONS
+        lines.append("")
+        lines.append("5. RECOMMENDATIONS")
+        lines.append("-" * 40)
+        
+        if overall_missing_pct > 50:
+            lines.append("• High missing data percentage - consider data quality improvement")
+        elif overall_missing_pct > 20:
+            lines.append("• Moderate missing data - gap filling recommended")
+        else:
+            lines.append("• Good data quality - ready for analysis")
+        
+        if len(common_curves) < 3:
+            lines.append("• Limited common curves - consider standardizing curve names")
+        else:
+            lines.append("• Good curve coverage across wells")
+        
+        if processed_wells < num_wells:
+            lines.append("• Some wells not processed - run processing pipeline")
+        
+        lines.append("")
+        lines.append("=" * 80)
+        lines.append("End of Cross-Well Analysis Summary")
+        
+        return "\n".join(lines)
+
+    def show_cross_well_summary(self):
+        try:
+            summary = self._format_cross_well_summary()
+            if hasattr(self, 'report_text') and self.report_text:
+                self.report_text.config(state='normal')
+                self.report_text.delete('1.0', 'end')
+                self.report_text.insert('1.0', summary)
+                self.report_text.config(state='disabled')
+                try:
+                    self.status_label.config(text="Cross-well summary generated")
+                except Exception:
+                    pass
+            else:
+                messagebox.showinfo("Cross-Well Summary", summary)
+        except Exception as e:
+            messagebox.showerror("Cross-Well Summary", f"Failed to generate cross-well summary: {e}")
+
+    def export_all_processed(self):
+        try:
+            if not self.well_datasets:
+                messagebox.showwarning("Export All", "No wells loaded.")
+                return
+            target_dir = filedialog.askdirectory(title="Select export directory")
+            if not target_dir:
+                return
+            exported = 0
+            # Optionally rebuild priors before export for audit trail
+            if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager:
+                try:
+                    self.crosswell_priors = self.crosswell_prior_manager.build_priors(
+                        depth_binned=self.priors_depth_binning_var.get()
+                    )
+                except Exception:
+                    pass
+            for wid, ds in self.well_datasets.items():
+                pdf = ds.get('processed_data')
+                if not isinstance(pdf, pd.DataFrame) or pdf.empty:
+                    continue
+                ci = ds.get('curve_info', {}) or {}
+                null_value = str(self.null_value_var.get()) if hasattr(self, 'null_value_var') else '-999.25'
+                las_text = self._generate_las_text_from_dataframe(pdf, ci, null_value, max_rows=None)
+                out_path = os.path.join(target_dir, f"{wid}_processed.las")
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    f.write(las_text)
+                exported += 1
+            messagebox.showinfo("Export All", f"Exported {exported} processed well(s) to {target_dir}")
+        except Exception as e:
+            messagebox.showerror("Export All", f"Failed to export: {e}")
+
+    def build_crosswell_priors(self):
+        try:
+            if not self.use_crosswell_priors_var.get():
+                messagebox.showinfo("Cross-Well Priors", "Enable Cross-Well Priors first.")
+                return
+            if not self.crosswell_prior_manager:
+                messagebox.showerror("Cross-Well Priors", "Prior manager unavailable.")
+                return
+            self._begin_operation("Building cross-well priors...")
+            priors = self.crosswell_prior_manager.build_priors(depth_binned=self.priors_depth_binning_var.get())
+            self.crosswell_priors = priors or {}
+            count = len(self.crosswell_priors)
+            self._end_operation(f"Cross-well priors built for {count} curves")
+            try:
+                messagebox.showinfo("Cross-Well Priors", f"Built priors for {count} curves.")
+            except Exception:
+                pass
+        except Exception as e:
+            self._fail_operation("Cross-Well Priors", f"Failed to build priors: {e}")
     
     def reset_application_state(self, prompt_if_unsaved=True):
         """Comprehensive application state reset to prevent cross-contamination between wells
@@ -8634,12 +9669,14 @@ Your feedback contributes to software quality and reliability.
         gap_filling_tab = ttk.Frame(config_notebook)
         denoising_tab = ttk.Frame(config_notebook)
         advanced_tab = ttk.Frame(config_notebook)
+        cohort_tab = ttk.Frame(config_notebook)
         
         # Add tabs to notebook
         config_notebook.add(uniformization_tab, text="Uniformization")
         config_notebook.add(gap_filling_tab, text="Gap Filling")
         config_notebook.add(denoising_tab, text="Denoising")
         config_notebook.add(advanced_tab, text="Advanced")
+        config_notebook.add(cohort_tab, text="Cross-Well Cohort")
         
         # Uniformization tab content
         # Standard depth spacing
@@ -8883,14 +9920,72 @@ Your feedback contributes to software quality and reliability.
         self.auto_cleanup_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(advanced_tab, text="Auto Memory Cleanup", 
                        variable=self.auto_cleanup_var).pack(anchor='w', pady=5, padx=10)
+
+        # Cohort/prior configuration UI (expert workflow)
+        ttk.Label(cohort_tab, text="Cohort Selection & Cross-Well Priors", style='Card.TLabel').pack(anchor='w', padx=10, pady=(10, 5))
+        ttk.Checkbutton(cohort_tab, text="Enable Cross-Well Priors",
+                        variable=self.use_crosswell_priors_var).pack(anchor='w', padx=10, pady=2)
+        ttk.Checkbutton(cohort_tab, text="Two-Pass Refinement (pass 1 single-well, pass 2 with priors)",
+                        variable=self.two_pass_refinement_var).pack(anchor='w', padx=10, pady=2)
+        ttk.Checkbutton(cohort_tab, text="Depth-Binned Priors (per zone/depth bins)",
+                        variable=self.priors_depth_binning_var).pack(anchor='w', padx=10, pady=2)
+        ttk.Checkbutton(cohort_tab, text="Auto-Select Cohort (analog wells by curve coverage/quality)",
+                        variable=self.auto_select_cohort_var).pack(anchor='w', padx=10, pady=(2, 8))
+
+        cohort_btns = ttk.Frame(cohort_tab)
+        cohort_btns.pack(fill='x', padx=10, pady=(0, 10))
+        build_btn = self.ui.create_button(cohort_btns, text="Build Cross-Well Priors",
+                                          command=self.build_crosswell_priors, button_type='primary', width=25)
+        build_btn.pack(side='left', padx=(0, 10))
+        view_btn = self.ui.create_button(cohort_btns, text="View Priors Summary",
+                                         command=self.show_cross_well_summary, button_type='secondary', width=25)
+        view_btn.pack(side='left')
+
+        # Manual cohort picker listbox (optional)
+        cohort_list_frame = ttk.Frame(cohort_tab)
+        cohort_list_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        ttk.Label(cohort_list_frame, text="Select Cohort Wells (exclude active)").pack(anchor='w')
+        self.cohort_listbox = tk.Listbox(cohort_list_frame, selectmode='multiple', height=6)
+        self.cohort_listbox.pack(fill='both', expand=True)
+        # Populate from well_datasets
+        try:
+            for wid in self.well_datasets.keys():
+                self.cohort_listbox.insert(tk.END, wid)
+        except Exception:
+            pass
+        def _apply_cohort_selection():
+            try:
+                sel = self.cohort_listbox.curselection()
+                self.cohort_selected_well_ids = [self.cohort_listbox.get(i) for i in sel if self.cohort_listbox.get(i) != self.active_well_id]
+                self.status_label.config(text=f"Cohort set: {len(self.cohort_selected_well_ids)} well(s)")
+            except Exception:
+                pass
+        apply_btn = self.ui.create_button(cohort_tab, text="Apply Cohort Selection",
+                                          command=_apply_cohort_selection, button_type='secondary', width=25)
+        apply_btn.pack(anchor='e', padx=10, pady=(0, 10))
         
         # Processing execution - placed below the notebook; now reachable via scrolling
-        exec_card, exec_content = self.ui.create_card(config_inner, "Execute Processing")
+        exec_card, exec_content = self.ui.create_card(
+            config_inner, "Execute Processing",
+            help_text="Run processing for the active well or all wells. Use Cross-Well Cohort to enable priors and two-pass refinement."
+        )
         exec_card.pack(fill='x', pady=10)
         
-        process_btn = self.ui.create_button(exec_content, text="Start Processing",
-                                           command=self.start_processing, button_type='primary', width=25)
-        process_btn.pack(fill='x', pady=10, padx=10)
+        process_btn = self.ui.create_button(exec_content, text="Start Processing (Active Well)",
+                                           command=self.start_processing, button_type='primary', width=30)
+        process_btn.pack(fill='x', pady=(10, 5), padx=10)
+
+        process_all_btn = self.ui.create_button(exec_content, text="Process All Wells",
+                                               command=self.process_all_wells, button_type='success', width=30)
+        process_all_btn.pack(fill='x', pady=(0, 5), padx=10)
+
+        cross_summary_btn = self.ui.create_button(exec_content, text="Cross-Well Summary",
+                                                 command=self.show_cross_well_summary, button_type='secondary', width=30)
+        cross_summary_btn.pack(fill='x', pady=(0, 5), padx=10)
+
+        export_all_btn = self.ui.create_button(exec_content, text="Export All Processed (LAS)",
+                                              command=self.export_all_processed, button_type='secondary', width=30)
+        export_all_btn.pack(fill='x', pady=(0, 10), padx=10)
         
         # Add a separator for visual clarity
         separator = ttk.Separator(exec_content, orient='horizontal')
@@ -8983,6 +10078,15 @@ Your feedback contributes to software quality and reliability.
         self.viz_curve2_combo = ttk.Combobox(row2, textvariable=self.viz_curve2_var, width=20)
         self.viz_curve2_combo.pack(side='left', padx=10)
         
+        # Third row for 3D visualization third curve
+        self.third_curve_frame = ttk.Frame(control_frame)
+        self.third_curve_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(self.third_curve_frame, text="Third Curve (3D only):", style='Card.TLabel').pack(side='left')
+        self.viz_curve3_var = tk.StringVar()
+        self.viz_curve3_combo = ttk.Combobox(self.third_curve_frame, textvariable=self.viz_curve3_var, width=20)
+        self.viz_curve3_combo.pack(side='left', padx=10)
+        
         # Third row for multi-curve selection
         self.multi_curve_frame = ttk.Frame(control_frame)
         self.multi_curve_frame.pack(fill='x', pady=5)
@@ -9030,7 +10134,10 @@ Your feedback contributes to software quality and reliability.
         update_btn.pack(pady=10)
         
         # Visualization area
-        viz_card, self.viz_content = self.ui.create_card(viz_frame, "Interactive Visualization")
+        viz_card, self.viz_content = self.ui.create_card(
+            viz_frame, "Interactive Visualization",
+            help_text="Render professional depth-based plots, multi-curve tracks, and comparisons. Use Export for PNG/PDF."
+        )
         viz_card.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         
         # Initialize figure and canvas as None - will be created dynamically
@@ -9063,6 +10170,7 @@ Your feedback contributes to software quality and reliability.
         # Update comboboxes
         self.viz_curve_combo['values'] = curves
         self.viz_curve2_combo['values'] = curves
+        self.viz_curve3_combo['values'] = curves
         
         if curves:
             self.viz_curve_combo.current(0)
@@ -9332,6 +10440,11 @@ Your feedback contributes to software quality and reliability.
         # Clean up previous visualization resources
         self.cleanup_visualization()
         
+        # Validate data availability
+        if not hasattr(self, 'current_data') or self.current_data is None:
+            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
+            return
+        
         # Get selected curves from listbox
         selected_indices = self.curve_listbox.curselection()
         
@@ -9340,6 +10453,14 @@ Your feedback contributes to software quality and reliability.
             return
         
         selected_curves = [self.curve_listbox.get(i) for i in selected_indices]
+        
+        # Validate that selected curves exist in data
+        available_curves = self.current_data.columns.tolist()
+        valid_curves = [curve for curve in selected_curves if curve in available_curves]
+        
+        if not valid_curves:
+            messagebox.showwarning("Warning", "None of the selected curves are available in the loaded data.")
+            return
         
         # Use industry-standard colors for log curves (API & SPWLA standards)
         industry_colors = PHYSICAL_CONSTANTS.LOG_COLORS
@@ -9350,14 +10471,23 @@ Your feedback contributes to software quality and reliability.
         # Ensure we have a valid figure
         self.ensure_figure_exists()
         
-        if num_curves <= 3:
+        # Set figure title
+        self.fig.suptitle(f'Multi-Curve Log Display - {len(valid_curves)} Curves', fontsize=14, fontweight='bold')
+        
+        if len(valid_curves) <= 3:
             # For 1-3 curves, use a single track with shared Y-axis
             ax = self.fig.add_subplot(111)
-            self._plot_depth_based_curves(ax, selected_curves, industry_colors)
+            self._plot_depth_based_curves(ax, valid_curves, industry_colors)
+            
+            # Add professional styling
+            ax.set_ylabel('Depth (m)', fontsize=10, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='best', frameon=True, fancybox=False, shadow=False)
+            
         else:
             # For 4+ curves, use multiple tracks (industry standard)
             # Determine number of tracks needed (maximum 3 curves per track)
-            num_tracks = (num_curves + 2) // 3  # Ceiling division
+            num_tracks = (len(valid_curves) + 2) // 3  # Ceiling division
             
             # Create a grid of tracks sharing the same y-axis
             axes = []
@@ -9373,18 +10503,24 @@ Your feedback contributes to software quality and reliability.
             for i, track_ax in enumerate(axes):
                 # Get curves for this track
                 start_idx = i * 3
-                end_idx = min((i + 1) * 3, num_curves)
-                track_curves = selected_curves[start_idx:end_idx]
+                end_idx = min((i + 1) * 3, len(valid_curves))
+                track_curves = valid_curves[start_idx:end_idx]
                 
                 # Plot curves on this track
                 self._plot_depth_based_curves(track_ax, track_curves, industry_colors)
                 
+                # Add professional styling
+                track_ax.grid(True, alpha=0.3)
+                track_ax.legend(loc='best', frameon=True, fancybox=False, shadow=False)
+                
                 # Only show depth labels on the first track
-                if i > 0:
+                if i == 0:
+                    track_ax.set_ylabel('Depth (m)', fontsize=10, fontweight='bold')
+                else:
                     track_ax.set_ylabel('')
         
-            # Apply tight layout once after all tracks are plotted
-            self.fig.tight_layout()
+        # Apply tight layout with proper spacing
+        self.fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     def _plot_depth_based_curves(self, ax, curves, industry_colors):
         """Plot curves in petroleum industry standard with depth on Y-axis"""
@@ -9398,12 +10534,15 @@ Your feedback contributes to software quality and reliability.
         
         # If no explicit depth curve, use index
         if depth_curve:
-            depth = self.processed_data[depth_curve].values
+            # Use current_data as primary source
+            data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
+            depth = data_source[depth_curve].values
             # Remove depth from plotting curves
             plot_curves = [c for c in curves if c != depth_curve]
         else:
             # Use row index as depth
-            depth = np.arange(len(self.processed_data))
+            data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
+            depth = np.arange(len(data_source))
             plot_curves = curves
         
         # Create twin axes for different scales if needed
@@ -9411,17 +10550,31 @@ Your feedback contributes to software quality and reliability.
         
         # Plot each curve with appropriate styling
         for i, curve in enumerate(plot_curves):
-            # Get curve data - use processed if available, otherwise use original/unprocessed
-            if curve in self.processing_results:
-                curve_data = self.processing_results[curve]['final_data']
-                curve_status = 'processed'
-            elif self.processed_data is not None and curve in self.processed_data.columns:
-                curve_data = self.processed_data[curve].values
-                curve_status = 'unprocessed'
-            elif self.current_data is not None and curve in self.current_data.columns:
-                curve_data = self.current_data[curve].values
-                curve_status = 'original'
-            else:
+            # Get curve data with proper validation
+            curve_data = None
+            curve_status = 'unknown'
+            
+            try:
+                if hasattr(self, 'processing_results') and self.processing_results and curve in self.processing_results:
+                    curve_data = self.processing_results[curve]['final_data']
+                    curve_status = 'processed'
+                elif hasattr(self, 'processed_data') and self.processed_data is not None and curve in self.processed_data.columns:
+                    curve_data = self.processed_data[curve].values
+                    curve_status = 'unprocessed'
+                elif hasattr(self, 'current_data') and self.current_data is not None and curve in self.current_data.columns:
+                    curve_data = self.current_data[curve].values
+                    curve_status = 'original'
+                else:
+                    warnings.warn(f"Curve '{curve}' not found in any data source", UserWarning)
+                    continue
+                    
+                # Validate curve data
+                if curve_data is None or len(curve_data) == 0:
+                    warnings.warn(f"Curve '{curve}' has no valid data", UserWarning)
+                    continue
+                    
+            except Exception as e:
+                warnings.warn(f"Error accessing curve '{curve}': {e}", UserWarning)
                 continue
             curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
             curve_family = curve_type.split('_')[0] if '_' in curve_type else curve_type
@@ -9497,7 +10650,21 @@ Your feedback contributes to software quality and reliability.
         else:
             ax.set_ylabel('Depth (index)')
 
-        # Add legends
+        # Optional: draw formation tops and zone shading
+        try:
+            if hasattr(self, 'geological_context') and self.geological_context:
+                # Tops as horizontal lines
+                for top_name, top_depth in getattr(self.geological_context, 'formation_tops', {}).items():
+                    ax.axhline(y=top_depth, color='#666666', linestyle='--', linewidth=0.8, alpha=0.7)
+                # Open-hole interval shading
+                ohs = getattr(self.geological_context, 'open_hole_start', None)
+                ohe = getattr(self.geological_context, 'open_hole_end', None)
+                if ohs is not None and ohe is not None and ohs < ohe:
+                    ax.axhspan(ohs, ohe, color='#f0f8ff', alpha=0.25)
+        except Exception:
+            pass
+
+        # Add legends (outside, consistent)
         handles, labels = ax.get_legend_handles_labels()
         for twin_ax in twin_axes:
             twin_handles, twin_labels = twin_ax.get_legend_handles_labels()
@@ -9505,8 +10672,9 @@ Your feedback contributes to software quality and reliability.
             labels.extend(twin_labels)
 
         if handles:
-            ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15),
-                      ncol=min(3, len(handles)))
+            ax.legend(handles, labels, loc='center left', bbox_to_anchor=(1.02, 0.5),
+                      borderaxespad=0.0, frameon=False, ncol=1)
+            self.fig.subplots_adjust(right=0.82)
 
         # Add processing status note if any curves are unprocessed
         unprocessed_curves = [curve for curve in plot_curves if curve not in self.processing_results]
@@ -9521,6 +10689,14 @@ Your feedback contributes to software quality and reliability.
         # Clean up previous visualization resources
         self.cleanup_visualization()
         
+        # Validate data availability
+        if not hasattr(self, 'current_data') or self.current_data is None:
+            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
+            return
+        
+        # Use current_data as the primary source
+        data_source = self.current_data
+        
         # Standard track configuration
         # Track 1: GR, SP, Caliper
         # Track 2: Resistivity (multiple depths)
@@ -9528,7 +10704,7 @@ Your feedback contributes to software quality and reliability.
         
         # Identify curves by type
         curve_by_type = {}
-        for curve in self.processed_data.columns:
+        for curve in data_source.columns:
             curve_type = self.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN')
             if curve_type not in curve_by_type:
                 curve_by_type[curve_type] = []
@@ -9538,32 +10714,44 @@ Your feedback contributes to software quality and reliability.
         self.ensure_figure_exists()
         self.fig.set_size_inches(18, 10)
         
+        # Set figure title
+        self.fig.suptitle('Industry Standard Log Display', fontsize=16, fontweight='bold')
+        
         # Create a 3-track display using proper method
         axes = self.fig.subplots(1, 3, sharey=True)
+        
+        # Add professional styling to all axes
+        for ax in axes:
+            ax.grid(True, alpha=0.3)
+            ax.set_facecolor('white')
         
         # Use depth for Y-axis
         depth_curves = curve_by_type.get('DEPTH_MEASURED', []) + curve_by_type.get('DEPTH_TRUE_VERTICAL', [])
         if depth_curves:
-            depth = self.processed_data[depth_curves[0]].values
+            depth = data_source[depth_curves[0]].values
             depth_unit = self.curve_info.get(depth_curves[0], {}).get('unit', 'm')
         else:
-            depth = np.arange(len(self.processed_data))
+            depth = np.arange(len(data_source))
             depth_unit = 'index'
         
         # Track 1: GR, SP, Caliper
         ax1 = axes[0]
+        ax1.set_title('GR, SP, Caliper', fontsize=12, fontweight='bold')
+        ax1.set_ylabel(f'Depth ({depth_unit})', fontsize=10, fontweight='bold')
+        
         # GR (green, 0-150 API)
         gr_curves = curve_by_type.get('GAMMA_RAY_TOTAL', [])
         if gr_curves:
-            gr_data = self.processed_data[gr_curves[0]].values
+            gr_data = data_source[gr_curves[0]].values
             ax1.plot(gr_data, depth, 'g-', linewidth=1.5, label=gr_curves[0])
             ax1.set_xlim([0, 150])
+            ax1.set_xlabel('GR (API)', fontsize=10)
         
         # SP (blue, -100 to 100 mV)
         sp_curves = curve_by_type.get('SPONTANEOUS_POTENTIAL', [])
         if sp_curves:
             twin1 = ax1.twiny()
-            sp_data = self.processed_data[sp_curves[0]].values
+            sp_data = data_source[sp_curves[0]].values
             twin1.plot(sp_data, depth, 'b-', linewidth=1.5, label=sp_curves[0])
             twin1.set_xlim([-100, 100])
             twin1.xaxis.set_ticks_position('top')
@@ -9573,7 +10761,7 @@ Your feedback contributes to software quality and reliability.
         cal_curves = curve_by_type.get('CALIPER_SINGLE', []) + curve_by_type.get('CALIPER_MULTI', [])
         if cal_curves:
             twin1_2 = ax1.twiny()
-            cal_data = self.processed_data[cal_curves[0]].values
+            cal_data = data_source[cal_curves[0]].values
             twin1_2.plot(cal_data, depth, 'k-', linewidth=1.5, label=cal_curves[0])
             # Position x-axis
             twin1_2.xaxis.set_ticks_position('top')
@@ -9581,6 +10769,9 @@ Your feedback contributes to software quality and reliability.
         
         # Track 2: Resistivity curves (log scale)
         ax2 = axes[1]
+        ax2.set_title('Resistivity', fontsize=12, fontweight='bold')
+        ax2.set_xlabel('Resistivity (ohm-m)', fontsize=10)
+        
         res_types = ['RESISTIVITY_DEEP', 'RESISTIVITY_MEDIUM', 'RESISTIVITY_SHALLOW', 'RESISTIVITY_MICRO']
         res_colors = ['red', 'green', 'blue', 'magenta']
         
@@ -9589,7 +10780,7 @@ Your feedback contributes to software quality and reliability.
             res_curves = curve_by_type.get(res_type, [])
             if res_curves:
                 has_res = True
-                res_data = self.processed_data[res_curves[0]].values
+                res_data = data_source[res_curves[0]].values
                 # Handle zeros and negatives for log scale
                 res_data = np.maximum(res_data, 0.1)  # Clamp to minimum 0.1 ohm-m
                 ax2.plot(res_data, depth, color=res_colors[i], linewidth=1.5, label=res_curves[0])
@@ -9600,16 +10791,19 @@ Your feedback contributes to software quality and reliability.
         
         # Track 3: Porosity curves
         ax3 = axes[2]
+        ax3.set_title('Porosity', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('Porosity (v/v)', fontsize=10)
+        
         # Neutron (blue, reverse scale)
         neutron_curves = curve_by_type.get('NEUTRON_POROSITY', [])
         if neutron_curves:
-            neutron_data = self.processed_data[neutron_curves[0]].values
+            neutron_data = data_source[neutron_curves[0]].values
             ax3.plot(neutron_data, depth, 'b-', linewidth=1.5, label=neutron_curves[0])
         
         # Density (red)
         density_curves = curve_by_type.get('BULK_DENSITY', [])
         if density_curves:
-            density_data = self.processed_data[density_curves[0]].values
+            density_data = data_source[density_curves[0]].values
             if not neutron_curves:
                 ax3.plot(density_data, depth, 'r-', linewidth=1.5, label=density_curves[0])
             else:
@@ -9627,7 +10821,7 @@ Your feedback contributes to software quality and reliability.
         sonic_curves = curve_by_type.get('SONIC_COMPRESSIONAL', [])
         if sonic_curves:
             twin3_2 = ax3.twiny()
-            sonic_data = self.processed_data[sonic_curves[0]].values
+            sonic_data = data_source[sonic_curves[0]].values
             twin3_2.plot(sonic_data, depth, 'purple', linewidth=1.5, label=sonic_curves[0])
             # Position x-axis
             twin3_2.xaxis.set_ticks_position('top')
@@ -9638,6 +10832,17 @@ Your feedback contributes to software quality and reliability.
             ax.invert_yaxis()  # Depth increases downward
             ax.grid(True, alpha=0.3)
             ax.set_ylabel(f'Depth ({depth_unit})')
+            # Overlays: tops and open-hole shading
+            try:
+                if hasattr(self, 'geological_context') and self.geological_context:
+                    for top_name, top_depth in getattr(self.geological_context, 'formation_tops', {}).items():
+                        ax.axhline(y=top_depth, color='#666666', linestyle='--', linewidth=0.8, alpha=0.7)
+                    ohs = getattr(self, 'geological_context').open_hole_start
+                    ohe = getattr(self, 'geological_context').open_hole_end
+                    if ohs is not None and ohe is not None and ohs < ohe:
+                        ax.axhspan(ohs, ohe, color='#f0f8ff', alpha=0.25)
+            except Exception:
+                pass
         
         # Hide y-axis labels for all but the first track
         for ax in axes[1:]:
@@ -9662,9 +10867,10 @@ Your feedback contributes to software quality and reliability.
                 ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.05),
                          ncol=len(handles))
         
-        # Apply proper spacing for multi-track display
+        # Apply enhanced spacing for multi-track display
         self.fig.tight_layout()
-        self.fig.subplots_adjust(left=0.08, right=0.95, bottom=0.20, top=0.92, wspace=0.25)
+        # Reserve space on the right for any legends
+        self.fig.subplots_adjust(left=0.08, right=0.88, bottom=0.15, top=0.90, wspace=0.25)
     
     def _visualize_unprocessed_data(self, curve: str, viz_type: str):
         """Visualize unprocessed data from current_data"""
@@ -9925,12 +11131,16 @@ Your feedback contributes to software quality and reliability.
         """Create and display the visualization canvas with status message"""
         if hasattr(self, 'viz_content') and self.viz_content:
             self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
-            self.canvas.draw()
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                self.canvas.draw()
             
             # Create navigation toolbar
-            toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
-            toolbar.update()
-            toolbar.pack(side='top', fill='x')
+            if NavigationToolbar2Tk is not None:
+                toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                toolbar.update()
+                toolbar.pack(side='top', fill='x')
             
             # Pack canvas below toolbar
             self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
@@ -9938,6 +11148,24 @@ Your feedback contributes to software quality and reliability.
             # Add status note
             status_note = ttk.Label(self.viz_content, text=status_message, style='Info.TLabel')
             status_note.pack(side='bottom', pady=5)
+
+            # Add export buttons
+            export_frame = ttk.Frame(self.viz_content)
+            export_frame.pack(side='bottom', fill='x', pady=(5, 10))
+            def _export_fig(dpi=150):
+                try:
+                    from tkinter import filedialog as _fd
+                    path = _fd.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png"), ("PDF", "*.pdf")])
+                    if not path:
+                        return
+                    fmt = 'pdf' if path.lower().endswith('.pdf') else 'png'
+                    # Set publication or screen margins via bbox_inches
+                    self.fig.savefig(path, dpi=dpi, format=fmt, bbox_inches='tight', facecolor='white')
+                    self.status_label.config(text=f"Figure exported: {path}")
+                except Exception as e:
+                    messagebox.showerror("Export Error", f"Failed to export figure: {e}")
+            ttk.Button(export_frame, text="Export (Screen)", command=lambda: _export_fig(150)).pack(side='left', padx=(0, 8))
+            ttk.Button(export_frame, text="Export (Publication)", command=lambda: _export_fig(300)).pack(side='left')
     
     def plot_comparison(self, curve: str):
         """Plot original vs processed comparison with depth on Y-axis (industry standard)"""
@@ -10043,6 +11271,34 @@ Your feedback contributes to software quality and reliability.
         # Report controls - redesigned with logical grouping
         control_frame = ttk.Frame(report_frame)
         control_frame.pack(side='top', fill='x', padx=10, pady=10)
+
+        # Tab-level Help button
+        def _show_report_help():
+            try:
+                from tkinter import Toplevel
+                dialog = Toplevel(report_frame)
+                dialog.title("Help - Report")
+                dialog.transient(report_frame)
+                dialog.grab_set()
+                dialog.resizable(True, True)
+                body = ttk.Frame(dialog, padding=15)
+                body.pack(fill='both', expand=True)
+                text = (
+                    "Generate a comprehensive processing report for the active well. "
+                    "Use Cross-Well Summary to view field-wide statistics across loaded wells. "
+                    "Export Data exports the active well’s processed data; Export All Processed writes LAS for every well."
+                )
+                lbl = ttk.Label(body, text=text, wraplength=560, justify='left')
+                lbl.pack(fill='x', expand=True)
+                ttk.Button(body, text='Close', command=dialog.destroy).pack(anchor='e', pady=(10, 0))
+                dialog.update_idletasks()
+                x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+                y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+                dialog.geometry(f"+{x}+{y}")
+            except Exception:
+                pass
+        help_btn = ttk.Button(control_frame, text='Help', command=_show_report_help)
+        help_btn.pack(side='right')
         
         # Group 1: Report Actions
         report_actions_frame = ttk.Frame(control_frame)
@@ -10058,6 +11314,17 @@ Your feedback contributes to software quality and reliability.
         export_btn = self.ui.create_button(report_actions_frame, text="Export Data",
                                           command=self.export_data, button_type='primary', width=18)
         export_btn.pack(side='left')
+
+        # New: Cross-well utilities in Report tab
+        cross_btn = self.ui.create_button(report_actions_frame, text="Cross-Well Summary",
+                                         command=self.show_cross_well_summary, button_type='secondary', width=20)
+        cross_btn.pack(side='left', padx=(15, 0))
+        export_all_btn2 = self.ui.create_button(report_actions_frame, text="Export All Processed",
+                                               command=self.export_all_processed, button_type='secondary', width=20)
+        export_all_btn2.pack(side='left', padx=(10, 0))
+        build_priors_btn = self.ui.create_button(report_actions_frame, text="Build Priors",
+                                                command=self.build_crosswell_priors, button_type='secondary', width=14)
+        build_priors_btn.pack(side='left', padx=(10, 0))
         
         # Group 2: LAS Preview Actions
         preview_actions_frame = ttk.Frame(control_frame)
@@ -11995,6 +13262,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 self.log_processing(f"WARNING: Normalization failed: {e}")
             
             # Step 2: Geological Zone Detection (if gamma ray available)
+            zones = []  # Initialize zones as empty list
             gamma_ray_curves = [col for col in self.processed_data.columns if 'GR' in col.upper() or 'GAMMA' in col.upper()]
             if gamma_ray_curves and 'DEPT' in self.processed_data.columns:
                 self.root.after(0, lambda: self.status_label.config(text="Detecting geological boundaries..."))
@@ -12035,6 +13303,17 @@ This ensures consistent data interpretation and fixes depth validation issues.
             else:
                 zones = []
                 self.log_processing("No gamma ray data available for geological boundary detection")
+
+            # Step 2b: Build cross-well priors early if enabled (so downstream steps can use bounds)
+            if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager:
+                try:
+                    self.root.after(0, lambda: self.status_label.config(text="Building cross-well priors..."))
+                    self.crosswell_priors = self.crosswell_prior_manager.build_priors(
+                        depth_binned=self.priors_depth_binning_var.get()
+                    )
+                    self.log_processing(f"Cross-well priors ready for {len(self.crosswell_priors)} curves")
+                except Exception as e:
+                    self.log_processing(f"Cross-well priors build skipped: {e}")
             
             # Step 3: Environmental Corrections (if well parameters available)
             self.root.after(0, lambda: self.status_label.config(text="Applying environmental corrections..."))
@@ -12205,22 +13484,26 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 scale_type = self.scale_aware_processor.determine_curve_scale(column, data)
                 self.log_processing(f"Detected scale type for {column}: {scale_type}")
                 
-                # Step 2: Zone-aware gap filling (if zones detected)
-                if zones and 'DEPT' in self.processed_data.columns:
+            # Step 2: Zone-aware gap filling (if zones detected)
+            if zones and 'DEPT' in self.processed_data.columns:
                     self.log_processing(f"Zone-aware gap filling for {column}...")
                     
                     depth_data = self.processed_data['DEPT'].values
-                    gamma_ray_data = gamma_ray_curves[0] if gamma_ray_curves else None
+                    gamma_ray_data = self.processed_data[gamma_ray_curves[0]].values if gamma_ray_curves else None
                     
                     # Get auxiliary curves for zone-aware processing
                     auxiliary_curves = auxiliary_curves_dict.get(column, {}) if self.multi_curve_var.get() else {}
                     
                     try:
-                        zone_gap_result = self.zone_aware_gap_filler.fill_gaps_with_zone_awareness(
-                            data, curve_type, depth_data, gamma_ray_data, auxiliary_curves
-                        )
-                        filled_data = zone_gap_result['filled_data']
-                        self.log_processing(f"Zone-aware gap filling completed for {column}")
+                        if hasattr(self, 'zone_aware_gap_filler') and self.zone_aware_gap_filler is not None:
+                            zone_gap_result = self.zone_aware_gap_filler.fill_gaps_with_zone_awareness(
+                                data, curve_type, depth_data, gamma_ray_data, auxiliary_curves
+                            )
+                            filled_data = zone_gap_result['filled_data']
+                            self.log_processing(f"Zone-aware gap filling completed for {column}")
+                        else:
+                            warnings.warn("Zone-aware gap filler not available, skipping zone-aware processing", UserWarning)
+                            filled_data = data  # Use original data if zone-aware processing not available
                         # Ensure gap_result is defined for downstream use
                         try:
                             valid_before = int(np.sum(~np.isnan(data)))
@@ -12261,7 +13544,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 },
                                 'gaps_filled': []
                             }
-                        
                     except Exception as e:
                         self.log_processing(f"Zone-aware gap filling failed for {column}: {e}")
                         self.log_processing("Falling back to standard gap filling...")
@@ -12282,7 +13564,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 curve_name=column
                             )
                             filled_data = gap_result['filled_data']
-                            
                         except Exception as e:
                             self.log_processing(f"Fallback gap filling failed for {column}: {e}")
                             filled_data = data.copy()  # Use original data as fallback
@@ -12316,7 +13597,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
                             curve_name=column
                         )
                         filled_data = gap_result['filled_data']
-                        
                     except Exception as e:
                         self.log_processing(f"Gap filling failed for {column}: {e}")
                         filled_data = data.copy()  # Use original data as fallback
@@ -12330,6 +13610,37 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 'average_confidence': 1.0
                             }
                         }
+
+                # Optional PASS 2: Cross-well prior-constrained refinement
+                try:
+                    if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager and self.two_pass_refinement_var.get():
+                        if not self.crosswell_priors:
+                            # Build priors lazily if not present
+                            self.crosswell_priors = self.crosswell_prior_manager.build_priors(
+                                depth_binned=self.priors_depth_binning_var.get()
+                            )
+                        # Vector bounds per depth if available
+                        depth_vals = self.processed_data['DEPT'].values if 'DEPT' in self.processed_data.columns else None
+                        if depth_vals is not None and self.priors_depth_binning_var.get():
+                            vec = self.crosswell_prior_manager.get_bounds_vector_for_curve(column, depth_vals)
+                            if vec is not None:
+                                lows, highs = vec
+                                clipped = np.minimum(np.maximum(filled_data, lows), highs)
+                                if np.any(~np.isclose(clipped, filled_data, equal_nan=True)):
+                                    filled_data = clipped
+                                    gap_result['quality_metrics']['methods_used'] = list(set(gap_result['quality_metrics'].get('methods_used', []) + ['crosswell_prior']))
+                                    self.log_processing(f"Applied cross-well prior vector bounds to {column}")
+                        else:
+                            bounds = self.crosswell_prior_manager.get_bounds_for_curve(column, None)
+                            if bounds is not None:
+                                low, high = bounds
+                                clipped = np.clip(filled_data, low, high)
+                                if np.any(~np.isclose(clipped, filled_data, equal_nan=True)):
+                                    filled_data = clipped
+                                    gap_result['quality_metrics']['methods_used'] = list(set(gap_result['quality_metrics'].get('methods_used', []) + ['crosswell_prior']))
+                                    self.log_processing(f"Applied cross-well prior bounds to {column}: [{low:.3g}, {high:.3g}]")
+                except Exception as e:
+                    self.log_processing(f"Cross-well prior refinement skipped for {column}: {e}")
                 
                 # Step 3: Scale-aware denoising
                 self.log_processing(f"Scale-aware denoising for {column}...")
@@ -13189,35 +14500,38 @@ This ensures consistent data interpretation and fixes depth validation issues.
             messagebox.showerror("Visualization Error", f"Failed to create scatter plot: {str(e)}")
     
     def plot_3d_visualization(self, curve: str):
-        """Create a 3D visualization with multiple curves"""
+        """Create a 3D visualization with 3 curves plus depth (industry standard)"""
         try:
-            # Get secondary curve
+            # Get secondary and tertiary curves
             curve2 = self.viz_curve2_var.get()
+            curve3 = self.viz_curve3_var.get()
             
             if not curve2 or curve2 not in self.processed_data.columns:
                 messagebox.showwarning("Warning", "Please select a valid secondary curve for 3D visualization")
                 return
+                
+            if not curve3 or curve3 not in self.processed_data.columns:
+                messagebox.showwarning("Warning", "Please select a valid third curve for 3D visualization")
+                return
             
             # Check if curves have been processed, otherwise use original data
-            if curve in self.processing_results:
-                curve1_data = self.processing_results[curve]['final_data']
-                curve1_status = 'processed'
-            elif self.current_data is not None and curve in self.current_data.columns:
-                curve1_data = self.current_data[curve].values
-                curve1_status = 'original'
-            else:
-                messagebox.showwarning("Warning", f"Curve '{curve}' not found in data")
-                return
-                
-            if curve2 in self.processing_results:
-                curve2_data = self.processing_results[curve2]['final_data']
-                curve2_status = 'processed'
-            elif self.current_data is not None and curve2 in self.current_data.columns:
-                curve2_data = self.current_data[curve2].values
-                curve2_status = 'original'
-            else:
-                messagebox.showwarning("Warning", f"Curve '{curve2}' not found in data")
-                return
+            curves_data = {}
+            curves_status = {}
+            
+            for curve_name in [curve, curve2, curve3]:
+                if curve_name in self.processing_results:
+                    curves_data[curve_name] = self.processing_results[curve_name]['final_data']
+                    curves_status[curve_name] = 'processed'
+                elif self.current_data is not None and curve_name in self.current_data.columns:
+                    curves_data[curve_name] = self.current_data[curve_name].values
+                    curves_status[curve_name] = 'original'
+                else:
+                    messagebox.showwarning("Warning", f"Curve '{curve_name}' not found in data")
+                    return
+            
+            curve1_data = curves_data[curve]
+            curve2_data = curves_data[curve2]
+            curve3_data = curves_data[curve3]
             
             # Ensure we have a valid figure with good size for 3D visualization
             self.ensure_figure_exists()
@@ -13243,38 +14557,46 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 depth = np.arange(len(curve1_data))
                 z_label = 'Depth (index)'
             
-            # Filter out NaN values
-            valid_mask = ~np.isnan(curve1_data) & ~np.isnan(curve2_data)
+            # Filter out NaN values for all three curves
+            valid_mask = (~np.isnan(curve1_data) & 
+                         ~np.isnan(curve2_data) & 
+                         ~np.isnan(curve3_data))
             if not np.any(valid_mask):
                 messagebox.showwarning("Warning", "No valid data points for 3D visualization")
                 return
             
             valid_x = curve1_data[valid_mask]
             valid_y = curve2_data[valid_mask]
-            valid_z = depth[valid_mask]
+            valid_z = curve3_data[valid_mask]
+            valid_depth = depth[valid_mask]
             
-            # Create scatter plot in 3D
-            scatter = ax.scatter(valid_x, valid_y, valid_z, c=valid_z, cmap='viridis', 
-                                s=30, alpha=0.8, marker='o')
+            # Get industry-standard colors
+            colors = PHYSICAL_CONSTANTS.VISUALIZATION_COLORS["3D_SCATTER"]
             
-            # Add a color bar
-            cbar = self.fig.colorbar(scatter, ax=ax, pad=0.1)
-            cbar.set_label(z_label)
+            # Create 3D scatter plot with industry-standard coloring
+            # Use depth for color mapping (industry standard)
+            scatter = ax.scatter(valid_x, valid_y, valid_z, c=valid_depth, 
+                                cmap=PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["depth"], 
+                                s=30, alpha=0.8, marker='o', edgecolors='black', linewidth=0.5)
             
-            # Set labels
-            ax.set_xlabel(f'{curve} ({self.curve_info.get(curve, {}).get("unit", "UNIT")})')
-            ax.set_ylabel(f'{curve2} ({self.curve_info.get(curve2, {}).get("unit", "UNIT")})')
-            ax.set_zlabel(z_label)
+            # Add professional color bar
+            cbar = self.fig.colorbar(scatter, ax=ax, pad=0.1, shrink=0.8)
+            cbar.set_label(f'Depth ({depth_unit})', fontsize=12, fontweight='bold')
+            cbar.ax.tick_params(labelsize=10)
             
-            # Set title with processing status
-            title = f'3D Visualization: {curve} vs {curve2}'
-            if curve1_status != curve2_status:
-                title += f' ({curve1_status} vs {curve2_status})'
-            elif curve1_status == 'original':
-                title += ' (Original Data)'
-            else:
-                title += ' (Processed Data)'
-            ax.set_title(title, fontsize=14, fontweight='bold')
+            # Set professional labels with units
+            curve1_unit = self.curve_info.get(curve, {}).get("unit", "UNIT")
+            curve2_unit = self.curve_info.get(curve2, {}).get("unit", "UNIT")
+            curve3_unit = self.curve_info.get(curve3, {}).get("unit", "UNIT")
+            
+            ax.set_xlabel(f'{curve} ({curve1_unit})', fontsize=12, fontweight='bold')
+            ax.set_ylabel(f'{curve2} ({curve2_unit})', fontsize=12, fontweight='bold')
+            ax.set_zlabel(f'{curve3} ({curve3_unit})', fontsize=12, fontweight='bold')
+            
+            # Set professional title
+            status_text = "Processed" if all(s == 'processed' for s in curves_status.values()) else "Mixed Data"
+            title = f'3D Log Visualization: {curve} vs {curve2} vs {curve3} ({status_text})'
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
             
             # Add grid
             ax.grid(True, alpha=0.3)
@@ -13917,14 +15239,16 @@ This ensures consistent data interpretation and fixes depth validation issues.
             ax.fill_betweenx(depth, lower_bound, upper_bound, alpha=0.3, color='lightblue', 
                             label='Uncertainty Band')
             
-            # Color code by confidence
+            # Color code by confidence using industry-standard uncertainty colormap
             confidence_colors = confidence.copy()
-            scatter = ax.scatter(processed, depth, c=confidence_colors, cmap='RdYlGn', 
-                               s=20, alpha=0.7, label='Confidence')
+            uncertainty_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["uncertainty"]
+            scatter = ax.scatter(processed, depth, c=confidence_colors, cmap=uncertainty_cmap, 
+                               s=20, alpha=0.7, label='Confidence', vmin=0, vmax=1)
             
-            # Add colorbar for confidence
-            cbar = self.fig.colorbar(scatter, ax=ax)
-            cbar.set_label('Confidence Level')
+            # Add professional colorbar for confidence
+            cbar = self.fig.colorbar(scatter, ax=ax, shrink=0.8)
+            cbar.set_label('Confidence Level (0-1)', fontsize=12, fontweight='bold')
+            cbar.ax.tick_params(labelsize=10)
             
             # Set title with processing status
             if has_processed:
@@ -13982,27 +15306,33 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 gap_metrics = {'data_completeness': completeness, 'total_gaps_filled': 0, 'total_points_filled': 0, 'methods_used': [], 'average_confidence': 0.5, 'average_uncertainty': 0.5}
                 denoise_metrics = {'quality': 0.5, 'noise_reduction_db': 0, 'signal_preservation': 0.5}
             
-            # Plot 1: Data Completeness
+            # Use industry-standard quality colormap
+            quality_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["quality"]
+            
+            # Plot 1: Data Completeness (Industry Standard: Green=Good, Red=Poor)
             ax1 = axes[0, 0]
             completeness = gap_metrics.get('data_completeness', 0)
+            colors = ['#00FF00' if completeness > 80 else '#FFA500' if completeness > 60 else '#FF0000', '#FF0000']
             ax1.pie([completeness, 100-completeness], labels=['Valid Data', 'Missing Data'],
-                    colors=['green', 'red'], autopct='%1.1f%%')
-            ax1.set_title('Data Completeness')
+                    colors=colors, autopct='%1.1f%%', startangle=90)
+            ax1.set_title('Data Completeness', fontsize=12, fontweight='bold')
             
-            # Plot 2: Gap Filling Quality
+            # Plot 2: Gap Filling Quality (Industry Standard: Blue=Confidence, Orange=Uncertainty)
             ax2 = axes[0, 1]
             confidence_values = gap_metrics.get('average_confidence', 0)
             uncertainty_values = gap_metrics.get('average_uncertainty', 0)
             
             metrics = ['Confidence', 'Uncertainty (inv)']
             values = [confidence_values, 1.0 - uncertainty_values]
+            colors = ['#0000FF', '#FFA500']  # Blue for confidence, Orange for uncertainty
             
-            bars = ax2.bar(metrics, values, color=['blue', 'orange'])
+            bars = ax2.bar(metrics, values, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
             ax2.set_ylim(0, 1)
-            ax2.set_title('Gap Filling Quality')
-            ax2.set_ylabel('Quality Score')
+            ax2.set_title('Gap Filling Quality', fontsize=12, fontweight='bold')
+            ax2.set_ylabel('Quality Score (0-1)', fontsize=10)
+            ax2.grid(True, alpha=0.3)
             
-            # Plot 3: Denoising Performance
+            # Plot 3: Denoising Performance (Industry Standard: Green=Good, Blue=Noise, Red=Signal)
             ax3 = axes[1, 0]
             denoise_quality = denoise_metrics.get('quality', 0)
             noise_reduction = denoise_metrics.get('noise_reduction_db', 0) / 20.0  # Normalize
@@ -14010,14 +15340,16 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             categories = ['Overall Quality', 'Noise Reduction', 'Signal Preservation']
             values = [denoise_quality, min(1.0, noise_reduction), signal_preservation]
+            colors = ['#00FF00', '#0000FF', '#FF0000']  # Green, Blue, Red
             
-            bars = ax3.bar(categories, values, color=['green', 'blue', 'red'])
+            bars = ax3.bar(categories, values, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
             ax3.set_ylim(0, 1)
-            ax3.set_title('Denoising Performance')
-            ax3.set_ylabel('Quality Score')
+            ax3.set_title('Denoising Performance', fontsize=12, fontweight='bold')
+            ax3.set_ylabel('Quality Score (0-1)', fontsize=10)
+            ax3.grid(True, alpha=0.3)
             plt.setp(ax3.get_xticklabels(), rotation=45, ha='right')
             
-            # Plot 4: Processing Summary
+            # Plot 4: Processing Summary (Industry Standard: Purple=Gaps, Cyan=Points, Yellow=Methods)
             ax4 = axes[1, 1]
             gaps_filled = gap_metrics.get('total_gaps_filled', 0)
             points_filled = gap_metrics.get('total_points_filled', 0)
@@ -14025,10 +15357,12 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             summary_data = [gaps_filled, points_filled, methods_used]
             summary_labels = ['Gaps Filled', 'Points Filled', 'Methods Used']
+            colors = ['#800080', '#00FFFF', '#FFFF00']  # Purple, Cyan, Yellow
             
-            bars = ax4.bar(summary_labels, summary_data, color=['purple', 'cyan', 'yellow'])
-            ax4.set_title('Processing Summary')
-            ax4.set_ylabel('Count')
+            bars = ax4.bar(summary_labels, summary_data, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
+            ax4.set_title('Processing Summary', fontsize=12, fontweight='bold')
+            ax4.set_ylabel('Count', fontsize=10)
+            ax4.grid(True, alpha=0.3)
             plt.setp(ax4.get_xticklabels(), rotation=45, ha='right')
             
             # Apply proper spacing for quality metrics display
@@ -14062,15 +15396,19 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Use seaborn for better visualization if available
             try:
                 import seaborn as sns
-                sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0,
-                           square=True, ax=ax, fmt='.2f', cbar_kws={'label': 'Correlation'})
+                # Use industry-standard correlation colormap
+                correlation_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["correlation"]
+                sns.heatmap(correlation_matrix, annot=True, cmap=correlation_cmap, center=0,
+                           square=True, ax=ax, fmt='.2f', 
+                           cbar_kws={'label': 'Correlation Coefficient', 'shrink': 0.8})
             except ImportError:
-                # Fallback to matplotlib
-                im = ax.imshow(correlation_matrix, cmap='coolwarm', aspect='auto')
+                # Fallback to matplotlib with industry standards
+                correlation_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["correlation"]
+                im = ax.imshow(correlation_matrix, cmap=correlation_cmap, aspect='auto', vmin=-1, vmax=1)
                 
-                # Add colorbar
-                cbar = self.fig.colorbar(im, ax=ax)
-                cbar.set_label('Correlation')
+                # Add professional colorbar
+                cbar = self.fig.colorbar(im, ax=ax, shrink=0.8)
+                cbar.set_label('Correlation Coefficient', fontsize=12, fontweight='bold')
                 
                 # Add labels
                 ax.set_xticks(range(len(correlation_matrix.columns)))
@@ -15031,17 +16369,29 @@ This ensures consistent data interpretation and fixes depth validation issues.
         # Show/hide appropriate controls based on viz type
         if viz_type == "multi_curve":
             self.multi_curve_frame.pack(fill='x', pady=5)
+            self.third_curve_frame.pack_forget()
+        elif viz_type == "3d_visualization":
+            self.multi_curve_frame.pack_forget()
+            self.third_curve_frame.pack(fill='x', pady=5)
         elif viz_type in ["unprocessed_curves", "quality_overview", "curve_comparison_all"]:
             # Hide multi-curve frame for these new types
             self.multi_curve_frame.pack_forget()
+            self.third_curve_frame.pack_forget()
         else:
             self.multi_curve_frame.pack_forget()
+            self.third_curve_frame.pack_forget()
         
         # Enable/disable secondary curve combobox based on viz type
         if viz_type in ["3d_visualization", "single_curve_comparison"]:
             self.viz_curve2_combo['state'] = 'readonly'
         else:
             self.viz_curve2_combo['state'] = 'disabled'
+            
+        # Enable/disable third curve combobox for 3D visualization
+        if viz_type == "3d_visualization":
+            self.viz_curve3_combo['state'] = 'readonly'
+        else:
+            self.viz_curve3_combo['state'] = 'disabled'
 
     # ============================================================================
     # QUICK VISUALIZATION METHODS
