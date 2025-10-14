@@ -8803,7 +8803,7 @@ Your feedback contributes to software quality and reliability.
         file_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
         
         browse_btn = self.ui.create_button(file_frame, text="Browse", 
-                                          command=self.browse_file, button_type='secondary', width=15)
+                                          command=self.browse_file, button_type='secondary', width=20)
         browse_btn.pack(side='right')
         
         # Create a button frame for Load and Clear buttons
@@ -8811,16 +8811,16 @@ Your feedback contributes to software quality and reliability.
         button_frame.pack(fill='x', pady=15)
         
         load_btn = self.ui.create_button(button_frame, text="Load & Analyze File",
-                                        command=self.load_file, button_type='success', width=20)
+                                        command=self.load_file, button_type='success', width=25)
         load_btn.pack(side='left', padx=(0, 15))
         
         clear_btn = self.ui.create_button(button_frame, text="Clear Data",
-                                         command=self.clear_data, button_type='warning', width=15)
+                                         command=self.clear_data, button_type='warning', width=20)
         clear_btn.pack(side='left')
-
+        
         # New: Load multiple files (multiwell)
         multi_btn = self.ui.create_button(button_frame, text="Load Multiple Files",
-                                         command=self.load_multiple_files, button_type='primary', width=22)
+                                         command=self.load_multiple_files, button_type='primary', width=25)
         multi_btn.pack(side='left', padx=(15, 0))
         
         # CRITICAL: Well Information Card for safety
@@ -9827,7 +9827,7 @@ Your feedback contributes to software quality and reliability.
                                           command=self.build_crosswell_priors, button_type='primary', width=25)
         build_btn.pack(side='left', padx=(0, 10))
         view_btn = self.ui.create_button(cohort_btns, text="View Priors Summary",
-                                         command=self.show_cross_well_summary, button_type='secondary', width=22)
+                                         command=self.show_cross_well_summary, button_type='secondary', width=25)
         view_btn.pack(side='left')
 
         # Manual cohort picker listbox (optional)
