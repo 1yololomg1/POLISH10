@@ -75,6 +75,22 @@
 
 ---
 
+### 6. Multiwell Capabilities ✅
+**NEW - Analyze multiple wells in one session**
+
+- "Load Multiple Files" to import several LAS/CSV/Excel files at once.
+- New "Loaded Wells" panel lists wells; set the active well for inspection.
+- "Start Processing (Active Well)" runs the full pipeline for the selected well.
+- "Process All Wells" runs the pipeline across every loaded well sequentially.
+- "Cross-Well Summary" aggregates common curve stats and quality indicators across wells.
+- "Export All Processed (LAS)" writes processed LAS for every well in one action.
+
+Developer notes:
+- Internally maintains `well_datasets` mapping well IDs → snapshot of `current_data`, `processed_data`, `curve_info`, `processing_results`, and header/well info.
+- The legacy single-well UI and pipeline operate against the `active_well_id` dataset for maximum compatibility.
+
+---
+
 ## 🚧 ERROR SUPPRESSION REMOVAL: 32% Complete (29 of 92)
 
 ### Categories 100% Fixed:

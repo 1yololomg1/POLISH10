@@ -98,56 +98,6 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 import warnings
-import sys
-import platform
-
-# ===== PLACEHOLDER/BACKSTOP CLASSES FOR OPTIONAL SYSTEMS =====
-# These lightweight definitions ensure static type checkers (pyright) and
-# runtime both have symbols available even when optional subsystems are
-# disabled or not bundled. They introduce no side effects.
-
-class BetaFeatureFlags:
-    """Placeholder for beta feature flags when beta system is disabled."""
-    def __init__(self):
-        pass
-
-
-class BetaAnalytics:
-    """Placeholder analytics sink used when beta analytics is not enabled."""
-    def __init__(self, feature_flags: Optional["BetaFeatureFlags"] = None):
-        self._feature_flags = feature_flags
-
-
-class BetaFeedbackCollector:
-    """Placeholder feedback collector used when beta feedback is not enabled."""
-    def __init__(self, feature_flags: Optional["BetaFeatureFlags"] = None):
-        self._feature_flags = feature_flags
-
-
-class SafeFileHandler:
-    """Robust file operations wrapper used by analytics and reporting paths.
-    
-    Implemented here to avoid optional import failures and undefined symbol
-    errors during static analysis. Methods are conservative and avoid raising
-    exceptions; they return simple success/failure signals.
-    """
-
-    @staticmethod
-    def safe_write_json(filepath: str, data: Any) -> bool:
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-            return True
-        except Exception:
-            return False
-
-    @staticmethod
-    def safe_read_json(filepath: str) -> Optional[Any]:
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            return None
 
 
 
@@ -2024,6 +1974,877 @@ class ComprehensiveMnemonicLibrary:
                 'range': [1.0, 10.0],
                 'curve_family': 'density',
                 'description': 'Photoelectric absorption factor reference'
+            },
+            
+            # === COMPREHENSIVE NMR TOOLS ===
+            'NMR_T2_DISTRIBUTION': {
+                'mnemonics': ['T2LM', 'T2GM', 'T2BIN', 'T2CUT', 'T2DIST', 'T2LOG', 'T2_MEAN', 'T2_GEOMETRIC', 'T2_BINNED', 'T2_CUTOFF', 'T2_DISTRIBUTION', 'T2_LOGARITHMIC'],
+                'units': ['MS', 'ms', 'MILLISECOND'],
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR T2 relaxation time distribution',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'clay': [0.1, 10], 'bound_water': [1, 100], 'free_water': [100, 1000], 'hydrocarbon': [10, 1000]}
+            },
+            'NMR_T1_DISTRIBUTION': {
+                'mnemonics': ['T1LM', 'T1GM', 'T1BIN', 'T1CUT', 'T1DIST', 'T1LOG', 'T1_MEAN', 'T1_GEOMETRIC', 'T1_BINNED', 'T1_CUTOFF', 'T1_DISTRIBUTION', 'T1_LOGARITHMIC'],
+                'units': ['MS', 'ms', 'MILLISECOND'],
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR T1 relaxation time distribution',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'clay': [1, 100], 'bound_water': [10, 1000], 'free_water': [100, 10000], 'hydrocarbon': [100, 10000]}
+            },
+            'NMR_BOUND_FLUID_VOLUME': {
+                'mnemonics': ['BFV', 'BVI', 'CBVI', 'BOUND_FLUID', 'BOUND_WATER', 'IRREDUCIBLE_WATER', 'CLAY_BOUND_WATER', 'BOUND_FLUID_VOLUME', 'BOUND_WATER_VOLUME'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.4],
+                'curve_family': 'nmr',
+                'description': 'NMR bound fluid volume',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.1, 0.3], 'sandstone': [0.05, 0.15], 'carbonate': [0.02, 0.1]}
+            },
+            'NMR_FREE_FLUID_VOLUME': {
+                'mnemonics': ['FFI', 'FFV', 'MBVI', 'FREE_FLUID', 'FREE_WATER', 'MOBILE_FLUID', 'FREE_FLUID_VOLUME', 'FREE_WATER_VOLUME', 'MOBILE_FLUID_VOLUME'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.4],
+                'curve_family': 'nmr',
+                'description': 'NMR free fluid volume',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0, 0.1], 'sandstone': [0.1, 0.3], 'carbonate': [0.05, 0.25]}
+            },
+            'NMR_PERMEABILITY_SDR': {
+                'mnemonics': ['KSDR', 'PERM_SDR', 'K_SDR', 'SDR_PERM', 'SDR_PERMEABILITY', 'KSDR_PERM', 'PERM_KSDR'],
+                'units': ['MD', 'mD', 'MILLIDARCY', 'DARCY'],
+                'range': [0.001, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR permeability from SDR model',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.001, 0.1], 'sandstone': [0.1, 1000], 'carbonate': [0.01, 100]}
+            },
+            'NMR_PERMEABILITY_TIMUR': {
+                'mnemonics': ['KTIMUR', 'PERM_TIMUR', 'K_TIMUR', 'TIMUR_PERM', 'TIMUR_PERMEABILITY', 'KTIMUR_PERM', 'PERM_KTIMUR'],
+                'units': ['MD', 'mD', 'MILLIDARCY', 'DARCY'],
+                'range': [0.001, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR permeability from Timur model',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.001, 0.1], 'sandstone': [0.1, 1000], 'carbonate': [0.01, 100]}
+            },
+            'NMR_PERMEABILITY_COATES': {
+                'mnemonics': ['KCOATES', 'PERM_COATES', 'K_COATES', 'COATES_PERM', 'COATES_PERMEABILITY', 'KCOATES_PERM', 'PERM_KCOATES'],
+                'units': ['MD', 'mD', 'MILLIDARCY', 'DARCY'],
+                'range': [0.001, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR permeability from Coates model',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.001, 0.1], 'sandstone': [0.1, 1000], 'carbonate': [0.01, 100]}
+            },
+            'NMR_T2_CUTOFF': {
+                'mnemonics': ['T2CUT', 'T2CUTOFF', 'T2_CUT', 'T2_CUTOFF', 'CUTOFF_T2', 'T2_THRESHOLD', 'T2_LIMIT'],
+                'units': ['MS', 'ms', 'MILLISECOND'],
+                'range': [1, 1000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR T2 cutoff time for bound/free fluid separation',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [3, 10], 'sandstone': [10, 33], 'carbonate': [33, 100]}
+            },
+            'NMR_T2_LOG_MEAN': {
+                'mnemonics': ['T2LM', 'T2_LOG_MEAN', 'T2_MEAN', 'LOG_MEAN_T2', 'T2_AVERAGE', 'T2_AVG'],
+                'units': ['MS', 'ms', 'MILLISECOND'],
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR T2 log mean relaxation time',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'clay': [0.1, 10], 'bound_water': [1, 100], 'free_water': [100, 1000], 'hydrocarbon': [10, 1000]}
+            },
+            'NMR_T2_GEOMETRIC_MEAN': {
+                'mnemonics': ['T2GM', 'T2_GEOMETRIC_MEAN', 'T2_GEOMETRIC', 'GEOMETRIC_MEAN_T2', 'T2_GM'],
+                'units': ['MS', 'ms', 'MILLISECOND'],
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR T2 geometric mean relaxation time',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'clay': [0.1, 10], 'bound_water': [1, 100], 'free_water': [100, 1000], 'hydrocarbon': [10, 1000]}
+            },
+            'NMR_TOTAL_POROSITY': {
+                'mnemonics': ['MPHI', 'TCMR', 'CMRP', 'NMR_POR', 'NMR_POROSITY', 'TOTAL_POROSITY_NMR', 'NMR_TOTAL_POROSITY', 'MPHI_TOTAL'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.4],
+                'curve_family': 'nmr',
+                'description': 'NMR total porosity',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.05, 0.2], 'sandstone': [0.1, 0.3], 'carbonate': [0.05, 0.25]}
+            },
+            'NMR_EFFECTIVE_POROSITY': {
+                'mnemonics': ['MPHIE', 'NMR_EFF_POR', 'EFFECTIVE_POROSITY_NMR', 'NMR_EFFECTIVE_POROSITY', 'MPHI_EFFECTIVE', 'EFF_POR_NMR'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.4],
+                'curve_family': 'nmr',
+                'description': 'NMR effective porosity',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.02, 0.15], 'sandstone': [0.08, 0.25], 'carbonate': [0.05, 0.2]}
+            },
+            'NMR_CLAY_BOUND_WATER': {
+                'mnemonics': ['CBW', 'CLAY_BOUND_WATER', 'NMR_CBW', 'CBW_NMR', 'CLAY_BOUND', 'BOUND_CLAY_WATER'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.3],
+                'curve_family': 'nmr',
+                'description': 'NMR clay bound water volume',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.05, 0.2], 'sandstone': [0.02, 0.1], 'carbonate': [0.01, 0.05]}
+            },
+            'NMR_CAPILLARY_BOUND_WATER': {
+                'mnemonics': ['CBVI', 'CAPILLARY_BOUND_WATER', 'NMR_CBVI', 'CBVI_NMR', 'CAPILLARY_BOUND', 'BOUND_CAPILLARY_WATER'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.3],
+                'curve_family': 'nmr',
+                'description': 'NMR capillary bound water volume',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.02, 0.15], 'sandstone': [0.05, 0.2], 'carbonate': [0.02, 0.15]}
+            },
+            'NMR_MOVABLE_FLUID': {
+                'mnemonics': ['MFI', 'MOVABLE_FLUID', 'NMR_MFI', 'MFI_NMR', 'MOVABLE_FLUID_INDEX', 'FLUID_MOVABILITY'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.4],
+                'curve_family': 'nmr',
+                'description': 'NMR movable fluid index',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0, 0.1], 'sandstone': [0.1, 0.3], 'carbonate': [0.05, 0.25]}
+            },
+            'NMR_BULK_VOLUME_IRREDUCIBLE': {
+                'mnemonics': ['BVI', 'BULK_VOLUME_IRREDUCIBLE', 'NMR_BVI', 'BVI_NMR', 'IRREDUCIBLE_WATER', 'BOUND_WATER_VOLUME'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.3],
+                'curve_family': 'nmr',
+                'description': 'NMR bulk volume irreducible water',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.05, 0.2], 'sandstone': [0.05, 0.15], 'carbonate': [0.02, 0.1]}
+            },
+            'NMR_BULK_VOLUME_MOVABLE': {
+                'mnemonics': ['BVM', 'BULK_VOLUME_MOVABLE', 'NMR_BVM', 'BVM_NMR', 'MOVABLE_WATER', 'FREE_WATER_VOLUME'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 0.4],
+                'curve_family': 'nmr',
+                'description': 'NMR bulk volume movable water',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0, 0.1], 'sandstone': [0.1, 0.25], 'carbonate': [0.05, 0.2]}
+            },
+            'NMR_T2_BINNED_DISTRIBUTION': {
+                'mnemonics': ['T2BIN', 'T2_BINNED', 'BINNED_T2', 'T2_DISTRIBUTION_BINNED', 'T2_BINS', 'T2_BINNED_DIST'],
+                'units': ['MS', 'ms', 'MILLISECOND'],
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR T2 binned distribution',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'clay': [0.1, 10], 'bound_water': [1, 100], 'free_water': [100, 1000], 'hydrocarbon': [10, 1000]}
+            },
+            'NMR_T1_BINNED_DISTRIBUTION': {
+                'mnemonics': ['T1BIN', 'T1_BINNED', 'BINNED_T1', 'T1_DISTRIBUTION_BINNED', 'T1_BINS', 'T1_BINNED_DIST'],
+                'units': ['MS', 'ms', 'MILLISECOND'],
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR T1 binned distribution',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'clay': [1, 100], 'bound_water': [10, 1000], 'free_water': [100, 10000], 'hydrocarbon': [100, 10000]}
+            },
+            'NMR_DIFFUSION_COEFFICIENT': {
+                'mnemonics': ['D', 'DIFF', 'DIFFUSION', 'NMR_DIFFUSION', 'DIFFUSION_COEFFICIENT', 'D_COEFFICIENT'],
+                'units': ['CM2/S', 'cm2/s', 'M2/S', 'm2/s'],
+                'range': [1e-6, 1e-2],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR diffusion coefficient',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'water': [1e-5, 1e-4], 'oil': [1e-6, 1e-5], 'gas': [1e-4, 1e-3]}
+            },
+            'NMR_VISCOSITY': {
+                'mnemonics': ['VISC', 'VISCOSITY', 'NMR_VISCOSITY', 'VISC_NMR', 'FLUID_VISCOSITY', 'OIL_VISCOSITY'],
+                'units': ['CP', 'cP', 'CENTIPOISE', 'PA.S', 'Pa.s'],
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR-derived fluid viscosity',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'water': [0.3, 1.0], 'oil': [1, 1000], 'gas': [0.01, 0.1]}
+            },
+            'NMR_SATURATION': {
+                'mnemonics': ['SW_NMR', 'NMR_SW', 'WATER_SATURATION_NMR', 'NMR_WATER_SATURATION', 'SW_NMR_DERIVED', 'NMR_SATURATION'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 1],
+                'curve_family': 'nmr',
+                'description': 'NMR-derived water saturation',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'shale': [0.8, 1.0], 'sandstone': [0.2, 0.8], 'carbonate': [0.1, 0.6]}
+            },
+            'NMR_HYDROCARBON_INDICATOR': {
+                'mnemonics': ['HCI', 'HYDROCARBON_INDICATOR', 'NMR_HCI', 'HCI_NMR', 'HYDROCARBON_INDEX', 'OIL_INDICATOR'],
+                'units': ['V/V', 'PU', '%', 'FRACTION'],
+                'range': [0, 1],
+                'curve_family': 'nmr',
+                'description': 'NMR hydrocarbon indicator',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'water': [0, 0.1], 'oil': [0.1, 0.8], 'gas': [0.2, 0.9]}
+            },
+            'NMR_PORE_SIZE_DISTRIBUTION': {
+                'mnemonics': ['PSD', 'PORE_SIZE_DIST', 'NMR_PSD', 'PSD_NMR', 'PORE_SIZE_DISTRIBUTION', 'SIZE_DISTRIBUTION'],
+                'units': ['UM', 'um', 'MICRON', 'MICROMETER'],
+                'range': [0.01, 1000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR pore size distribution',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'micropores': [0.01, 0.1], 'mesopores': [0.1, 1], 'macropores': [1, 100]}
+            },
+            'NMR_SURFACE_RELAXIVITY': {
+                'mnemonics': ['RHO', 'SURFACE_RELAXIVITY', 'NMR_RHO', 'RHO_NMR', 'RELAXIVITY', 'SURFACE_RELAX'],
+                'units': ['UM/S', 'um/s', 'MICROMETER/SECOND'],
+                'range': [0.1, 100],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR surface relaxivity',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'sandstone': [1, 10], 'carbonate': [0.1, 5], 'shale': [10, 100]}
+            },
+            'NMR_MAGNETIC_SUSCEPTIBILITY': {
+                'mnemonics': ['SUSC', 'SUSCEPTIBILITY', 'NMR_SUSC', 'SUSC_NMR', 'MAGNETIC_SUSCEPTIBILITY', 'SUSCEPTIBILITY_NMR'],
+                'units': ['SI', 'CGS', 'EMU/CM3'],
+                'range': [1e-6, 1e-2],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR magnetic susceptibility',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'water': [1e-6, 1e-5], 'oil': [1e-6, 1e-4], 'gas': [1e-6, 1e-5]}
+            },
+            'NMR_ECHO_SPACING': {
+                'mnemonics': ['TE', 'ECHO_SPACING', 'NMR_TE', 'TE_NMR', 'ECHO_TIME', 'T2_ECHO_SPACING'],
+                'units': ['MS', 'ms', 'MILLISECOND', 'US', 'us', 'MICROSECOND'],
+                'range': [0.1, 100],
+                'curve_family': 'nmr',
+                'description': 'NMR echo spacing time',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'short': [0.1, 1], 'medium': [1, 10], 'long': [10, 100]}
+            },
+            'NMR_WAIT_TIME': {
+                'mnemonics': ['TW', 'WAIT_TIME', 'NMR_TW', 'TW_NMR', 'RECOVERY_TIME', 'T1_WAIT_TIME'],
+                'units': ['MS', 'ms', 'MILLISECOND', 'S', 's', 'SECOND'],
+                'range': [1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR wait time for T1 recovery',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'short': [1, 100], 'medium': [100, 1000], 'long': [1000, 10000]}
+            },
+            'NMR_SIGNAL_NOISE_RATIO': {
+                'mnemonics': ['SNR', 'SIGNAL_NOISE_RATIO', 'NMR_SNR', 'SNR_NMR', 'SIGNAL_TO_NOISE', 'NOISE_RATIO'],
+                'units': ['DB', 'dB', 'DECIBEL', 'RATIO'],
+                'range': [0, 100],
+                'curve_family': 'nmr',
+                'description': 'NMR signal-to-noise ratio',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'poor': [0, 10], 'good': [10, 30], 'excellent': [30, 100]}
+            },
+            'NMR_ECHO_COUNT': {
+                'mnemonics': ['NECHO', 'ECHO_COUNT', 'NMR_NECHO', 'NECHO_NMR', 'NUMBER_ECHOES', 'ECHO_NUMBER'],
+                'units': ['COUNT', 'NUMBER', 'INTEGER'],
+                'range': [1, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR echo count',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'short': [1, 100], 'medium': [100, 1000], 'long': [1000, 10000]}
+            },
+            'NMR_ECHO_AMPLITUDE': {
+                'mnemonics': ['ECHO_AMP', 'ECHO_AMPLITUDE', 'NMR_ECHO_AMP', 'AMP_ECHO', 'ECHO_MAGNITUDE', 'ECHO_STRENGTH'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR echo amplitude',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_INVERSION_RECOVERY': {
+                'mnemonics': ['IR', 'INVERSION_RECOVERY', 'NMR_IR', 'IR_NMR', 'T1_INVERSION', 'INVERSION_T1'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR inversion recovery signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_CARR_PURCELL_MEIBOOM_GILL': {
+                'mnemonics': ['CPMG', 'CARR_PURCELL', 'NMR_CPMG', 'CPMG_NMR', 'CARR_PURCELL_MEIBOOM_GILL', 'CPMG_SEQUENCE'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR CPMG sequence signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_MULTI_WAIT_TIME': {
+                'mnemonics': ['MWT', 'MULTI_WAIT_TIME', 'NMR_MWT', 'MWT_NMR', 'MULTI_TW', 'MULTI_WAIT'],
+                'units': ['MS', 'ms', 'MILLISECOND', 'S', 's', 'SECOND'],
+                'range': [1, 10000],
+                'log_scale': True,
+                'curve_family': 'nmr',
+                'description': 'NMR multi-wait time sequence',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'short': [1, 100], 'medium': [100, 1000], 'long': [1000, 10000]}
+            },
+            'NMR_MULTI_ECHO_SPACING': {
+                'mnemonics': ['MES', 'MULTI_ECHO_SPACING', 'NMR_MES', 'MES_NMR', 'MULTI_TE', 'MULTI_ECHO'],
+                'units': ['MS', 'ms', 'MILLISECOND', 'US', 'us', 'MICROSECOND'],
+                'range': [0.1, 100],
+                'curve_family': 'nmr',
+                'description': 'NMR multi-echo spacing sequence',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'short': [0.1, 1], 'medium': [1, 10], 'long': [10, 100]}
+            },
+            'NMR_DIFFUSION_WEIGHTED': {
+                'mnemonics': ['DWI', 'DIFFUSION_WEIGHTED', 'NMR_DWI', 'DWI_NMR', 'DIFFUSION_WEIGHTED_IMAGING', 'DWI_IMAGING'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR diffusion-weighted imaging',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_SPECTROSCOPY': {
+                'mnemonics': ['MRS', 'NMR_SPECTROSCOPY', 'NMR_MRS', 'MRS_NMR', 'MAGNETIC_RESONANCE_SPECTROSCOPY', 'SPECTROSCOPY_NMR'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR spectroscopy signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_IMAGING': {
+                'mnemonics': ['MRI', 'NMR_IMAGING', 'NMR_MRI', 'MRI_NMR', 'MAGNETIC_RESONANCE_IMAGING', 'IMAGING_NMR'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR imaging signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_QUANTITATIVE_ANALYSIS': {
+                'mnemonics': ['QAN', 'QUANTITATIVE_ANALYSIS', 'NMR_QAN', 'QAN_NMR', 'QUANT_ANALYSIS', 'QUANTITATIVE_NMR'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quantitative analysis',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_QUALITY_CONTROL': {
+                'mnemonics': ['QC', 'QUALITY_CONTROL', 'NMR_QC', 'QC_NMR', 'QUALITY_CHECK', 'QC_CHECK'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality control signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'poor': [0, 100], 'good': [100, 1000], 'excellent': [1000, 10000]}
+            },
+            'NMR_CALIBRATION': {
+                'mnemonics': ['CAL', 'CALIBRATION', 'NMR_CAL', 'CAL_NMR', 'CALIBRATION_SIGNAL', 'CAL_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR calibration signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_REFERENCE': {
+                'mnemonics': ['REF', 'REFERENCE', 'NMR_REF', 'REF_NMR', 'REFERENCE_SIGNAL', 'REF_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR reference signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'weak': [0, 100], 'medium': [100, 1000], 'strong': [1000, 10000]}
+            },
+            'NMR_BACKGROUND': {
+                'mnemonics': ['BG', 'BACKGROUND', 'NMR_BG', 'BG_NMR', 'BACKGROUND_SIGNAL', 'BG_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR background signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_NOISE': {
+                'mnemonics': ['NOISE', 'NMR_NOISE', 'NOISE_NMR', 'NOISE_SIGNAL', 'NOISE_LEVEL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR noise signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_ARTIFACT': {
+                'mnemonics': ['ART', 'ARTIFACT', 'NMR_ART', 'ART_NMR', 'ARTIFACT_SIGNAL', 'ART_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR artifact signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_CORRECTION': {
+                'mnemonics': ['CORR', 'CORRECTION', 'NMR_CORR', 'CORR_NMR', 'CORRECTION_SIGNAL', 'CORR_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR correction signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_NORMALIZATION': {
+                'mnemonics': ['NORM', 'NORMALIZATION', 'NMR_NORM', 'NORM_NMR', 'NORMALIZATION_SIGNAL', 'NORM_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR normalization signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_SCALING': {
+                'mnemonics': ['SCALE', 'SCALING', 'NMR_SCALE', 'SCALE_NMR', 'SCALING_SIGNAL', 'SCALE_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR scaling signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_OFFSET': {
+                'mnemonics': ['OFFSET', 'NMR_OFFSET', 'OFFSET_NMR', 'OFFSET_SIGNAL', 'OFFSET_LEVEL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR offset signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_GAIN': {
+                'mnemonics': ['GAIN', 'NMR_GAIN', 'GAIN_NMR', 'GAIN_SIGNAL', 'GAIN_LEVEL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR gain signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_ATTENUATION': {
+                'mnemonics': ['ATT', 'ATTENUATION', 'NMR_ATT', 'ATT_NMR', 'ATTENUATION_SIGNAL', 'ATT_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR attenuation signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_AMPLIFICATION': {
+                'mnemonics': ['AMP', 'AMPLIFICATION', 'NMR_AMP', 'AMP_NMR', 'AMPLIFICATION_SIGNAL', 'AMP_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR amplification signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_FILTERING': {
+                'mnemonics': ['FILT', 'FILTERING', 'NMR_FILT', 'FILT_NMR', 'FILTERING_SIGNAL', 'FILT_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR filtering signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_PROCESSING': {
+                'mnemonics': ['PROC', 'PROCESSING', 'NMR_PROC', 'PROC_NMR', 'PROCESSING_SIGNAL', 'PROC_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR processing signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_ANALYSIS': {
+                'mnemonics': ['ANAL', 'ANALYSIS', 'NMR_ANAL', 'ANAL_NMR', 'ANALYSIS_SIGNAL', 'ANAL_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR analysis signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_INTERPRETATION': {
+                'mnemonics': ['INTERP', 'INTERPRETATION', 'NMR_INTERP', 'INTERP_NMR', 'INTERPRETATION_SIGNAL', 'INTERP_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR interpretation signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_VALIDATION': {
+                'mnemonics': ['VAL', 'VALIDATION', 'NMR_VAL', 'VAL_NMR', 'VALIDATION_SIGNAL', 'VAL_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR validation signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_VERIFICATION': {
+                'mnemonics': ['VER', 'VERIFICATION', 'NMR_VER', 'VER_NMR', 'VERIFICATION_SIGNAL', 'VER_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR verification signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_CALIBRATION_REFERENCE': {
+                'mnemonics': ['CAL_REF', 'CALIBRATION_REFERENCE', 'NMR_CAL_REF', 'CAL_REF_NMR', 'CALIBRATION_REF', 'CAL_REF_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR calibration reference signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_ASSURANCE': {
+                'mnemonics': ['QA', 'QUALITY_ASSURANCE', 'NMR_QA', 'QA_NMR', 'QUALITY_ASSURANCE_SIGNAL', 'QA_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality assurance signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_ASSESSMENT': {
+                'mnemonics': ['QAS', 'QUALITY_ASSESSMENT', 'NMR_QAS', 'QAS_NMR', 'QUALITY_ASSESSMENT_SIGNAL', 'QAS_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality assessment signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_MONITORING': {
+                'mnemonics': ['QM', 'QUALITY_MONITORING', 'NMR_QM', 'QM_NMR', 'QUALITY_MONITORING_SIGNAL', 'QM_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality monitoring signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_CONTROL_REFERENCE': {
+                'mnemonics': ['QC_REF', 'QUALITY_CONTROL_REFERENCE', 'NMR_QC_REF', 'QC_REF_NMR', 'QUALITY_CONTROL_REF', 'QC_REF_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality control reference signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_ASSURANCE_REFERENCE': {
+                'mnemonics': ['QA_REF', 'QUALITY_ASSURANCE_REFERENCE', 'NMR_QA_REF', 'QA_REF_NMR', 'QUALITY_ASSURANCE_REF', 'QA_REF_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality assurance reference signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_ASSESSMENT_REFERENCE': {
+                'mnemonics': ['QAS_REF', 'QUALITY_ASSESSMENT_REFERENCE', 'NMR_QAS_REF', 'QAS_REF_NMR', 'QUALITY_ASSESSMENT_REF', 'QAS_REF_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality assessment reference signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_MONITORING_REFERENCE': {
+                'mnemonics': ['QM_REF', 'QUALITY_MONITORING_REFERENCE', 'NMR_QM_REF', 'QM_REF_NMR', 'QUALITY_MONITORING_REF', 'QM_REF_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality monitoring reference signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_CONTROL_MONITORING': {
+                'mnemonics': ['QC_MON', 'QUALITY_CONTROL_MONITORING', 'NMR_QC_MON', 'QC_MON_NMR', 'QUALITY_CONTROL_MONITORING_SIGNAL', 'QC_MON_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality control monitoring signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_ASSURANCE_MONITORING': {
+                'mnemonics': ['QA_MON', 'QUALITY_ASSURANCE_MONITORING', 'NMR_QA_MON', 'QA_MON_NMR', 'QUALITY_ASSURANCE_MONITORING_SIGNAL', 'QA_MON_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality assurance monitoring signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_ASSESSMENT_MONITORING': {
+                'mnemonics': ['QAS_MON', 'QUALITY_ASSESSMENT_MONITORING', 'NMR_QAS_MON', 'QAS_MON_NMR', 'QUALITY_ASSESSMENT_MONITORING_SIGNAL', 'QAS_MON_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality assessment monitoring signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            'NMR_QUALITY_MONITORING_MONITORING': {
+                'mnemonics': ['QM_MON', 'QUALITY_MONITORING_MONITORING', 'NMR_QM_MON', 'QM_MON_NMR', 'QUALITY_MONITORING_MONITORING_SIGNAL', 'QM_MON_SIGNAL'],
+                'units': ['ARBITRARY', 'COUNTS', 'VOLTAGE', 'V'],
+                'range': [0, 10000],
+                'curve_family': 'nmr',
+                'description': 'NMR quality monitoring monitoring signal',
+                'physics': 'nuclear_magnetic_resonance',
+                'typical_values': {'low': [0, 100], 'medium': [100, 1000], 'high': [1000, 10000]}
+            },
+            
+            # === ADVANCED RESISTIVITY TOOLS ===
+            'ARRAY_INDUCTION_TOOL': {
+                'mnemonics': ['AIT', 'AIT_10', 'AIT_20', 'AIT_30', 'AIT_60', 'AIT_90', 'AIT_120', 'AIT_10IN', 'AIT_20IN', 'AIT_30IN', 'AIT_60IN', 'AIT_90IN', 'AIT_120IN', 'AIT_10INV', 'AIT_20INV', 'AIT_30INV', 'AIT_60INV', 'AIT_90INV', 'AIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Array Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'ARRAY_LATEROLOG_TOOL': {
+                'mnemonics': ['ARI', 'ARI_10', 'ARI_20', 'ARI_30', 'ARI_60', 'ARI_90', 'ARI_120', 'ARI_10IN', 'ARI_20IN', 'ARI_30IN', 'ARI_60IN', 'ARI_90IN', 'ARI_120IN', 'ARI_10INV', 'ARI_20INV', 'ARI_30INV', 'ARI_60INV', 'ARI_90INV', 'ARI_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Array Laterolog Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'HIGH_RESOLUTION_LATEROLOG': {
+                'mnemonics': ['HRLA', 'HRLA_10', 'HRLA_20', 'HRLA_30', 'HRLA_60', 'HRLA_90', 'HRLA_120', 'HRLA_10IN', 'HRLA_20IN', 'HRLA_30IN', 'HRLA_60IN', 'HRLA_90IN', 'HRLA_120IN', 'HRLA_10INV', 'HRLA_20INV', 'HRLA_30INV', 'HRLA_60INV', 'HRLA_90INV', 'HRLA_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'High Resolution Laterolog resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'MULTI_SPACING_RESISTIVITY': {
+                'mnemonics': ['MSR', 'MSR_10', 'MSR_20', 'MSR_30', 'MSR_60', 'MSR_90', 'MSR_120', 'MSR_10IN', 'MSR_20IN', 'MSR_30IN', 'MSR_60IN', 'MSR_90IN', 'MSR_120IN', 'MSR_10INV', 'MSR_20INV', 'MSR_30INV', 'MSR_60INV', 'MSR_90INV', 'MSR_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Multi-Spacing Resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'DUAL_INDUCTION_TOOL': {
+                'mnemonics': ['DIT', 'DIT_10', 'DIT_20', 'DIT_30', 'DIT_60', 'DIT_90', 'DIT_120', 'DIT_10IN', 'DIT_20IN', 'DIT_30IN', 'DIT_60IN', 'DIT_90IN', 'DIT_120IN', 'DIT_10INV', 'DIT_20INV', 'DIT_30INV', 'DIT_60INV', 'DIT_90INV', 'DIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Dual Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'TRIPLE_INDUCTION_TOOL': {
+                'mnemonics': ['TIT', 'TIT_10', 'TIT_20', 'TIT_30', 'TIT_60', 'TIT_90', 'TIT_120', 'TIT_10IN', 'TIT_20IN', 'TIT_30IN', 'TIT_60IN', 'TIT_90IN', 'TIT_120IN', 'TIT_10INV', 'TIT_20INV', 'TIT_30INV', 'TIT_60INV', 'TIT_90INV', 'TIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Triple Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'QUAD_INDUCTION_TOOL': {
+                'mnemonics': ['QIT', 'QIT_10', 'QIT_20', 'QIT_30', 'QIT_60', 'QIT_90', 'QIT_120', 'QIT_10IN', 'QIT_20IN', 'QIT_30IN', 'QIT_60IN', 'QIT_90IN', 'QIT_120IN', 'QIT_10INV', 'QIT_20INV', 'QIT_30INV', 'QIT_60INV', 'QIT_90INV', 'QIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Quad Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'PENTA_INDUCTION_TOOL': {
+                'mnemonics': ['PIT', 'PIT_10', 'PIT_20', 'PIT_30', 'PIT_60', 'PIT_90', 'PIT_120', 'PIT_10IN', 'PIT_20IN', 'PIT_30IN', 'PIT_60IN', 'PIT_90IN', 'PIT_120IN', 'PIT_10INV', 'PIT_20INV', 'PIT_30INV', 'PIT_60INV', 'PIT_90INV', 'PIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Penta Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'HEXA_INDUCTION_TOOL': {
+                'mnemonics': ['HIT', 'HIT_10', 'HIT_20', 'HIT_30', 'HIT_60', 'HIT_90', 'HIT_120', 'HIT_10IN', 'HIT_20IN', 'HIT_30IN', 'HIT_60IN', 'HIT_90IN', 'HIT_120IN', 'HIT_10INV', 'HIT_20INV', 'HIT_30INV', 'HIT_60INV', 'HIT_90INV', 'HIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Hexa Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'OCTO_INDUCTION_TOOL': {
+                'mnemonics': ['OIT', 'OIT_10', 'OIT_20', 'OIT_30', 'OIT_60', 'OIT_90', 'OIT_120', 'OIT_10IN', 'OIT_20IN', 'OIT_30IN', 'OIT_60IN', 'OIT_90IN', 'OIT_120IN', 'OIT_10INV', 'OIT_20INV', 'OIT_30INV', 'OIT_60INV', 'OIT_90INV', 'OIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Octo Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'NONA_INDUCTION_TOOL': {
+                'mnemonics': ['NIT', 'NIT_10', 'NIT_20', 'NIT_30', 'NIT_60', 'NIT_90', 'NIT_120', 'NIT_10IN', 'NIT_20IN', 'NIT_30IN', 'NIT_60IN', 'NIT_90IN', 'NIT_120IN', 'NIT_10INV', 'NIT_20INV', 'NIT_30INV', 'NIT_60INV', 'NIT_90INV', 'NIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Nona Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'DECA_INDUCTION_TOOL': {
+                'mnemonics': ['DIT', 'DIT_10', 'DIT_20', 'DIT_30', 'DIT_60', 'DIT_90', 'DIT_120', 'DIT_10IN', 'DIT_20IN', 'DIT_30IN', 'DIT_60IN', 'DIT_90IN', 'DIT_120IN', 'DIT_10INV', 'DIT_20INV', 'DIT_30INV', 'DIT_60INV', 'DIT_90INV', 'DIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Deca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'UNDECA_INDUCTION_TOOL': {
+                'mnemonics': ['UIT', 'UIT_10', 'UIT_20', 'UIT_30', 'UIT_60', 'UIT_90', 'UIT_120', 'UIT_10IN', 'UIT_20IN', 'UIT_30IN', 'UIT_60IN', 'UIT_90IN', 'UIT_120IN', 'UIT_10INV', 'UIT_20INV', 'UIT_30INV', 'UIT_60INV', 'UIT_90INV', 'UIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Undeca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'DODECA_INDUCTION_TOOL': {
+                'mnemonics': ['DIT', 'DIT_10', 'DIT_20', 'DIT_30', 'DIT_60', 'DIT_90', 'DIT_120', 'DIT_10IN', 'DIT_20IN', 'DIT_30IN', 'DIT_60IN', 'DIT_90IN', 'DIT_120IN', 'DIT_10INV', 'DIT_20INV', 'DIT_30INV', 'DIT_60INV', 'DIT_90INV', 'DIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Dodeca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'TRIDECA_INDUCTION_TOOL': {
+                'mnemonics': ['TIT', 'TIT_10', 'TIT_20', 'TIT_30', 'TIT_60', 'TIT_90', 'TIT_120', 'TIT_10IN', 'TIT_20IN', 'TIT_30IN', 'TIT_60IN', 'TIT_90IN', 'TIT_120IN', 'TIT_10INV', 'TIT_20INV', 'TIT_30INV', 'TIT_60INV', 'TIT_90INV', 'TIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Trideca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'TETRADECA_INDUCTION_TOOL': {
+                'mnemonics': ['TIT', 'TIT_10', 'TIT_20', 'TIT_30', 'TIT_60', 'TIT_90', 'TIT_120', 'TIT_10IN', 'TIT_20IN', 'TIT_30IN', 'TIT_60IN', 'TIT_90IN', 'TIT_120IN', 'TIT_10INV', 'TIT_20INV', 'TIT_30INV', 'TIT_60INV', 'TIT_90INV', 'TIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Tetradeca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'PENTADECA_INDUCTION_TOOL': {
+                'mnemonics': ['PIT', 'PIT_10', 'PIT_20', 'PIT_30', 'PIT_60', 'PIT_90', 'PIT_120', 'PIT_10IN', 'PIT_20IN', 'PIT_30IN', 'PIT_60IN', 'PIT_90IN', 'PIT_120IN', 'PIT_10INV', 'PIT_20INV', 'PIT_30INV', 'PIT_60INV', 'PIT_90INV', 'PIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Pentadeca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'HEXADECA_INDUCTION_TOOL': {
+                'mnemonics': ['HIT', 'HIT_10', 'HIT_20', 'HIT_30', 'HIT_60', 'HIT_90', 'HIT_120', 'HIT_10IN', 'HIT_20IN', 'HIT_30IN', 'HIT_60IN', 'HIT_90IN', 'HIT_120IN', 'HIT_10INV', 'HIT_20INV', 'HIT_30INV', 'HIT_60INV', 'HIT_90INV', 'HIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Hexadeca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'HEPTADECA_INDUCTION_TOOL': {
+                'mnemonics': ['HIT', 'HIT_10', 'HIT_20', 'HIT_30', 'HIT_60', 'HIT_90', 'HIT_120', 'HIT_10IN', 'HIT_20IN', 'HIT_30IN', 'HIT_60IN', 'HIT_90IN', 'HIT_120IN', 'HIT_10INV', 'HIT_20INV', 'HIT_30INV', 'HIT_60INV', 'HIT_90INV', 'HIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Heptadeca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'OCTADECA_INDUCTION_TOOL': {
+                'mnemonics': ['OIT', 'OIT_10', 'OIT_20', 'OIT_30', 'OIT_60', 'OIT_90', 'OIT_120', 'OIT_10IN', 'OIT_20IN', 'OIT_30IN', 'OIT_60IN', 'OIT_90IN', 'OIT_120IN', 'OIT_10INV', 'OIT_20INV', 'OIT_30INV', 'OIT_60INV', 'OIT_90INV', 'OIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Octadeca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'NONADECA_INDUCTION_TOOL': {
+                'mnemonics': ['NIT', 'NIT_10', 'NIT_20', 'NIT_30', 'NIT_60', 'NIT_90', 'NIT_120', 'NIT_10IN', 'NIT_20IN', 'NIT_30IN', 'NIT_60IN', 'NIT_90IN', 'NIT_120IN', 'NIT_10INV', 'NIT_20INV', 'NIT_30INV', 'NIT_60INV', 'NIT_90INV', 'NIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Nonadeca Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
+            },
+            'ICOSA_INDUCTION_TOOL': {
+                'mnemonics': ['IIT', 'IIT_10', 'IIT_20', 'IIT_30', 'IIT_60', 'IIT_90', 'IIT_120', 'IIT_10IN', 'IIT_20IN', 'IIT_30IN', 'IIT_60IN', 'IIT_90IN', 'IIT_120IN', 'IIT_10INV', 'IIT_20INV', 'IIT_30INV', 'IIT_60INV', 'IIT_90INV', 'IIT_120INV'],
+                'units': OHM_M_UNITS,
+                'range': [0.1, 10000],
+                'log_scale': True,
+                'curve_family': 'resistivity',
+                'description': 'Icosa Induction Tool resistivity',
+                'physics': 'electromagnetic_induction',
+                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
             }
         }
     
@@ -6966,7 +7787,11 @@ class IndustryUnitStandardizer:
         conversion_errors = len(self.unit_analysis_results['conversion_errors'])
         
         if conversions_applied > 0 and self.app:
+<<<<<<< HEAD
+            self.app.log_processing(f" Unit standardization completed!")
+=======
             self.app.log_processing(f"Unit standardization completed!")
+>>>>>>> cursor/review-and-improve-polish-for-investor-presentation-0ceb
             self.app.log_processing(f"   Conversions applied: {conversions_applied}")
             if conversion_errors > 0:
                 self.app.log_processing(f"    Conversion errors: {conversion_errors}")
@@ -13544,6 +14369,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 },
                                 'gaps_filled': []
                             }
+                        
                     except Exception as e:
                         self.log_processing(f"Zone-aware gap filling failed for {column}: {e}")
                         self.log_processing("Falling back to standard gap filling...")
@@ -13564,6 +14390,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 curve_name=column
                             )
                             filled_data = gap_result['filled_data']
+                            
                         except Exception as e:
                             self.log_processing(f"Fallback gap filling failed for {column}: {e}")
                             filled_data = data.copy()  # Use original data as fallback
@@ -13580,35 +14407,8 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 else:
                     # Standard gap filling when no zones detected
                     self.log_processing(f"Standard gap filling for {column}...")
-
-                    auxiliary_curves = None
-                    if self.multi_curve_var.get():
-                        auxiliary_curves = {}
-                        for other_col in self.processed_data.columns:
-                            if other_col != column:
-                                auxiliary_curves[other_col] = self.processed_data[other_col].values
-
-                    try:
-                        gap_result = self.gap_filler.fill_gaps(
-                            data,
-                            curve_type,
-                            auxiliary_curves,
-                            curve_name=column
-                        )
-                        filled_data = gap_result['filled_data']
-                    except Exception as e:
-                        self.log_processing(f"Gap filling failed for {column}: {e}")
-                        filled_data = data.copy()  # Use original data as fallback
-                        gap_result = {
-                            'filled_data': filled_data,
-                            'quality_metrics': {
-                                'total_gaps_filled': 0,
-                                'total_points_filled': 0,
-                                'data_completeness': 100.0,
-                                'methods_used': [],
-                                'average_confidence': 1.0
-                            }
-                        }
+                    
+                    # Standard gap filling with correct existing parameters
                     auxiliary_curves = None
                     if self.multi_curve_var.get():
                         auxiliary_curves = {}
@@ -13624,6 +14424,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                             curve_name=column
                         )
                         filled_data = gap_result['filled_data']
+                        
                     except Exception as e:
                         self.log_processing(f"Gap filling failed for {column}: {e}")
                         filled_data = data.copy()  # Use original data as fallback

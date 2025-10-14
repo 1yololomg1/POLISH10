@@ -1,0 +1,22 @@
+[
+  {
+    "fileName": "main-overview.mdc",
+    "description": "Complete system overview documenting the well data preprocessing system architecture, key components, and their interactions"
+  },
+  {
+    "fileName": "well-data-models.mdc",
+    "description": "Detailed documentation of well data structures, including LAS header information, DepthValidationResult dataclass, and well_datasets mapping schemas"
+  },
+  {
+    "fileName": "validation-algorithms.mdc",
+    "description": "Comprehensive documentation of depth validation algorithms, error classification systems, and validation feedback mechanisms"
+  },
+  {
+    "fileName": "state-management.mdc",
+    "description": "Documentation of the state management system, including state cleanup procedures, data flow between components, and multiwell data handling"
+  },
+  {
+    "fileName": "visualization-architecture.mdc",
+    "description": "Technical documentation of the visualization system architecture, memory management patterns, and figure registry implementation"
+  }
+]
