@@ -6514,7 +6514,7 @@ class IndustryUnitStandardizer:
         conversion_errors = len(self.unit_analysis_results['conversion_errors'])
         
         if conversions_applied > 0 and self.app:
-            self.app.log_processing(f"\ Unit standardization completed!")
+            self.app.log_processing(f" Unit standardization completed!")
             self.app.log_processing(f"   Conversions applied: {conversions_applied}")
             if conversion_errors > 0:
                 self.app.log_processing(f"    Conversion errors: {conversion_errors}")
