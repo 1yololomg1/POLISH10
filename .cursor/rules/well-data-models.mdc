@@ -1,10 +1,12 @@
 ---
-description: Specification for well data structures and models handling LAS data, depth validation, and dataset mapping
+description: Defines well data structures including LAS headers, depth validation, and well dataset schemas
 ---
 
-
+# === USER INSTRUCTIONS ===
+---
+description: Specification for well data structures and models handling LAS data, depth validation, and dataset mapping
+---
 # well-data-models
-
 ## LAS Header Information Model
 Essential well identification data extracted and structured from LAS file headers:
 - Well name
@@ -14,10 +16,8 @@ Essential well identification data extracted and structured from LAS file header
 - Date information
 - Depth range details
 - Location coordinates
-
 **Importance Score**: 90
 **File Path**: `advanced_preprocessing_system10.py`
-
 ## DepthValidationResult Data Structure
 Specialized dataclass for validating depth curves with:
 - Validation status
@@ -25,10 +25,8 @@ Specialized dataclass for validating depth curves with:
 - Specific metrics for depth inconsistencies
 - Required remediation steps
 - Data quality indicators
-
 **Importance Score**: 85
 **File Path**: `advanced_preprocessing_system10.py`
-
 ## Well Dataset Mapping
 Well information tracking system that maintains:
 - Current active well state
@@ -36,19 +34,63 @@ Well information tracking system that maintains:
 - Data relationships between wells
 - Status indicators for processing stages
 - Geological feature classifications
-
 **Importance Score**: 80
 **File Path**: `advanced_preprocessing_system10.py`
-
 ## Gap Classification Schema
 Domain-specific logic for categorizing data gaps:
 - Distinction between measurement errors and geological features
 - Configurable thresholds for gap classification
 - Detailed explanation system for identified gaps
 - Remediation guidance based on gap type
-
 **Importance Score**: 85
 **File Path**: `advanced_preprocessing_system10.py`
+$END$
+# === END USER INSTRUCTIONS ===
+
+# well-data-models
+
+### Well Identification Data Structure
+**File Path**: `advanced_preprocessing_system10.py`  
+**Importance Score**: 95
+
+Core data models for well identification and metadata:
+- LAS header information extraction and validation
+- Structured storage of well metadata including location, operator, dates
+- Well identification validation against known patterns
+- Cross-referencing system for well aliases and identifiers
+
+### Depth Validation Model
+**File Path**: `advanced_preprocessing_system10.py`
+**Importance Score**: 90
+
+DepthValidationResult dataclass:
+- Validation status flags
+- Depth range verification
+- Step size consistency checks
+- Gap detection metrics
+- Missing/invalid depth point identification
+- Remediation recommendations
+
+### Well Information Display Schema
+**File Path**: `advanced_preprocessing_system10.py`
+**Importance Score**: 85
+
+Data structure for well identification card:
+- Color-coded status indicators
+- Required metadata fields
+- Warning/error status tracking
+- Real-time validation state
+
+### Multiwell Dataset Mapping
+**File Path**: `advanced_preprocessing_system10.py`
+**Importance Score**: 80
+
+Schema for managing multiple wells:
+- Active well pointer system
+- Well state tracking
+- Processing status mapping
+- Cross-well validation rules
+- Export configuration templates
 
 $END$
 

@@ -1,16 +1,17 @@
 ---
-description: Specification for advanced depth validation algorithms and error handling in wireline data preprocessing
+description: Documentation and analysis of depth validation algorithms, error classification, and validation feedback systems
 ---
 
-
+# === USER INSTRUCTIONS ===
+---
+description: Specification for advanced depth validation algorithms and error handling in wireline data preprocessing
+---
 # validation-algorithms
-
 ### Depth Validation System
 - Implements comprehensive validation of depth curves with detailed failure analysis
 - Provides specific error classifications and remediation guidance
 - Importance Score: 85
 - File: `advanced_preprocessing_system10.py`
-
 ### Error Classification Framework
 1. Gap Analysis
 - Distinguishes between data errors and geological features
@@ -18,7 +19,6 @@ description: Specification for advanced depth validation algorithms and error ha
 - Provides detailed explanations for each gap type
 - Importance Score: 85
 - File: `advanced_preprocessing_system10.py`
-
 2. Validation Feedback
 - Generates detailed feedback reports with:
   - Specific failure reasons
@@ -27,7 +27,6 @@ description: Specification for advanced depth validation algorithms and error ha
 - Designed to guide users through data correction process
 - Importance Score: 85
 - File: `advanced_preprocessing_system10.py`
-
 ### Error Handling Enhancement
 - Replaces silent error suppressions with explicit warnings
 - Implements comprehensive logging system
@@ -35,13 +34,64 @@ description: Specification for advanced depth validation algorithms and error ha
 - Ensures full visibility of validation issues
 - Importance Score: 95
 - File: `advanced_preprocessing_system10.py`
-
 ### Validation States
 - Maintains clear validation state indicators
 - Color-coded status display in UI
 - Prevents cross-contamination between wells
 - Importance Score: 80
 - File: `advanced_preprocessing_system10.py`
+$END$
+# === END USER INSTRUCTIONS ===
+
+# validation-algorithms
+
+## Depth Validation System
+**File**: `advanced_preprocessing_system10.py`
+**Importance Score**: 95
+
+The depth validation system implements critical safety checks for well data processing:
+
+1. Detailed Feedback Mechanism
+- Replaces silent validation failures with comprehensive error messages
+- Provides specific metrics about validation failures
+- Includes step-by-step remediation instructions
+- Generates validation reports with failure reasons
+
+2. Error Classification System
+- Enhanced `categorize_error()` method for depth-related issues
+- User-friendly message generation for each error category
+- Specific remediation steps by error type
+- Prioritized handling of validation failures
+
+## Unit Validation Framework
+**File**: `advanced_preprocessing_system10.py`
+**Importance Score**: 85
+
+Implements safety checks for unit conversions:
+- Mandatory user confirmation before unit conversions
+- Preview dialog showing conversion details
+- Warning system for potentially problematic conversions
+- Validation of unit compatibility
+
+## Well Information Validation
+**File**: `advanced_preprocessing_system10.py`
+**Importance Score**: 80
+
+Validates well identification and metadata:
+- LAS header extraction and validation
+- Well information verification
+- Cross-reference checking between data sets
+- Prevention of cross-contamination between wells
+
+## State Validation System
+**File**: `advanced_preprocessing_system10.py`
+**Importance Score**: 75
+
+Ensures data integrity through:
+- Comprehensive state validation before processing
+- Verification of geological context
+- Validation of curve information
+- Clean state confirmation between well changes
 
 $END$
 

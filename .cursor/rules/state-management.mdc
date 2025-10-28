@@ -1,63 +1,100 @@
 ---
-description: Specification for managing application state, well data persistence, and component data flow
+description: Documentation for application state management focusing on multiwell data handling and state cleanup procedures
 ---
 
-
+# === USER INSTRUCTIONS ===
+---
+description: Specification for managing application state, well data persistence, and component data flow
+---
 # State Management
-
 ### Core State Components
-
 1. Well State Management
 - Maintains current well context and metadata
 - Prevents cross-contamination between multiple wells
 - Importance Score: 85
 - File Path: `advanced_preprocessing_system10.py`
-
 2. State Cleanup Procedures
 - Comprehensive reset mechanism for all data structures
 - Clears well identification and processing states
 - Validates state consistency after cleanup
 - Importance Score: 80
 - File Path: `advanced_preprocessing_system10.py`
-
 3. Multiwell Data Handling
 - Independent state management for each loaded well
 - Supports collective and individual well processing
 - Maintains isolated processing contexts
 - Importance Score: 80
 - File Path: `advanced_preprocessing_system10.py`
-
 ### State-Driven UI Components
-
 1. Well Information Display
 - Color-coded status indicators reflect current well state
 - Updates UI card with active well metadata
 - Visual confirmation of processing state
 - Importance Score: 70
 - File Path: `advanced_preprocessing_system10.py`
-
 2. Unit Conversion State
 - Manages conversion approval workflow
 - Preserves conversion history per well
 - Tracks applied transformations
 - Importance Score: 75
 - File Path: `advanced_preprocessing_system10.py`
-
 ### Data Flow Control
-
 1. Depth Validation State
 - Tracks validation status and failure reasons
 - Maintains remediation steps per well
 - Preserves validation history
 - Importance Score: 85
 - File Path: `advanced_preprocessing_system10.py`
-
 2. Gap Classification State
 - Maintains geological feature classifications
 - Tracks error conditions vs natural features
 - Stores threshold configurations
 - Importance Score: 85
 - File Path: `advanced_preprocessing_system10.py`
+$END$
+# === END USER INSTRUCTIONS ===
+
+# state-management
+
+### State Cleanup System
+**File Path**: `advanced_preprocessing_system10.py`
+**Importance Score**: 95
+
+A comprehensive state reset mechanism preventing cross-contamination between well data processing:
+- Clears all state variables related to well data
+- Resets curve information and processing results
+- Purges geological context data
+- Ensures clean slate for new well processing
+
+### Multiwell State Management
+**File Path**: `advanced_preprocessing_system10.py`
+**Importance Score**: 85
+
+System for handling multiple well states simultaneously:
+- Maintains separate state containers for each loaded well
+- Implements active well selection and switching
+- Preserves processing state for each well independently
+- Manages concurrent well data processing states
+
+### Well Information State
+**File Path**: `advanced_preprocessing_system10.py`
+**Importance Score**: 80
+
+State management for well identification and metadata:
+- Extracts and maintains well information from LAS headers
+- Updates UI components with current well state
+- Manages color-coded well identification displays
+- Maintains well context across processing operations
+
+### Unit Conversion State
+**File Path**: `advanced_preprocessing_system10.py`
+**Importance Score**: 75
+
+Tracks and manages unit conversion states:
+- Maintains conversion approval status
+- Stores preview information for conversions
+- Manages user confirmation states
+- Preserves original and converted unit information
 
 $END$
 

@@ -1,33 +1,62 @@
 ---
-description: Technical specification for analyzing visualization system architecture and figure registry implementations
+description: Architectural specification for visualization system including memory management and figure registry
 ---
 
-
+# === USER INSTRUCTIONS ===
+---
+description: Technical specification for analyzing visualization system architecture and figure registry implementations
+---
 # visualization-architecture
-
 Based on the technical specification, the visualization architecture primarily focuses on well information display and state management.
-
 ### Well Information Display Architecture
 - Implements a visualization card system for displaying well metadata
 - Uses color-coded status indicators for active well confirmation
 - Displays key well attributes (name, UWI, field, depth range) in window titles and report headers
 - **Importance Score**: 80
-
 ### Multi-Well Visualization Management 
 - Maintains separate visualization contexts for multiple loaded wells
 - Enables individual or collective well data visualization 
 - Includes state isolation to prevent cross-contamination between well displays
 - **Importance Score**: 75
-
 ### Validation Feedback Visualization
 - Renders detailed depth validation feedback with specific failure metrics
 - Displays unit conversion previews through dedicated dialog interfaces
 - Provides visual indicators for gap classification results
 - **Importance Score**: 70
-
 The visualization architecture integrates closely with the well identification system to maintain consistent visual representation of well data across the application interface.
-
 File Path: `advanced_preprocessing_system10.py`
+$END$
+# === END USER INSTRUCTIONS ===
+
+# visualization-architecture
+
+### Figure Registry and Memory Management
+**File**: `advanced_preprocessing_system10.py`
+**Importance Score**: 80
+
+The visualization architecture implements a specialized memory management system for handling figure objects:
+
+1. Figure Registry
+- Maintains centralized tracking of all visualization objects
+- Replaces direct matplotlib show() calls with managed Toplevel windows
+- Provides controlled cleanup of visualization resources
+
+2. Window Management
+- Implements Toplevel window containers for plot isolation
+- Prevents memory leaks from orphaned figure objects
+- Enables proper disposal of visualization resources between well analyses
+
+3. Well Information Display
+- Integrates color-coded well identification cards in Data Tab
+- Provides persistent visual confirmation of active well context
+- Ensures visualization context safety across multiple wells
+
+4. Display State Management
+- Implements comprehensive state cleanup for visualization objects
+- Prevents cross-contamination of display elements between wells
+- Handles unit conversion preview displays with user confirmation dialogs
+
+The visualization system specifically focuses on maintaining visualization context safety when working with multiple wells, ensuring proper resource cleanup, and providing clear visual indicators for well identification during analysis sessions.
 
 $END$
 

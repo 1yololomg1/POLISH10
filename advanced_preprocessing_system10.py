@@ -7257,6 +7257,9 @@ class AdvancedPreprocessingApplication:
         self.standardize_units_var = tk.BooleanVar(value=True)
         self.output_format_var = tk.StringVar(value="Company Standard")
         self.large_gap_var = tk.StringVar(value="formation_based")
+        # Threshold (in points) beyond which gaps are considered "large"
+        # Used by gap filling logic and bound to the UI entry in the Gap Filling tab
+        self.large_gap_threshold_var = tk.IntVar(value=1000)
         # Sync depth spacing default based on detected depth unit (m or ft)
         try:
             self._sync_depth_spacing_default()
@@ -13422,7 +13425,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 self.log_processing(f"Detected scale type for {column}: {scale_type}")
                 
             # Step 2: Zone-aware gap filling (if zones detected)
-            if zones and 'DEPT' in self.processed_data.columns:
+                if zones and 'DEPT' in self.processed_data.columns:
                     self.log_processing(f"Zone-aware gap filling for {column}...")
                     
                     depth_data = self.processed_data['DEPT'].values
@@ -13546,34 +13549,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                 'average_confidence': 1.0
                             }
                         }
-                    auxiliary_curves = None
-                    if self.multi_curve_var.get():
-                        auxiliary_curves = {}
-                        for other_col in self.processed_data.columns:
-                            if other_col != column:
-                                auxiliary_curves[other_col] = self.processed_data[other_col].values
-
-                    try:
-                        gap_result = self.gap_filler.fill_gaps(
-                            data, 
-                            curve_type, 
-                            auxiliary_curves,
-                            curve_name=column
-                        )
-                        filled_data = gap_result['filled_data']
-                    except Exception as e:
-                        self.log_processing(f"Gap filling failed for {column}: {e}")
-                        filled_data = data.copy()  # Use original data as fallback
-                        gap_result = {
-                            'filled_data': filled_data,
-                            'quality_metrics': {
-                                'total_gaps_filled': 0,
-                                'total_points_filled': 0, 
-                                'data_completeness': 100.0,
-                                'methods_used': [],
-                                'average_confidence': 1.0
-                            }
-                        }
+                    # Duplicate standard gap-filling block removed to prevent double execution
 
                 # Optional PASS 2: Cross-well prior-constrained refinement
                 try:
@@ -16293,6 +16269,91 @@ This ensures consistent data interpretation and fixes depth validation issues.
         except:
             return np.arange(100)  # Fallback
     
+    def _create_popup_visualization(self, viz_type, curve):
+        """Open the requested visualization in a separate matplotlib popup window.
+
+        Routes to the appropriate popup plotting helper and shows the figure.
+        """
+        try:
+            import matplotlib.pyplot as plt
+
+            # Choose a reasonable default figure size per viz type
+            size_map = {
+                'single_curve': (12, 9),
+                'single_curve_comparison': (14, 9),
+                'comparison': (12, 9),
+                'log_display': (16, 9),
+                'quality_overview': (14, 10),
+                'correlation_matrix': (12, 12),
+                'scatter_plot': (12, 9),
+                '3d_visualization': (12, 10),
+                'multi_curve': (16, 10),
+                'unprocessed_curves': (14, 9),
+                'curve_comparison_all': (16, 10),
+                'uncertainty': (12, 9)
+            }
+            figsize = size_map.get(viz_type, (12, 9))
+
+            # Add well identification to window title for safety
+            well_text = ""
+            try:
+                if hasattr(self, 'well_info') and self.well_info:
+                    well_name = self.well_info.get('well_name', '')
+                    if well_name and well_name != 'UNKNOWN':
+                        well_text = f" (Well: {well_name})"
+            except Exception:
+                pass
+
+            title_curve = curve if curve else 'Multiple Curves'
+            fig = plt.figure(figsize=figsize, num=f"{viz_type} - {title_curve}{well_text}")
+
+            # Route to appropriate popup plot helper
+            if viz_type == 'single_curve_comparison':
+                self._plot_single_curve_comparison_popup(fig)
+            elif viz_type == 'comparison':
+                self._plot_comparison_popup(fig, curve)
+            elif viz_type == 'multi_curve':
+                self._plot_multi_curve_popup(fig)
+            elif viz_type == 'log_display':
+                self._plot_log_display_popup(fig)
+            elif viz_type == 'quality_overview':
+                self._plot_quality_overview_popup(fig)
+            elif viz_type == 'unprocessed_curves':
+                self._plot_unprocessed_curves_popup(fig)
+            elif viz_type == 'single_curve':
+                # Minimal single-curve popup using current/processed data
+                ax = fig.add_subplot(111)
+                depth = self._get_depth_array()
+                if curve in getattr(self, 'processing_results', {}) and 'final_data' in self.processing_results[curve]:
+                    data = self.processing_results[curve]['final_data']
+                    color, status = 'blue', 'Processed'
+                elif hasattr(self, 'current_data') and self.current_data is not None and curve in self.current_data.columns:
+                    data = self.current_data[curve].values
+                    color, status = 'red', 'Original'
+                else:
+                    raise ValueError(f"Selected curve '{curve}' not found in available data")
+                ax.plot(data, depth, color=color, linewidth=2, label=status)
+                ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
+                ax.set_ylabel('Depth (m)')
+                ax.set_title(f"{curve} - {status}", fontsize=14, fontweight='bold')
+                ax.invert_yaxis()
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+                fig.tight_layout()
+            else:
+                # Fallback: indicate unsupported popup type
+                ax = fig.add_subplot(111)
+                ax.text(0.5, 0.5, f"Popup not implemented for '{viz_type}'. Use embedded mode.",
+                        ha='center', va='center')
+                ax.axis('off')
+                fig.tight_layout()
+
+            # Display popup window
+            plt.show()
+
+        except Exception as e:
+            messagebox.showerror("Visualization Error", f"Failed to open popup visualization:\n{str(e)}")
+
     # ============================================================================
     # ENHANCED VISUALIZATION CONTROLLER
     # ============================================================================

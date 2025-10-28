@@ -1,3 +1,55 @@
+# === USER INSTRUCTIONS ===
+# main-overview
+## Development Guidelines
+- Only modify code directly relevant to the specific request. Avoid changing unrelated functionality.
+- Never replace code with placeholders like `# ... rest of the processing ...`. Always include complete code.
+- Break problems into smaller steps. Think through each step separately before implementing.
+- Always provide a complete PLAN with REASONING based on evidence from code and logs before making changes.
+- Explain your OBSERVATIONS clearly, then provide REASONING to identify the exact issue. Add console logs when needed to gather more information.
+The wireline data preprocessing system implements specialized business logic for handling well data validation and management:
+### Core Well Management Components
+- **Well Identification Processing** (Importance: 90)
+  - Extracts and validates critical well metadata from LAS headers
+  - Processes well name, UWI, field, company, date, depth range, location
+  - Implements safeguards against well data confusion
+  - Location: `advanced_preprocessing_system10.py`
+- **Data Validation Framework** (Importance: 85)
+  - Specialized depth curve validation with detailed failure analysis
+  - Geological feature detection and gap classification 
+  - Configurable threshold-based validation rules
+  - Location: `advanced_preprocessing_system10.py`
+### Safety and Data Integrity
+- **State Management** (Importance: 80)
+  - Comprehensive well state isolation
+  - Cross-contamination prevention between wells
+  - Reset mechanisms for data structures
+  - Location: `advanced_preprocessing_system10.py`
+- **Unit Conversion Controls** (Importance: 75)
+  - User-approved conversion workflows
+  - Conversion preview capabilities
+  - Detailed conversion documentation
+  - Location: `advanced_preprocessing_system10.py`
+### Multi-Well Processing
+- **Multi-Well Operations** (Importance: 80)
+  - Individual and batch well processing
+  - Well-specific processing controls
+  - Session-based well management
+  - Location: `advanced_preprocessing_system10.py`
+### Error Handling
+- **Enhanced Error Processing** (Importance: 95)
+  - Explicit warning system
+  - Detailed error logging
+  - Removal of silent error suppression
+  - Location: `advanced_preprocessing_system10.py`
+### Data Analysis
+- **Gap Analysis System** (Importance: 85)
+  - Distinction between data errors and geological features
+  - Threshold-based classification
+  - Remediation guidance
+  - Location: `advanced_preprocessing_system10.py`
+$END$
+# === END USER INSTRUCTIONS ===
+
 
 # main-overview
 
@@ -10,59 +62,59 @@
 - Explain your OBSERVATIONS clearly, then provide REASONING to identify the exact issue. Add console logs when needed to gather more information.
 
 
-The wireline data preprocessing system implements specialized business logic for handling well data validation and management:
+### Core Safety Systems
+**Importance Score**: 100
+Located in `advanced_preprocessing_system10.py`
 
-### Core Well Management Components
+The system implements critical safety features for well data processing:
 
-- **Well Identification Processing** (Importance: 90)
-  - Extracts and validates critical well metadata from LAS headers
-  - Processes well name, UWI, field, company, date, depth range, location
-  - Implements safeguards against well data confusion
-  - Location: `advanced_preprocessing_system10.py`
+1. Well Identification System
+- Extracts well information from LAS headers
+- Displays well data in window titles and UI cards
+- Prevents well confusion through visual confirmation
 
-- **Data Validation Framework** (Importance: 85)
-  - Specialized depth curve validation with detailed failure analysis
-  - Geological feature detection and gap classification 
-  - Configurable threshold-based validation rules
-  - Location: `advanced_preprocessing_system10.py`
+2. Depth Validation
+- Provides detailed error messaging for validation failures
+- Includes specific metrics and remediation steps
+- Prevents incorrect data processing
 
-### Safety and Data Integrity
+3. State Cleanup
+- Prevents cross-contamination between wells
+- Clears all state variables including:
+  - Data storage
+  - Curve information
+  - Processing results
+  - Geological context
 
-- **State Management** (Importance: 80)
-  - Comprehensive well state isolation
-  - Cross-contamination prevention between wells
-  - Reset mechanisms for data structures
-  - Location: `advanced_preprocessing_system10.py`
+4. Unit Conversion Safety
+- Requires explicit user approval for conversions
+- Shows preview dialog with conversion details
+- Prevents accidental data corruption
 
-- **Unit Conversion Controls** (Importance: 75)
-  - User-approved conversion workflows
-  - Conversion preview capabilities
-  - Detailed conversion documentation
-  - Location: `advanced_preprocessing_system10.py`
+### Error Management Architecture
+**Importance Score**: 90
+Located in `advanced_preprocessing_system10.py`
 
-### Multi-Well Processing
+- Replaces silent error suppression with explicit warnings
+- Implements categorized error handling system
+- Provides user-friendly messages with remediation steps
 
-- **Multi-Well Operations** (Importance: 80)
-  - Individual and batch well processing
-  - Well-specific processing controls
-  - Session-based well management
-  - Location: `advanced_preprocessing_system10.py`
+### Visualization System
+**Importance Score**: 80
+Located in `advanced_preprocessing_system10.py`
 
-### Error Handling
+- Implements figure registry for visualization cleanup
+- Uses Toplevel windows for display management
+- Manages memory allocation for visualization components
 
-- **Enhanced Error Processing** (Importance: 95)
-  - Explicit warning system
-  - Detailed error logging
-  - Removal of silent error suppression
-  - Location: `advanced_preprocessing_system10.py`
+### Multi-well Processing
+**Importance Score**: 70
+Located in `advanced_preprocessing_system10.py`
 
-### Data Analysis
-
-- **Gap Analysis System** (Importance: 85)
-  - Distinction between data errors and geological features
-  - Threshold-based classification
-  - Remediation guidance
-  - Location: `advanced_preprocessing_system10.py`
+- Supports multiple well analysis in single session
+- Manages active well selection
+- Enables sequential processing of multiple wells
+- Handles bulk LAS file exports
 
 $END$
 
