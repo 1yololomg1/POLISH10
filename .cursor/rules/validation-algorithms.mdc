@@ -1,5 +1,5 @@
 ---
-description: Documentation and analysis of depth validation algorithms, error classification, and validation feedback systems
+description: Specifications for petrophysical data validation algorithms and quality control mechanisms
 ---
 
 # === USER INSTRUCTIONS ===
@@ -45,53 +45,52 @@ $END$
 
 # validation-algorithms
 
-## Depth Validation System
-**File**: `advanced_preprocessing_system10.py`
-**Importance Score**: 95
+## Core Validation Components
 
-The depth validation system implements critical safety checks for well data processing:
+### Quality Threshold System
+File: petrophysics/constants.py
+- Formation-specific quality thresholds for porosity validation
+- Curve-specific data quality assessment criteria
+- Industry-validated ranges for lithology densities
+- Regional parameter validation rules for different geological settings
+Importance Score: 95/100
 
-1. Detailed Feedback Mechanism
-- Replaces silent validation failures with comprehensive error messages
-- Provides specific metrics about validation failures
-- Includes step-by-step remediation instructions
-- Generates validation reports with failure reasons
+### Standardization Validation
+File: core/reporting.py
+- Validation of unit conversions and fractional standardizations
+- Curve identification confidence scoring
+- Quality metrics generation for standardization processes
+- Validation of naming conventions and conflict resolution
+Importance Score: 85/100
 
-2. Error Classification System
-- Enhanced `categorize_error()` method for depth-related issues
-- User-friendly message generation for each error category
-- Specific remediation steps by error type
-- Prioritized handling of validation failures
+## Validation Rules
 
-## Unit Validation Framework
-**File**: `advanced_preprocessing_system10.py`
-**Importance Score**: 85
+### Formation-Specific Validation
+- Quality thresholds customized per geological formation
+- Depth-dependent validation criteria
+- Regional Archie parameter validation
+Importance Score: 90/100
 
-Implements safety checks for unit conversions:
-- Mandatory user confirmation before unit conversions
-- Preview dialog showing conversion details
-- Warning system for potentially problematic conversions
-- Validation of unit compatibility
+### Data Quality Assessment
+- Industry-standard quality control criteria
+- Gap validation methodologies
+- Cross-reference validation between related curves
+Importance Score: 85/100
 
-## Well Information Validation
-**File**: `advanced_preprocessing_system10.py`
-**Importance Score**: 80
+### Unit Validation
+- Standardized unit conversion validation
+- Fractional standardization verification
+- Naming convention compliance checks
+Importance Score: 80/100
 
-Validates well identification and metadata:
-- LAS header extraction and validation
-- Well information verification
-- Cross-reference checking between data sets
-- Prevention of cross-contamination between wells
+## Feedback Mechanisms
 
-## State Validation System
-**File**: `advanced_preprocessing_system10.py`
-**Importance Score**: 75
-
-Ensures data integrity through:
-- Comprehensive state validation before processing
-- Verification of geological context
-- Validation of curve information
-- Clean state confirmation between well changes
+### Quality Reporting
+- Detailed standardization reports
+- Quality metrics tracking
+- Audit trail generation
+- Validation conflict documentation
+Importance Score: 85/100
 
 $END$
 

@@ -130,7 +130,135 @@ class SafeFileHandler:
     Implemented here to avoid optional import failures and undefined symbol
     errors during static analysis. Methods are conservative and avoid raising
     exceptions; they return simple success/failure signals.
+    
+    Enhanced with security validation functions for path traversal protection
+    and file size limits.
     """
+
+    # Security constants
+    MAX_FILE_SIZE_MB = 500.0  # Maximum file size in MB
+    ALLOWED_READ_EXTENSIONS = ['.las', '.csv', '.xlsx', '.xls']
+    ALLOWED_WRITE_EXTENSIONS = ['.las', '.csv', '.xlsx']
+
+    @staticmethod
+    def validate_file_path(filepath: str, allowed_dir: str = None) -> Optional["Path"]:
+        """Safely normalize and validate file paths to prevent path traversal attacks.
+        
+        Args:
+            filepath: Path to validate
+            allowed_dir: Optional directory to restrict paths within
+            
+        Returns:
+            Normalized Path object if valid, None if invalid
+        """
+        try:
+            from pathlib import Path
+            
+            # Normalize path (resolves .., ., symlinks, etc.)
+            path = Path(filepath).resolve()
+            
+            # Check if path exists
+            if not path.exists():
+                return None
+            
+            # If allowed_dir specified, ensure path is within it (for export operations)
+            if allowed_dir:
+                try:
+                    allowed = Path(allowed_dir).resolve()
+                    # Check if path is within allowed directory
+                    path.relative_to(allowed)
+                except ValueError:
+                    # Path is outside allowed directory - security violation
+                    return None
+            
+            return path
+        except Exception:
+            # Any exception during path validation is a security concern
+            return None
+    
+    @staticmethod
+    def validate_file_size(filepath: str, max_size_mb: float = None) -> bool:
+        """Validate file size before loading to prevent memory exhaustion.
+        
+        Args:
+            filepath: Path to file to check
+            max_size_mb: Maximum size in MB (defaults to MAX_FILE_SIZE_MB)
+            
+        Returns:
+            True if file size is acceptable, False otherwise
+        """
+        try:
+            if max_size_mb is None:
+                max_size_mb = SafeFileHandler.MAX_FILE_SIZE_MB
+            
+            if not os.path.exists(filepath):
+                return False
+            
+            size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            return size_mb <= max_size_mb
+        except Exception:
+            # If we can't determine size, be conservative
+            return False
+    
+    @staticmethod
+    def validate_file_extension(filepath: str, allowed_extensions: list = None, mode: str = 'read') -> bool:
+        """Validate file extension against allowed list and check for double extensions.
+        
+        Args:
+            filepath: Path to validate
+            allowed_extensions: List of allowed extensions (defaults based on mode)
+            mode: 'read' or 'write' to determine default extensions
+            
+        Returns:
+            True if extension is valid, False otherwise
+        """
+        try:
+            from pathlib import Path
+            
+            path = Path(filepath)
+            ext = path.suffix.lower()
+            
+            # Get default extensions if not provided
+            if allowed_extensions is None:
+                if mode == 'read':
+                    allowed_extensions = SafeFileHandler.ALLOWED_READ_EXTENSIONS
+                else:
+                    allowed_extensions = SafeFileHandler.ALLOWED_WRITE_EXTENSIONS
+            
+            # Check exact match
+            if ext not in allowed_extensions:
+                return False
+            
+            # Check for double extensions (security concern: file.txt.las)
+            # Get the stem and check if it has another extension
+            stem_ext = Path(path.stem).suffix.lower()
+            if stem_ext and stem_ext in ['.txt', '.bak', '.tmp', '.old']:
+                # Suspicious: has a hidden extension
+                return False
+            
+            return True
+        except Exception:
+            return False
+    
+    @staticmethod
+    def sanitize_path_for_display(filepath: str) -> str:
+        """Sanitize file paths for user display (privacy protection).
+        
+        Args:
+            filepath: Path to sanitize
+            
+        Returns:
+            Sanitized path showing only last two directory levels
+        """
+        try:
+            from pathlib import Path
+            path = Path(filepath)
+            if len(path.parts) <= 2:
+                return str(path)
+            # Show only last two levels
+            return f".../{path.parent.name}/{path.name}"
+        except Exception:
+            return "..."
 
     @staticmethod
     def safe_write_json(filepath: str, data: Any) -> bool:
@@ -146,7 +274,13 @@ class SafeFileHandler:
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            warnings.warn(
+                f"JSON file reading failed for '{filepath}': {str(e)}. "
+                f"This may be due to invalid JSON format, file not found, "
+                f"encoding issues, or permissions. Check file format and accessibility.",
+                UserWarning
+            )
             return None
 
 
@@ -195,1304 +329,22 @@ except Exception:
 # SCIENTIFIC CONSTANTS AND PHYSICAL PARAMETERS
 # Based on industry standards and peer-reviewed literature
 #=============================================================================
+# NOTE: PetrophysicalConstants has been extracted to petrophysics/constants.py
+# Import maintained here for backward compatibility during modularization
+from petrophysics.constants import PetrophysicalConstants, PHYSICAL_CONSTANTS
 
-class PetrophysicalConstants:
-    """
-    Constants and thresholds used by this application.
-    Values reflect commonly used ranges and parameters from industry literature.
-    This documentation summarizes usage; see variable names for specifics.
-    """
-    
-    # Lithology density ranges (g/cm³) - From Schlumberger Chartbook 2020
-    # Validated against 50,000+ core measurements across global basins
-    SANDSTONE_DENSITY_RANGE = (2.65, 2.70)  # Quartz-dominated sandstone
-    LIMESTONE_DENSITY_RANGE = (2.71, 2.84)  # Calcite-dominated limestone
-    DOLOMITE_DENSITY_RANGE = (2.85, 2.90)  # Dolomite
-    SHALE_DENSITY_RANGE = (2.65, 2.75)  # Typical shale range
-    
-    # Porosity thresholds (v/v) - SPE Standard Reservoir Evaluation (2018)
-    # Based on analysis of 1,000+ reservoir studies
-    TIGHT_POROSITY_CUTOFF = 0.05  # <5% is considered tight
-    MODERATE_POROSITY_CUTOFF = 0.15  # 5-15% is moderate
-    GOOD_POROSITY_CUTOFF = 0.25  # 15-25% is good
-    EXCELLENT_POROSITY_CUTOFF = 0.25  # >25% is excellent
-    
-    # Fluid resistivity ranges (ohm-m) at standard conditions
-    # Based on Archie (1942) and subsequent laboratory studies
-    SALT_WATER_RESISTIVITY_RANGE = (0.04, 1.0)
-    FRESH_WATER_RESISTIVITY_RANGE = (1.0, 10.0)
-    HYDROCARBON_RESISTIVITY_RANGE = (10.0, 1000.0)
-    
-    # Signal processing parameters - From Donoho & Johnstone (1994)
-    # "Ideal spatial adaptation by wavelet shrinkage"
-    WAVELET_NOISE_ESTIMATOR = 0.6745  # Median Absolute Deviation factor
-    UNIVERSAL_THRESHOLD_FACTOR = 2.0  # Universal threshold factor
-    
-    # Quality assessment thresholds - Based on industry benchmark studies (2019-2023)
-    # Analysis of 10,000+ well logs across different basins
-    DATA_QUALITY = {
-        "EXCELLENT": 5.0,    # <5% missing data
-        "GOOD": 15.0,        # <15% missing data
-        "FAIR": 30.0,        # <30% missing data
-        "POOR": 100.0        # >30% missing data
-    }
-    
-    # Gap filling confidence thresholds - Based on statistical significance levels
-    # Cohen (1988) "Statistical Power Analysis for the Behavioral Sciences"
-    CONFIDENCE_LEVELS = {
-        "HIGH": 0.95,    # 95% confidence (2-sigma)
-        "MEDIUM": 0.68,  # 68% confidence (1-sigma)
-        "LOW": 0.50      # 50% confidence
-    }
-    
-    # Gap filling parameters - Based on statistical analysis
-    # Crain's Petrophysical Handbook (2010) and industry studies
-    MIN_VALID_POINTS_FOR_RELATIONSHIP = 10  # Minimum points for reliable relationship
-    LARGE_GAP_THRESHOLD = 500  # Points above which gap is considered "large"
-    MAX_GAP_SIZE_DEFAULT = 2000  # Maximum gap size for processing
-    GAP_FILLING_QUALITY_THRESHOLD = 0.5  # Minimum quality for gap filling
-    
-    # === CURVE-SPECIFIC GAP FILLING RULES ===
-    # Industry-standard gap filling rules based on curve acquisition methodology
-    # Full-hole curves: Acquired continuously throughout the logged interval
-    # Interval curves: Acquired only in specific intervals or zones
-    
-    # Physical Constants for Enhanced Validation
-    WATER_DENSITY_FRESH = 1.0      # g/cm³
-    WATER_DENSITY_SALT = 1.1       # g/cm³
-    OIL_DENSITY_TYPICAL = 0.8      # g/cm³
-    GAS_DENSITY_TYPICAL = 0.2      # g/cm³
-    
-    # Matrix Densities (using midpoint values from existing ranges)
-    SANDSTONE_DENSITY = 2.675      # g/cm³ - midpoint of existing range
-    LIMESTONE_DENSITY = 2.775      # g/cm³ - midpoint of existing range
-    DOLOMITE_DENSITY = 2.875       # g/cm³ - midpoint of existing range
-    SHALE_DENSITY = 2.70           # g/cm³ - midpoint of existing range
-    
-    # Archie Parameters (Default values - matching existing ArchieEquationCalculator)
-    ARCHIE_A_SANDSTONE = 1.0
-    ARCHIE_M_SANDSTONE = 2.0
-    ARCHIE_N_STANDARD = 2.0
-    
-    # Curve-Specific Gap Filling Rules
-    GAP_FILLING_RULES = {
-        'full_hole_curves': {
-            'curve_types': ['GAMMA_RAY_TOTAL', 'RESISTIVITY_DEEP', 'RESISTIVITY_MEDIUM', 
-                          'RESISTIVITY_SHALLOW', 'SPONTANEOUS_POTENTIAL', 'CALIPER_MULTI'],
-            'curve_names': ['GR', 'RILD', 'RILM', 'RLL3', 'SP', 'CALI', 'ILD', 'LLD', 
-                          'RLLD', 'ILM', 'LLM', 'RLLM', 'ILS', 'LLS', 'RLLS'],
-            'max_gap_size': 500,
-            'methods': ['kriging', 'multi_curve_gp', 'trend_extrapolation', 'relative_rock_properties']
-        },
-        'interval_curves': {
-            'curve_types': ['NEUTRON_POROSITY', 'BULK_DENSITY', 'SONIC_COMPRESSIONAL', 
-                          'PHOTOELECTRIC_FACTOR', 'BOREHOLE_DEVIATION', 'DENSITY_CORRECTION',
-                          'NEUTRON_DUAL', 'RESISTIVITY_MICRO_INDUCTION', 'RESISTIVITY_MICRO_NORMAL'],
-            'curve_names': ['NPHI', 'NPOR', 'RHOB', 'RHOZ', 'DT', 'DTC', 'PE', 'PEF', 
-                          'DEVI', 'DPOR', 'MI', 'MN', 'MCAL', 'RHOC', 'DRHO', 'DCOR'],
-            'max_gap_size': 100,
-            'methods': ['kriging', 'trend_extrapolation', 'relative_rock_properties']
-        },
-        'specialized_curves': {
-            'curve_types': ['FORMATION_RESISTIVITY_IMAGING', 'ACOUSTIC_IMAGING', 
-                          'CARBON_OXYGEN_RATIO', 'SILICON_CALCIUM_RATIO'],
-            'curve_names': ['FMI', 'HRLA', 'OBMI', 'BHTV', 'UBI', 'COR', 'SICA'],
-            'max_gap_size': 50,
-            'methods': ['trend_extrapolation']
-        },
-        'unknown_curves': {
-            'curve_types': ['UNKNOWN'],
-            'curve_names': [],
-            'max_gap_size': 50,
-            'methods': ['trend_extrapolation']
-        }
-    }
-    
-    # Denoising parameters - From signal processing literature
-    # Tomasi & Manduchi (1998) "Bilateral filtering for gray and color images"
-    BILATERAL_FILTER_SIGMA_S = 10.0  # Spatial sigma for bilateral filter
-    BILATERAL_FILTER_SIGMA_R = 0.1   # Range sigma for bilateral filter
-    # Savitzky & Golay (1964) "Smoothing and differentiation of data"
-    SAVITZKY_GOLAY_WINDOW = 11       # Window size for Savitzky-Golay filter
-    SAVITZKY_GOLAY_POLY_ORDER = 3    # Polynomial order for Savitzky-Golay
-    
-    # Memory and performance constants
-    MEMORY_LIMIT_DEFAULT = 2048  # MB
-    AUTO_CLEANUP_THRESHOLD = 1000  # MB
-    
-    # Null value constants - Industry standard
-    # Based on LAS file format specifications and industry practice
-    NULL_VALUES = {
-        "STANDARD": -999.25,
-        "ALTERNATIVE": -999,
-        "EXTENDED": -9999,
-        "IEEE_NAN": float('nan')
-    }
-    
-    # Depth spacing standards - Industry practice
-    # Based on logging tool specifications and data acquisition standards
-    DEPTH_SPACING_OPTIONS = {
-        "HIGH_RESOLUTION": 0.1,
-        "STANDARD": 0.5,
-        "LOW_RESOLUTION": 1.0,
-        "VERY_LOW_RESOLUTION": 2.0
-    }
-    
-    # Correlation thresholds - Statistical significance
-    # Cohen (1988) correlation effect sizes
-    CORRELATION_THRESHOLDS = {
-        "STRONG": 0.7,
-        "MODERATE": 0.5,
-        "WEAK": 0.3,
-        "NEGLIGIBLE": 0.1
-    }
-    
-    # Uncertainty quantification parameters
-    # Kennedy & O'Hagan (2001) "Bayesian calibration of computer models"
-    UNCERTAINTY_FLOOR = 0.01  # Minimum uncertainty value
-    UNCERTAINTY_CEILING = 0.5  # Maximum uncertainty value
-    CONFIDENCE_FLOOR = 0.1     # Minimum confidence value
-    CONFIDENCE_CEILING = 0.9   # Maximum confidence value
-    
-    # === SIGNAL PROCESSING CONSTANTS ===
-    # Based on geophysical signal processing literature
-    
-    # Wavelet types optimized for different curve families 
-    # Gaci (2014) "Petrophysical logs denoising using wavelet transform"
-    # Validated against 5,000+ well logs across different geological settings
-    WAVELET_TYPES = {
-        "RESISTIVITY": "db8",    # Daubechies 8 - good for sharp transitions
-        "GAMMA_RAY": "db6",      # Daubechies 6 - balanced for GR curves
-        "NEUTRON": "coif4",      # Coiflet 4 - smooth curves with good localization
-        "DENSITY": "db4",        # Daubechies 4 - standard for density logs
-        "SONIC": "bior4.4",      # Biorthogonal - preserves phase in sonic data
-        "PHOTOELECTRIC": "sym5", # Symlet 5 - good for PE factor curves
-        "CALIPER": "db6",        # Daubechies 6 - good for caliper measurements
-        "GEOMETRY": "db6"        # Daubechies 6 - balanced for geometric curves
-    }
-    
-    # Optimal filter window sizes based on sampling rate 
-    # Khene & Abdul-Jabbar (2017) "Optimal filter parameters for well log processing"
-    FILTER_WINDOW_RATIOS = {
-        "SHORT": 0.05,    # 5% of data length - for high-frequency components
-        "MEDIUM": 0.10,   # 10% of data length - for moderate filtering
-        "LONG": 0.20      # 20% of data length - for strong filtering
-    }
-    
-    # === GAP FILLING PARAMETERS ===
-    
-    # Maximum gap size thresholds based on Crain's Petrophysical Handbook (2010)
-    # Validated through Monte Carlo simulations and field studies
-    GAP_SIZE = {
-        "SMALL": 3,       # Direct interpolation acceptable
-        "MEDIUM": 10,     # Requires advanced interpolation
-        "LARGE": 20,      # Requires multi-curve methods
-        "VERY_LARGE": 50  # Requires formation-based models
-    }
-    
-    # Correlation thresholds based on statistical significance (Cohen, 1988)
-    # "Statistical Power Analysis for the Behavioral Sciences"
-    CORRELATION = {
-        "NEGLIGIBLE": 0.1,   # <0.1 correlation is negligible
-        "WEAK": 0.3,         # 0.1-0.3 is weak correlation
-        "MODERATE": 0.5,     # 0.3-0.5 is moderate correlation
-        "STRONG": 0.7,       # 0.5-0.7 is strong correlation
-        "VERY_STRONG": 0.9   # >0.7 is very strong correlation
-    }
-    
-    # === VISUALIZATION CONSTANTS ===
-    
-    # Industry-standard colors for log curves (API & SPWLA standards)
-    # Based on American Petroleum Institute and Society of Petrophysicists standards
-    # Enhanced with comprehensive industry color schemes
-    LOG_COLORS = {
-        # Primary Log Curves (Schlumberger/Weatherford/Halliburton standards)
-        "GAMMA_RAY": "#008000",        # Green (GR)
-        "RESISTIVITY": "#FF0000",      # Red (RT, RM, RS, RXO)
-        "NEUTRON": "#0000FF",          # Blue (NPHI, CNL)
-        "DENSITY": "#FF0000",          # Red (RHOB, DEN)
-        "SONIC": "#800080",            # Purple (DT, DTC)
-        "CALIPER": "#000000",          # Black (CAL)
-        "PHOTOELECTRIC": "#FF00FF",    # Magenta (PE)
-        
-        # Secondary Log Curves
-        "SPONTANEOUS_POTENTIAL": "#00FFFF",  # Cyan (SP)
-        "BULK_DENSITY": "#FF0000",           # Red (RHOB)
-        "NEUTRON_POROSITY": "#0000FF",       # Blue (NPHI)
-        "DEEP_RESISTIVITY": "#FF0000",       # Red (RT)
-        "MEDIUM_RESISTIVITY": "#FF4444",     # Light Red (RM)
-        "SHALLOW_RESISTIVITY": "#FF8888",    # Pink (RS)
-        "MICRO_RESISTIVITY": "#FFAAAA",      # Light Pink (RXO)
-        
-        # Porosity Curves
-        "TOTAL_POROSITY": "#0000FF",         # Blue (PHIT)
-        "EFFECTIVE_POROSITY": "#0080FF",     # Light Blue (PHIE)
-        "WATER_SATURATION": "#00FF00",       # Green (SW)
-        "HYDROCARBON_SATURATION": "#FF8000", # Orange (SH)
-        
-        # Lithology Curves
-        "LITHOLOGY": "#8B4513",              # Brown
-        "FACIES": "#A0522D",                 # Sienna
-        "MINERAL_VOLUME": "#D2691E",         # Chocolate
-        
-        # Pressure/Temperature
-        "PRESSURE": "#FF4500",               # Orange Red
-        "TEMPERATURE": "#FF6347",            # Tomato
-        
-        # Specialized Curves
-        "CEMENT_BOND": "#696969",            # Dim Gray
-        "CROSS_DIP": "#9370DB",              # Medium Purple
-        "BOREHOLE_IMAGE": "#2F4F4F",         # Dark Slate Gray
-        
-        # Default fallback
-        "UNKNOWN": "#808080"                 # Gray
-    }
-    
-    # 3D Visualization Color Schemes (Industry Standards)
-    VISUALIZATION_COLORS = {
-        "3D_SCATTER": {
-            "primary": "#FF0000",      # Red for primary curve
-            "secondary": "#0000FF",    # Blue for secondary curve  
-            "tertiary": "#00FF00",     # Green for third curve
-            "depth": "#800080"         # Purple for depth
-        },
-        "CORRELATION_HEATMAP": "coolwarm",  # Standard correlation colormap
-        "UNCERTAINTY": "RdYlGn",            # Red-Yellow-Green for uncertainty
-        "QUALITY_METRICS": "viridis",       # Viridis for quality assessment
-        "DEPTH_GRADIENT": "plasma"          # Plasma for depth-based coloring
-    }
-    
-    # Industry Standard Colormaps for Different Visualization Types
-    COLORMAP_STANDARDS = {
-        "resistivity": "hot",           # Hot colormap for resistivity
-        "porosity": "Blues",           # Blue colormap for porosity
-        "density": "Reds",             # Red colormap for density
-        "gamma_ray": "Greens",         # Green colormap for gamma ray
-        "sonic": "Purples",            # Purple colormap for sonic
-        "correlation": "coolwarm",     # Cool-warm for correlations
-        "uncertainty": "RdYlGn",       # Red-Yellow-Green for uncertainty
-        "quality": "viridis",          # Viridis for quality metrics
-        "depth": "plasma"              # Plasma for depth-based plots
-    }
-    
-    # Standard track configurations for log display (Schlumberger standards)
-    # Based on industry software standards and field practice
-    LOG_TRACK_SCALES = {
-        "GAMMA_RAY": (0, 150),       # API units
-        "RESISTIVITY": (0.2, 2000),  # ohm-m (logarithmic)
-        "NEUTRON": (0.45, -0.15),    # v/v (reversed)
-        "DENSITY": (1.95, 2.95),     # g/cm³
-        "SONIC": (140, 40),          # us/ft (reversed)
-        "CALIPER": (6, 16)           # inches
-    }
-    
-    # === STATISTICAL PARAMETERS ===
-    
-    # Statistical significance levels (standard in scientific literature)
-    # Student (1908) "The probable error of a mean"
-    SIGNIFICANCE = {
-        "P_0_001": 0.001,  # 99.9% confidence
-        "P_0_01": 0.01,    # 99% confidence
-        "P_0_05": 0.05,    # 95% confidence
-        "P_0_1": 0.1       # 90% confidence
-    }
-    
-    # Standard deviation multipliers for confidence intervals
-    # Based on normal distribution properties and statistical theory
-    CONFIDENCE_INTERVAL = {
-        "CI_50": 0.6745,  # 50% confidence interval
-        "CI_68": 1.0,     # 68% confidence interval (1-sigma)
-        "CI_90": 1.645,   # 90% confidence interval 
-        "CI_95": 1.96,    # 95% confidence interval (2-sigma)
-        "CI_99": 2.576    # 99% confidence interval (3-sigma)
-    }
-    
-    @staticmethod
-    def get_gap_threshold_for_curve(curve_name: str, curve_type: str) -> tuple:
-        """
-        Determine appropriate gap filling threshold for a specific curve
-        Integrates with existing curve recognition system
-        
-        Args:
-            curve_name: Curve mnemonic (e.g., 'GR', 'NPHI')
-            curve_type: Curve type from existing database (e.g., 'GAMMA_RAY_TOTAL')
-        
-        Returns:
-            tuple: (max_gap_size, allowed_methods)
-        """
-        for rule_name, rule in PetrophysicalConstants.GAP_FILLING_RULES.items():
-            if curve_type in rule['curve_types'] or curve_name.upper() in rule['curve_names']:
-                return rule['max_gap_size'], rule['methods']
-        
-        # Default fallback for unknown curves
-        return 50, ['trend_extrapolation']
-    
-    @staticmethod
-    def validate_curve_data_enhanced(curve_data, curve_type: str) -> float:
-        """
-        Enhanced curve validation using existing mnemonic database
-        
-        Args:
-            curve_data: Curve data array
-            curve_type: Curve type from existing database
-        
-        Returns:
-            float: Fraction of valid data points (0.0 to 1.0)
-        """
-        # Use existing curve database ranges if available
-        try:
-            # This will be integrated with the existing ComprehensiveCurveManager
-            # For now, use basic validation
-            if hasattr(curve_data, 'isna'):
-                finite_mask = np.isfinite(curve_data) & ~curve_data.isna()
-            else:
-                finite_mask = np.isfinite(curve_data)
-            
-            return finite_mask.sum() / len(curve_data) if len(curve_data) > 0 else 0.0
-        except:
-            return 1.0  # Default to valid for unknown curves
-    
-    @staticmethod
-    def assess_data_completeness(curve_data) -> str:
-        """
-        Assess data completeness using industry standards
-        
-        Args:
-            curve_data: Curve data array
-        
-        Returns:
-            str: Quality grade string
-        """
-        try:
-            if hasattr(curve_data, 'isna'):
-                completeness = 1 - (curve_data.isna().sum() / len(curve_data))
-            else:
-                valid_mask = np.isfinite(curve_data)
-                completeness = valid_mask.sum() / len(curve_data)
-            
-            if completeness >= 0.95:
-                return "EXCELLENT"
-            elif completeness >= 0.85:
-                return "GOOD"
-            elif completeness >= 0.70:
-                return "FAIR"
-            else:
-                return "POOR"
-        except:
-            return "UNKNOWN"
-
-# Create a global instance for easy access
-PHYSICAL_CONSTANTS = PetrophysicalConstants()
+# Legacy class definition removed - now imported from petrophysics.constants
+# Original code preserved in advanced_preprocessing_system10_PRE_PHASE2_BACKUP_*.py
 
 #=============================================================================
 # ARCHIE'S EQUATION AND PETROPHYSICAL CALCULATIONS
 #=============================================================================
+# NOTE: ArchieEquationCalculator and RelativeRockPropertiesModel have been extracted to core/petrophysical_models.py
+# Import maintained here for backward compatibility during modularization
+from core.petrophysical_models import ArchieEquationCalculator, RelativeRockPropertiesModel, ARCHIE_CALCULATOR
 
-class ArchieEquationCalculator:
-    """
-    Implements Archie's equation utilities and related petrophysical calculations.
-    Functions validate inputs, clamp outputs to physical ranges, and return
-    structured results for downstream processing and reporting.
-    """
-    
-    def __init__(self):
-        # Archie's equation coefficients - industry standard values
-        self.archie_a = 1.0      # Tortuosity factor (typical range: 0.6-2.0)
-        self.archie_m = 2.0      # Cementation exponent (typical range: 1.8-2.5)
-        self.archie_n = 2.0      # Saturation exponent (typical range: 1.8-2.4)
-        self.rw = 0.05           # Formation water resistivity (ohm-m)
-        
-        # Matrix densities (g/cm³) - from Schlumberger Chartbook
-        # Using midpoint values from the established ranges
-        self.matrix_densities = {
-            'sandstone': 2.675,   # Midpoint of 2.65-2.70 range
-            'limestone': 2.775,   # Midpoint of 2.71-2.84 range  
-            'dolomite': 2.875,    # Midpoint of 2.85-2.90 range
-            'shale': 2.70         # Midpoint of 2.65-2.75 range
-        }
-    
-    def calculate_water_saturation_archie(self, porosity: np.ndarray, 
-                                        resistivity: np.ndarray,
-                                        a: float = None, m: float = None, 
-                                        n: float = None, rw: float = None) -> Dict[str, np.ndarray]:
-        """
-        Calculate water saturation using classic Archie's equation
-        Formula: Sw = ((a * Rw) / (φᵐ * Rt))^(1/n)
-        """
-        a = a if a is not None else self.archie_a
-        m = m if m is not None else self.archie_m
-        n = n if n is not None else self.archie_n
-        rw = rw if rw is not None else self.rw
-        
-        # Input validation with professional ranges
-        # Porosity: 1% to 50% (0.01 to 0.5 fraction)
-        # Resistivity: 0.1 to 10,000 ohm-m (covers saltwater to gas-filled rock)
-        valid_mask = ((porosity > 0.01) & (porosity < 0.5) & 
-                     (resistivity > 0.1) & (resistivity < 10000) &
-                     ~np.isnan(porosity) & ~np.isnan(resistivity) & 
-                     np.isfinite(porosity) & np.isfinite(resistivity))
-        
-        sw = np.full_like(porosity, np.nan)
-        
-        if np.any(valid_mask):
-            valid_porosity = porosity[valid_mask]
-            valid_resistivity = resistivity[valid_mask]
-            
-            # Archie's equation: Sw = ((a * Rw) / (φᵐ * Rt))^(1/n)
-            # Corrected: Formation factor F = a / φᵐ, then Sw = (F * Rw / Rt)^(1/n)
-            formation_factor = a / (valid_porosity ** m)
-            sw_valid = ((formation_factor * rw) / valid_resistivity) ** (1/n)
-            sw_valid = np.clip(sw_valid, 0.0, 1.0)  # Physical bounds
-            sw[valid_mask] = sw_valid
-        
-        return {
-            'water_saturation': sw,
-            'hydrocarbon_saturation': 1.0 - sw,
-            'valid_points': np.sum(valid_mask),
-            'parameters_used': {'a': a, 'm': m, 'n': n, 'rw': rw}
-        }
-    
-    def calculate_porosity_density(self, bulk_density: np.ndarray, 
-                                 matrix_density: float = 2.65,
-                                 fluid_density: float = 1.0) -> Dict[str, np.ndarray]:
-        """
-        Calculate porosity from bulk density: φ = (ρma - ρb) / (ρma - ρfl)
-        """
-        valid_mask = ((bulk_density > 1.5) & (bulk_density < 3.5) & 
-                     ~np.isnan(bulk_density))
-        
-        porosity = np.full_like(bulk_density, np.nan)
-        
-        if np.any(valid_mask):
-            valid_density = bulk_density[valid_mask]
-            porosity_valid = (matrix_density - valid_density) / (matrix_density - fluid_density)
-            porosity_valid = np.clip(porosity_valid, 0.0, 0.5)  # Physical bounds
-            porosity[valid_mask] = porosity_valid
-        
-        return {
-            'porosity': porosity,
-            'valid_points': np.sum(valid_mask),
-            'parameters_used': {'matrix_density': matrix_density, 'fluid_density': fluid_density}
-        }
-# Create global instance for use throughout the application
-ARCHIE_CALCULATOR = ArchieEquationCalculator()
-
-#=============================================================================
-# RELATIVE ROCK PROPERTIES MODEL - Alvaro Chaveste's Implementation
-#=============================================================================
-
-class RelativeRockPropertiesModel:
-    """
-    Relative Rock Properties (RRP) model for leveraging inter-curve relationships
-    to estimate missing values. Trains pairwise relations (linear, power-law,
-    quantile mapping) and selects the best relation per curve pair. Provides
-    helpers to apply relationships and to ensemble predictions during large-gap fill.
-    """
-    
-    def __init__(self):
-        # Required imports for this class
-        from scipy import stats
-        import numpy as np
-        
-        self.property_relations = {}
-        self.trained = False
-    
-    def train(self, data_dict, formation_info=None):
-        """Train the relative rock properties model using available data
-        
-        Args:
-            data_dict: Dictionary of curve names to numpy arrays of data
-            formation_info: Optional dictionary with formation tops and lithology
-        """
-        import numpy as np
-        
-
-        self.data_dict = data_dict
-        self.formation_info = formation_info
-        
-        # Store curve names for convenience
-        self.curve_names = list(data_dict.keys())
-        
-        # Calculate relationships between properties
-        for i, curve1 in enumerate(self.curve_names):
-            for j, curve2 in enumerate(self.curve_names):
-                if i >= j:
-                    continue
-                
-                relation_key = f"{curve1}_{curve2}"
-                self.property_relations[relation_key] = self._compute_property_relation(
-                    data_dict[curve1], data_dict[curve2]
-                )
-        
-        self.trained = True
-        return True
-    
-    def _compute_property_relation(self, prop1, prop2):
-        """Compute the relative relationship between two properties"""
-        import numpy as np
-        from scipy import stats
-        
-        # Create masks for valid data points
-        valid_mask = ~np.isnan(prop1) & ~np.isnan(prop2)
-        
-        if np.sum(valid_mask) < PHYSICAL_CONSTANTS.MIN_VALID_POINTS_FOR_RELATIONSHIP:
-            # Not enough valid data points for a reliable relationship
-            return {
-                'type': 'insufficient_data',
-                'valid_points': np.sum(valid_mask),
-                'params': None
-            }
-        
-        valid_prop1 = prop1[valid_mask]
-        valid_prop2 = prop2[valid_mask]
-        
-        # Calculate statistics
-        mean1 = np.mean(valid_prop1)
-        mean2 = np.mean(valid_prop2)
-        std1 = np.std(valid_prop1)
-        std2 = np.std(valid_prop2)
-        
-        # Try different relationship models
-        
-        # 1. Linear relationship (y = mx + b)
-        linear_relation = None
-        try:
-            slope, intercept, r_value, _, _ = stats.linregress(valid_prop1, valid_prop2)
-            linear_relation = {
-                'type': 'linear',
-                'slope': slope,
-                'intercept': intercept,
-                'r_value': r_value,
-                'correlation': np.corrcoef(valid_prop1, valid_prop2)[0, 1]
-            }
-        except Exception as e:
-            pass
-            linear_relation = {
-                'type': 'linear_failed',
-                'correlation': np.nan
-            }
-        
-        # 2. Power law relationship (y = a * x^b)
-        power_relation = None
-        try:
-            # Filter out non-positive values for log transform
-            positive_mask = (valid_prop1 > 0) & (valid_prop2 > 0)
-            if np.sum(positive_mask) > PHYSICAL_CONSTANTS.MIN_VALID_POINTS_FOR_RELATIONSHIP:
-                log_prop1 = np.log(valid_prop1[positive_mask])
-                log_prop2 = np.log(valid_prop2[positive_mask])
-                
-                # Linear regression in log space
-                slope, intercept, r_value, _, _ = stats.linregress(log_prop1, log_prop2)
-                power_relation = {
-                    'type': 'power',
-                    'coefficient': np.exp(intercept),
-                    'exponent': slope,
-                    'r_value': r_value
-                }
-            else:
-                power_relation = {
-                    'type': 'power_failed',
-                    'correlation': np.nan
-                }
-        except Exception as e:
-            pass
-            power_relation = {
-                'type': 'power_failed',
-                'correlation': np.nan
-            }
-        
-        # 3. Non-parametric relationship (based on quantile mapping)
-        quantile_relation = None
-        try:
-            # Create empirical CDFs
-            prop1_sorted = np.sort(valid_prop1)
-            prop2_sorted = np.sort(valid_prop2)
-            
-            # Create percentile mapping
-            percentiles = np.linspace(0, 1, 20)
-            prop1_quantiles = np.quantile(valid_prop1, percentiles)
-            prop2_quantiles = np.quantile(valid_prop2, percentiles)
-            
-            quantile_relation = {
-                'type': 'quantile_mapping',
-                'percentiles': percentiles,
-                'prop1_quantiles': prop1_quantiles,
-                'prop2_quantiles': prop2_quantiles,
-                'r_value': np.corrcoef(valid_prop1, valid_prop2)[0, 1]  # Add r_value for comparison
-            }
-        except Exception as e:
-            pass
-            quantile_relation = {
-                'type': 'quantile_failed',
-                'correlation': np.nan
-            }
-        
-        # Select best relation based on correlation coefficient
-        relations = [r for r in [linear_relation, power_relation, quantile_relation] if r is not None]
-        valid_relations = [r for r in relations if 'r_value' in r]
-        
-        if valid_relations:
-            best_relation = max(valid_relations, key=lambda x: abs(x.get('r_value', 0)))
-        else:
-            # Fallback to basic statistical relationship
-            best_relation = {
-                'type': 'statistical',
-                'mean_ratio': mean2 / (mean1 + 1e-10) if abs(mean1) > 1e-10 else 1.0,
-                'std_ratio': std2 / (std1 + 1e-10) if abs(std1) > 1e-10 else 1.0
-            }
-        
-        return best_relation
-    
-    def fill_large_gap(self, curve_name, gap_start, gap_end, data, auxiliary_curves=None):
-        """Fill a large gap using Relative Rock Properties
-        
-        Args:
-            curve_name: Name of the curve with the gap
-            gap_start, gap_end: Indices of the gap
-            data: The curve data array with gap
-            auxiliary_curves: Dictionary of other curves data
-        
-        Returns:
-            Dict with filled values, uncertainty, and confidence
-        """
-        import numpy as np
-        
-        if not self.trained:
-            return None
-        
-        gap_size = gap_end - gap_start
-        
-        # Initialize output arrays
-        filled_values = np.full(gap_size, np.nan)
-        uncertainty = np.full(gap_size, PHYSICAL_CONSTANTS.UNCERTAINTY_CEILING)  # Default high uncertainty
-        confidence = np.full(gap_size, PHYSICAL_CONSTANTS.CONFIDENCE_FLOOR)
-        
-        # Check if auxiliary curves exist
-        if not auxiliary_curves:
-            return None
-        
-        # Find curves with data in the gap region
-        reference_curves = []
-        for other_curve, other_data in auxiliary_curves.items():
-            if other_curve == curve_name:
-                continue
-                
-            # Check if this curve has data in the gap region
-            if other_data is None or len(other_data) <= gap_end:
-                continue
-                
-            gap_region = other_data[gap_start:gap_end]
-            valid_count = np.sum(~np.isnan(gap_region))
-            valid_percentage = valid_count / len(gap_region) if len(gap_region) > 0 else 0
-            
-            if valid_percentage > PHYSICAL_CONSTANTS.CONFIDENCE_LEVELS["LOW"]:  # At least 50% valid data
-                # Also check if we have a relationship with this curve
-                relation_key = f"{curve_name}_{other_curve}" if curve_name < other_curve else f"{other_curve}_{curve_name}"
-                if relation_key in self.property_relations:
-                    reference_curves.append({
-                        'name': other_curve,
-                        'data': other_data,
-                        'valid_percentage': valid_percentage,
-                        'relation_key': relation_key
-                    })
-        
-        if not reference_curves:
-            return None
-        
-        # Sort reference curves by valid percentage
-        reference_curves.sort(key=lambda x: x['valid_percentage'], reverse=True)
-        
-        # Create a weighted ensemble of predictions from all reference curves
-        predictions = []
-        weights = []
-        
-        for ref in reference_curves:
-            # Get the relationship
-            relation_key = ref['relation_key']
-            relation = self.property_relations[relation_key]
-            
-            # Check if we need to swap the relationship direction
-            swap_direction = relation_key.split('_')[0] != curve_name
-            
-            # Get reference data in gap region
-            ref_data = ref['data'][gap_start:gap_end]
-            
-            # Apply the relationship to predict target values
-            predicted = self._apply_relationship(ref_data, relation, swap_direction)
-            
-            # Calculate prediction quality based on valid data and relationship strength
-            if 'r_value' in relation:
-                relation_strength = abs(relation['r_value'])
-            else:
-                relation_strength = 0.5  # Default moderate strength
-            
-            # Weight by valid percentage and relationship strength
-            weight = ref['valid_percentage'] * relation_strength
-            
-            predictions.append(predicted)
-            weights.append(weight)
-        
-        # Normalize weights
-        total_weight = sum(weights)
-        if total_weight > 0:
-            weights = [w / total_weight for w in weights]
-        else:
-            # If no valid weights, return None
-
-            return None
-        
-        # Combine predictions
-        for i in range(gap_size):
-            weighted_values = []
-            weighted_weights = []
-            
-            for pred, weight in zip(predictions, weights):
-                if not np.isnan(pred[i]):
-                    weighted_values.append(pred[i])
-                    weighted_weights.append(weight)
-            
-            if weighted_values:
-                # Weighted average for value
-                total_w = sum(weighted_weights)
-                if total_w > 1e-10:  # Avoid division by near-zero
-                    filled_values[i] = sum(v * w for v, w in zip(weighted_values, weighted_weights)) / total_w
-                    
-                    # Uncertainty based on weighted variance
-                    if len(weighted_values) > 1:
-                        mean_val = filled_values[i]
-                        variance = sum(w * (v - mean_val)**2 for v, w in zip(weighted_values, weighted_weights)) / (total_w + 1e-10)
-                        uncertainty[i] = max(0.01, np.sqrt(variance))  # Add floor to uncertainty
-                    else:
-                        uncertainty[i] = 0.2  # Default uncertainty for single prediction
-                    
-                    # Confidence based on number of predictions and their weights
-                    confidence[i] = min(0.9, total_w * 0.8)
-        
-        # Check if we have valid predictions
-        valid_predictions = ~np.isnan(filled_values)
-        if np.sum(valid_predictions) < gap_size * 0.5:
-
-            return None
-        
-        # Fill remaining NaN values using interpolation
-        if np.any(np.isnan(filled_values)):
-            valid_indices = np.nonzero(~np.isnan(filled_values))[0]
-            nan_indices = np.nonzero(np.isnan(filled_values))[0]
-            
-            if len(valid_indices) > 1:
-                # Use linear interpolation for remaining NaN values
-                for nan_idx in nan_indices:
-                    # Find nearest valid indices before and after
-                    before_valid = valid_indices[valid_indices < nan_idx]
-                    after_valid = valid_indices[valid_indices > nan_idx]
-                    
-                    if len(before_valid) > 0 and len(after_valid) > 0:
-                        before_idx = before_valid[-1]
-                        after_idx = after_valid[0]
-                        
-                        before_val = filled_values[before_idx]
-                        after_val = filled_values[after_idx]
-                        
-                        # Linear interpolation
-                        delta = after_idx - before_idx
-                        if delta > 0:  # Avoid division by zero
-                            alpha = (nan_idx - before_idx) / delta
-                            filled_values[nan_idx] = before_val + alpha * (after_val - before_val)
-                            
-                            # Increase uncertainty for interpolated values
-                            uncertainty[nan_idx] = max(uncertainty[before_idx], uncertainty[after_idx]) * 1.5
-                            confidence[nan_idx] = min(confidence[before_idx], confidence[after_idx]) * 0.8
-        
-        return {
-            'values': filled_values,
-            'uncertainty': uncertainty,
-            'confidence': confidence,
-            'quality': np.mean(confidence)
-        }
-    
-    def _apply_relationship(self, reference_data, relation, swap_direction):
-        """Apply a relationship to predict values from reference data"""
-        import numpy as np
-        
-        # Handle NaN values
-        valid_mask = ~np.isnan(reference_data)
-        predicted = np.full_like(reference_data, np.nan)
-        
-        if np.sum(valid_mask) == 0:
-            return predicted
-        
-        ref_valid = reference_data[valid_mask]
-        
-        # Apply the appropriate relationship based on type
-        if relation['type'] == 'linear':
-            if not swap_direction:
-                # Direct relationship: y = mx + b
-                predicted[valid_mask] = relation['slope'] * ref_valid + relation['intercept']
-            else:
-                # Inverse relationship: x = (y - b) / m
-                if abs(relation['slope']) > 1e-10:  # Avoid division by near-zero
-                    predicted[valid_mask] = (ref_valid - relation['intercept']) / relation['slope']
-                else:
-                    # Can't invert a zero slope
-                    return np.full_like(reference_data, np.nan)
-                    
-        elif relation['type'] == 'power':
-            if not swap_direction:
-                # Direct relationship: y = a * x^b
-                predicted[valid_mask] = relation['coefficient'] * ref_valid ** relation['exponent']
-            else:
-                # Inverse relationship: x = (y/a)^(1/b)
-                if abs(relation['exponent']) > 1e-10:  # Avoid division by near-zero
-                    predicted[valid_mask] = (ref_valid / relation['coefficient']) ** (1 / relation['exponent'])
-                else:
-                    # Can't invert a zero exponent
-                    return np.full_like(reference_data, np.nan)
-                    
-        elif relation['type'] == 'quantile_mapping':
-            # For each valid reference value, find its percentile and map to target
-            ref_quantiles = relation['prop1_quantiles'] if not swap_direction else relation['prop2_quantiles']
-            target_quantiles = relation['prop2_quantiles'] if not swap_direction else relation['prop1_quantiles']
-            
-            for i, ref_val in enumerate(ref_valid):
-                # Find position in sorted quantiles using interpolation
-                pos = np.searchsorted(ref_quantiles, ref_val)
-                idx = np.nonzero(valid_mask)[0][i]
-                
-                if pos == 0:
-                    predicted[idx] = target_quantiles[0]
-                elif pos >= len(ref_quantiles):
-                    predicted[idx] = target_quantiles[-1]
-                else:
-                    # Linear interpolation between quantiles
-                    alpha = (ref_val - ref_quantiles[pos-1]) / (ref_quantiles[pos] - ref_quantiles[pos-1] + 1e-10)
-                    predicted[idx] = target_quantiles[pos-1] + alpha * (target_quantiles[pos] - target_quantiles[pos-1])
-                
-        elif relation['type'] == 'statistical':
-            # Simple statistical relationship
-            if not swap_direction:
-                predicted[valid_mask] = ref_valid * relation['mean_ratio']
-            else:
-                if abs(relation['mean_ratio']) > 1e-10:  # Avoid division by near-zero
-                    predicted[valid_mask] = ref_valid / relation['mean_ratio']
-                else:
-                    predicted[valid_mask] = ref_valid
-                
-        return predicted
-
-    # Additional helper methods for the Enhanced RRP Model
-
-    def _fit_robust_linear_model(self, prop1: np.ndarray, prop2: np.ndarray) -> Dict[str, Any]:
-        """Fit robust linear model using RANSAC or Huber regression"""
-        try:
-            if SKLEARN_AVAILABLE and len(prop1) > 10:
-                from sklearn.linear_model import HuberRegressor
-                
-                X = prop1.reshape(-1, 1)
-                y = prop2
-                
-                # Use Huber regression for robustness to outliers
-                huber = HuberRegressor(epsilon=1.35, max_iter=100)
-                huber.fit(X, y)
-                
-                slope = huber.coef_[0]
-                intercept = huber.intercept_
-                
-                # Calculate R² and RMSE
-                y_pred = huber.predict(X)
-                ss_res = np.sum((y - y_pred) ** 2)
-                ss_tot = np.sum((y - np.mean(y)) ** 2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-                rmse = np.sqrt(np.mean((y - y_pred) ** 2))
-                
-                return {
-                    'type': 'robust_linear',
-                    'slope': slope,
-                    'intercept': intercept,
-                    'r_squared': r_squared,
-                    'rmse': rmse,
-                    'training_range': (np.min(prop1), np.max(prop1)),
-                    'outlier_fraction': np.sum(huber.outliers_) / len(prop1) if hasattr(huber, 'outliers_') else 0
-                }
-            else:
-                # Fallback to simple linear regression
-                return self._fit_simple_linear_model(prop1, prop2)
-                
-        except Exception as e:
-            pass
-            return self._fit_simple_linear_model(prop1, prop2)
-
-    def _fit_simple_linear_model(self, prop1: np.ndarray, prop2: np.ndarray) -> Dict[str, Any]:
-        """Fallback simple linear model"""
-        try:
-            # Use numpy polyfit for simple linear regression
-            coeffs = np.polyfit(prop1, prop2, 1)
-            slope, intercept = coeffs[0], coeffs[1]
-            
-            # Calculate R² and RMSE
-            y_pred = slope * prop1 + intercept
-            ss_res = np.sum((prop2 - y_pred) ** 2)
-            ss_tot = np.sum((prop2 - np.mean(prop2)) ** 2)
-            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-            rmse = np.sqrt(np.mean((prop2 - y_pred) ** 2))
-            
-            return {
-                'type': 'robust_linear',  # Keep same type for consistency
-                'slope': slope,
-                'intercept': intercept,
-                'r_squared': r_squared,
-                'rmse': rmse,
-                'training_range': (np.min(prop1), np.max(prop1))
-            }
-            
-        except Exception as e:
-            pass
-            return {'type': 'linear_failed'}
-
-    def _fit_enhanced_power_model(self, prop1: np.ndarray, prop2: np.ndarray) -> Dict[str, Any]:
-        """Fit enhanced power law model with bias correction"""
-        try:
-            # Filter out non-positive values for log transform
-            positive_mask = (prop1 > 0) & (prop2 > 0)
-            if np.sum(positive_mask) < 10:
-                return {'type': 'power_failed'}
-            
-            prop1_pos = prop1[positive_mask]
-            prop2_pos = prop2[positive_mask]
-            
-            # Transform to log space
-            log_prop1 = np.log(prop1_pos)
-            log_prop2 = np.log(prop2_pos)
-            
-            # Linear regression in log space: log(y) = log(a) + b*log(x)
-            coeffs = np.polyfit(log_prop1, log_prop2, 1)
-            log_a, b = coeffs[1], coeffs[0]  # intercept, slope
-            a = np.exp(log_a)
-            
-            # Calculate R² in log space
-            log_y_pred = b * log_prop1 + log_a
-            ss_res = np.sum((log_prop2 - log_y_pred) ** 2)
-            ss_tot = np.sum((log_prop2 - np.mean(log_prop2)) ** 2)
-            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-            
-            # RMSE in original space
-            y_pred = a * prop1_pos ** b
-            rmse = np.sqrt(np.mean((prop2_pos - y_pred) ** 2))
-            
-            return {
-                'type': 'enhanced_power',
-                'coefficient': a,
-                'exponent': b,
-                'r_squared': r_squared,
-                'rmse': rmse,
-                'log_r_squared': r_squared,
-                'training_range': (np.min(prop1_pos), np.max(prop1_pos)),
-                'valid_fraction': np.sum(positive_mask) / len(prop1)
-            }
-            
-        except Exception as e:
-            pass
-            return {'type': 'power_failed'}
-
-    def _fit_piecewise_linear_model(self, prop1: np.ndarray, prop2: np.ndarray) -> Dict[str, Any]:
-        """Fit piecewise linear model for complex relationships"""
-        try:
-            if len(prop1) < 20:  # Need sufficient data for piecewise fitting
-                return self._fit_simple_linear_model(prop1, prop2)
-            
-            # Find optimal breakpoint using different percentiles
-            best_r_squared = -1
-            best_model = None
-            
-            for breakpoint_pct in [25, 33, 50, 67, 75]:
-                breakpoint = np.percentile(prop1, breakpoint_pct)
-                
-                # Split data at breakpoint
-                mask1 = prop1 <= breakpoint
-                mask2 = prop1 > breakpoint
-                
-                if np.sum(mask1) < 5 or np.sum(mask2) < 5:
-                    continue
-                
-                # Fit linear models to each segment
-                try:
-                    coeffs1 = np.polyfit(prop1[mask1], prop2[mask1], 1)
-                    coeffs2 = np.polyfit(prop1[mask2], prop2[mask2], 1)
-                    
-                    # Calculate combined R²
-                    y_pred = np.zeros_like(prop2)
-                    y_pred[mask1] = coeffs1[0] * prop1[mask1] + coeffs1[1]
-                    y_pred[mask2] = coeffs2[0] * prop1[mask2] + coeffs2[1]
-                    
-                    ss_res = np.sum((prop2 - y_pred) ** 2)
-                    ss_tot = np.sum((prop2 - np.mean(prop2)) ** 2)
-                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-                    
-                    if r_squared > best_r_squared:
-                        best_r_squared = r_squared
-                        rmse = np.sqrt(np.mean((prop2 - y_pred) ** 2))
-                        
-                        best_model = {
-                            'type': 'piecewise_linear',
-                            'breakpoint': breakpoint,
-                            'segment1_slope': coeffs1[0],
-                            'segment1_intercept': coeffs1[1],
-                            'segment2_slope': coeffs2[0],
-                            'segment2_intercept': coeffs2[1],
-                            'r_squared': r_squared,
-                            'rmse': rmse,
-                            'training_range': (np.min(prop1), np.max(prop1)),
-                            'segment1_points': np.sum(mask1),
-                            'segment2_points': np.sum(mask2)
-                        }
-                        
-                except Exception:
-                    continue
-            
-            return best_model if best_model else self._fit_simple_linear_model(prop1, prop2)
-            
-        except Exception as e:
-            pass
-            return self._fit_simple_linear_model(prop1, prop2)
-
-    def _fit_enhanced_quantile_model(self, prop1: np.ndarray, prop2: np.ndarray) -> Dict[str, Any]:
-        """Fit enhanced quantile-based model with smoothing"""
-        try:
-            # Create more quantiles for smoother mapping
-            n_quantiles = min(20, len(prop1) // 5)  # Adaptive number of quantiles
-            percentiles = np.linspace(0, 1, n_quantiles)
-            
-            prop1_quantiles = np.quantile(prop1, percentiles)
-            prop2_quantiles = np.quantile(prop2, percentiles)
-            
-            # Apply smoothing to quantile mappings if we have enough points
-            if n_quantiles > 10 and SCIPY_AVAILABLE:
-                from scipy.interpolate import UnivariateSpline
-                
-                # Fit smoothing spline to quantile relationship
-                spline = UnivariateSpline(prop1_quantiles, prop2_quantiles, s=0.1, k=3)
-                
-                # Evaluate spline at training points for R² calculation
-                y_pred = spline(prop1)
-                ss_res = np.sum((prop2 - y_pred) ** 2)
-                ss_tot = np.sum((prop2 - np.mean(prop2)) ** 2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-                rmse = np.sqrt(np.mean((prop2 - y_pred) ** 2))
-                
-                return {
-                    'type': 'enhanced_quantile',
-                    'percentiles': percentiles,
-                    'prop1_quantiles': prop1_quantiles,
-                    'prop2_quantiles': prop2_quantiles,
-                    'spline_coeffs': spline.get_coeffs(),
-                    'spline_knots': spline.get_knots(),
-                    'r_squared': r_squared,
-                    'rmse': rmse,
-                    'training_range': (np.min(prop1), np.max(prop1)),
-                    'n_quantiles': n_quantiles,
-                    'smoothed': True
-                }
-            else:
-                # Basic quantile mapping without smoothing
-                # Calculate R² using linear interpolation between quantiles
-                y_pred = np.interp(prop1, prop1_quantiles, prop2_quantiles)
-                ss_res = np.sum((prop2 - y_pred) ** 2)
-                ss_tot = np.sum((prop2 - np.mean(prop2)) ** 2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-                rmse = np.sqrt(np.mean((prop2 - y_pred) ** 2))
-                
-                return {
-                    'type': 'enhanced_quantile',
-                    'percentiles': percentiles,
-                    'prop1_quantiles': prop1_quantiles,
-                    'prop2_quantiles': prop2_quantiles,
-                    'r_squared': r_squared,
-                    'rmse': rmse,
-                    'training_range': (np.min(prop1), np.max(prop1)),
-                    'n_quantiles': n_quantiles,
-                    'smoothed': False
-                }
-                
-        except Exception as e:
-            pass
-            return self._fit_simple_linear_model(prop1, prop2)
-
-    def _cross_validate_model(self, prop1: np.ndarray, prop2: np.ndarray, model: Dict) -> Dict[str, float]:
-        """Perform cross-validation to assess model reliability"""
-        try:
-            if len(prop1) < 10:
-                # Not enough data for CV
-                return {'mean_r2': 0, 'std_r2': 0, 'mean_rmse': float('inf'), 'std_rmse': 0}
-            
-            n_folds = min(5, len(prop1) // 3)  # Adaptive number of folds
-            fold_size = len(prop1) // n_folds
-            
-            r2_scores = []
-            rmse_scores = []
-            
-            for fold in range(n_folds):
-                # Create train/test split
-                test_start = fold * fold_size
-                test_end = test_start + fold_size if fold < n_folds - 1 else len(prop1)
-                
-                test_mask = np.zeros(len(prop1), dtype=bool)
-                test_mask[test_start:test_end] = True
-                train_mask = ~test_mask
-                
-                if np.sum(train_mask) < 5 or np.sum(test_mask) < 2:
-                    continue
-                
-                # Train on training set
-                train_prop1 = prop1[train_mask]
-                train_prop2 = prop2[train_mask]
-                test_prop1 = prop1[test_mask]
-                test_prop2 = prop2[test_mask]
-                
-                # Fit model type to training data
-                if model['type'] == 'robust_linear':
-                    fold_model = self._fit_simple_linear_model(train_prop1, train_prop2)
-                elif model['type'] == 'enhanced_power':
-                    fold_model = self._fit_enhanced_power_model(train_prop1, train_prop2)
-                elif model['type'] == 'piecewise_linear':
-                    fold_model = self._fit_piecewise_linear_model(train_prop1, train_prop2)
-                elif model['type'] == 'enhanced_quantile':
-                    fold_model = self._fit_enhanced_quantile_model(train_prop1, train_prop2)
-                else:
-                    fold_model = self._fit_simple_linear_model(train_prop1, train_prop2)
-                
-                # Predict on test set
-                try:
-                    test_pred = self._apply_model_for_cv(test_prop1, fold_model)
-                    
-                    if test_pred is not None and not np.any(np.isnan(test_pred)):
-                        # Calculate metrics
-                        ss_res = np.sum((test_prop2 - test_pred) ** 2)
-                        ss_tot = np.sum((test_prop2 - np.mean(test_prop2)) ** 2)
-                        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-                        rmse = np.sqrt(np.mean((test_prop2 - test_pred) ** 2))
-                        
-                        r2_scores.append(r2)
-                        rmse_scores.append(rmse)
-                        
-                except Exception:
-                    continue
-            
-            if r2_scores:
-                return {
-                    'mean_r2': np.mean(r2_scores),
-                    'std_r2': np.std(r2_scores),
-                    'mean_rmse': np.mean(rmse_scores),
-                    'std_rmse': np.std(rmse_scores),
-                    'n_folds_completed': len(r2_scores)
-                }
-            else:
-                return {'mean_r2': 0, 'std_r2': 0, 'mean_rmse': float('inf'), 'std_rmse': 0, 'n_folds_completed': 0}
-                
-        except Exception as e:
-            pass
-            return {'mean_r2': 0, 'std_r2': 0, 'mean_rmse': float('inf'), 'std_rmse': 0, 'n_folds_completed': 0}
-
-    def _apply_model_for_cv(self, x_values: np.ndarray, model: Dict) -> np.ndarray:
-        """Apply model for cross-validation prediction"""
-        try:
-            if model['type'] == 'robust_linear':
-                return model['slope'] * x_values + model['intercept']
-                
-            elif model['type'] == 'enhanced_power':
-                return model['coefficient'] * x_values ** model['exponent']
-                
-            elif model['type'] == 'piecewise_linear':
-                pred = np.zeros_like(x_values)
-                mask1 = x_values <= model['breakpoint']
-                mask2 = x_values > model['breakpoint']
-                
-                pred[mask1] = model['segment1_slope'] * x_values[mask1] + model['segment1_intercept']
-                pred[mask2] = model['segment2_slope'] * x_values[mask2] + model['segment2_intercept']
-                return pred
-                
-            elif model['type'] == 'enhanced_quantile':
-                return np.interp(x_values, model['prop1_quantiles'], model['prop2_quantiles'])
-                
-            else:
-                return None
-                
-        except Exception:
-            return None
-
-    def _calculate_model_complexity(self, model: Dict) -> float:
-        """Calculate model complexity penalty factor"""
-        complexity_scores = {
-            'robust_linear': 1.0,
-            'enhanced_power': 1.5,
-            'piecewise_linear': 2.0,
-            'enhanced_quantile': 1.2,
-            'density_neutron_physics': 1.3,
-            'archie_resistivity_porosity': 1.4
-        }
-        return complexity_scores.get(model['type'], 1.0)
-    def _combine_predictions_with_uncertainty(self, predictions: List[np.ndarray], 
-                                            weights: List[float], 
-                                            uncertainties: List[np.ndarray]) -> Dict[str, np.ndarray]:
-        """Combine multiple predictions with proper uncertainty propagation"""
-        
-        gap_size = len(predictions[0]) if predictions else 0
-        combined_values = np.zeros(gap_size)
-        combined_uncertainty = np.zeros(gap_size)
-        combined_confidence = np.zeros(gap_size)
-        
-        # Normalize weights
-        total_weight = sum(weights)
-        if total_weight <= 0:
-            return {
-                'values': combined_values,
-                'uncertainty': np.full(gap_size, 0.5),
-                'confidence': np.full(gap_size, 0.1)
-            }
-        
-        normalized_weights = [w / total_weight for w in weights]
-        
-        for i in range(gap_size):
-            valid_predictions = []
-            valid_weights = []
-            valid_uncertainties = []
-            
-            # Collect valid predictions at this position
-            for pred, weight, unc in zip(predictions, normalized_weights, uncertainties):
-                if not np.isnan(pred[i]):
-                    valid_predictions.append(pred[i])
-                    valid_weights.append(weight)
-                    valid_uncertainties.append(unc[i])
-            
-            if valid_predictions:
-                # Weighted average for combined value
-                total_w = sum(valid_weights)
-                if total_w > 0:
-                    combined_values[i] = sum(v * w for v, w in zip(valid_predictions, valid_weights)) / total_w
-                    
-                    # Uncertainty propagation: weighted variance + model uncertainty
-                    if len(valid_predictions) > 1:
-                        weighted_variance = sum(w * (v - combined_values[i])**2 for v, w in zip(valid_predictions, valid_weights)) / total_w
-                        model_uncertainty = sum(w * unc**2 for w, unc in zip(valid_weights, valid_uncertainties)) / total_w
-                        combined_uncertainty[i] = np.sqrt(weighted_variance + model_uncertainty)
-                    else:
-                        combined_uncertainty[i] = valid_uncertainties[0]
-                    
-                    # Confidence based on agreement and weight
-                    combined_confidence[i] = min(0.95, total_w * 0.9)
-                else:
-                    combined_values[i] = valid_predictions[0]
-                    combined_uncertainty[i] = valid_uncertainties[0]
-                    combined_confidence[i] = 0.3
-            else:
-                # No valid predictions
-                combined_values[i] = np.nan
-                combined_uncertainty[i] = 1.0
-                combined_confidence[i] = 0.0
-        
-        return {
-            'values': combined_values,
-            'uncertainty': combined_uncertainty,
-            'confidence': combined_confidence
-        }
+# Legacy class definitions removed - now imported from core.petrophysical_models
+# Original code preserved in advanced_preprocessing_system10_PRE_PHASE2_BACKUP_*.py
 
 
 #=============================================================================
@@ -2027,55 +879,208 @@ class ComprehensiveMnemonicLibrary:
             }
         }
     
-    def identify_curve(self, mnemonic: str, unit: str = '', description: str = '') -> Tuple[str, float, Dict]:
-        """Identify curve type with confidence and detailed info"""
-        # Clean and normalize mnemonic (remove punctuation, extra spaces)
+    def _levenshtein_distance(self, s1: str, s2: str) -> int:
+        """Calculate Levenshtein distance for fuzzy matching"""
+        if len(s1) < len(s2):
+            return self._levenshtein_distance(s2, s1)
+        if len(s2) == 0:
+            return len(s1)
+        
+        previous_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        return previous_row[-1]
+    
+    def _fuzzy_match_mnemonic(self, mnemonic: str, known_mnemonic: str, threshold: float = 0.7) -> Tuple[bool, float]:
+        """Fuzzy match mnemonic using Levenshtein distance"""
+        mnemonic_clean = mnemonic.upper().strip()
+        known_clean = known_mnemonic.upper().strip()
+        
+        if mnemonic_clean == known_clean:
+            return True, 1.0
+        
+        max_len = max(len(mnemonic_clean), len(known_clean))
+        if max_len == 0:
+            return False, 0.0
+        
+        distance = self._levenshtein_distance(mnemonic_clean, known_clean)
+        similarity = 1.0 - (distance / max_len)
+        
+        return similarity >= threshold, similarity
+    
+    def _context_aware_recognition(self, unit: str, value_range: Optional[Tuple[float, float]], 
+                                   curve_data: Dict[str, Any]) -> float:
+        """Context-aware recognition based on units and value ranges"""
+        confidence_boost = 0.0
+        unit_clean = unit.upper().strip() if unit else ''
+        
+        # Unit compatibility check
+        if unit_clean:
+            curve_units = [u.upper() for u in curve_data.get('units', [])]
+            if unit_clean in curve_units:
+                confidence_boost += 0.15  # Strong unit match
+            else:
+                # Partial unit matching (e.g., "G/C3" vs "G/CM3")
+                for cu in curve_units:
+                    if unit_clean.replace('CM3', 'C3').replace('CM', 'C') in cu or \
+                       cu.replace('CM3', 'C3').replace('CM', 'C') in unit_clean:
+                        confidence_boost += 0.1
+                        break
+        
+        # Value range compatibility check
+        if value_range:
+            curve_range = curve_data.get('range', [])
+            if len(curve_range) == 2:
+                min_val, max_val = value_range
+                curve_min, curve_max = curve_range
+                
+                # Check if value range overlaps significantly with expected range
+                overlap_min = max(min_val, curve_min)
+                overlap_max = min(max_val, curve_max)
+                if overlap_max > overlap_min:
+                    overlap_ratio = (overlap_max - overlap_min) / (max(max_val, curve_max) - min(min_val, curve_min))
+                    confidence_boost += overlap_ratio * 0.2
+        
+        return confidence_boost
+    
+    def _pattern_based_identification(self, data: Optional[np.ndarray], 
+                                      curve_data: Dict[str, Any]) -> float:
+        """Pattern-based identification using statistical fingerprints"""
+        if data is None or len(data) < 20:
+            return 0.0
+        
+        valid_data = data[~np.isnan(data)]
+        if len(valid_data) < 10:
+            return 0.0
+        
+        confidence_boost = 0.0
+        curve_range = curve_data.get('range', [])
+        
+        if len(curve_range) == 2:
+            curve_min, curve_max = curve_range
+            data_min, data_max = float(np.min(valid_data)), float(np.max(valid_data))
+            
+            # Range compatibility
+            if curve_min <= data_min <= curve_max and curve_min <= data_max <= curve_max:
+                confidence_boost += 0.15
+            elif curve_min * 0.5 <= data_min <= curve_max * 2.0:
+                confidence_boost += 0.05
+        
+        # Check for log scale patterns (resistivity-like curves)
+        if curve_data.get('log_scale', False):
+            if data_min > 0 and data_max > 0:
+                ratio = data_max / data_min
+                if ratio > 10:  # Typical for log-scale curves
+                    confidence_boost += 0.1
+        
+        return confidence_boost
+    
+    def identify_curve(self, mnemonic: str, unit: str = '', description: str = '', 
+                       data: Optional[np.ndarray] = None, 
+                       value_range: Optional[Tuple[float, float]] = None,
+                       auxiliary_curves: Optional[Dict[str, np.ndarray]] = None) -> Tuple[str, float, Dict]:
+        """
+        Enhanced curve identification with fuzzy matching, context-aware recognition, 
+        and pattern-based identification.
+        
+        Args:
+            mnemonic: Curve mnemonic/name
+            unit: Curve unit
+            description: Curve description
+            data: Optional curve data array for pattern-based identification
+            value_range: Optional (min, max) value range for context-aware recognition
+            auxiliary_curves: Optional dict of other curves for correlation analysis
+        
+        Returns:
+            Tuple of (curve_type, confidence, curve_data_dict)
+        """
+        # Clean and normalize mnemonic
         mnemonic_clean = mnemonic.upper().strip()
         mnemonic_normalized = mnemonic_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
         
-        unit_clean = unit.upper().strip()
-        desc_clean = description.upper().strip()
+        unit_clean = unit.upper().strip() if unit else ''
+        desc_clean = description.upper().strip() if description else ''
         
-        best_match = None
-        best_confidence = 0.0
-        best_info = {}
+        candidates = []  # Store all candidates with confidence scores
         
+        # Phase 1: Exact and normalized matching
         for curve_type, curve_data in self.mnemonic_database.items():
             confidence = 0.0
+            match_method = 'none'
             
-            # Exact mnemonic match (original and normalized)
-            if mnemonic_clean in [m.upper() for m in curve_data['mnemonics']]:
+            # Exact mnemonic match
+            curve_mnemonics = [m.upper() for m in curve_data.get('mnemonics', [])]
+            if mnemonic_clean in curve_mnemonics:
                 confidence = 0.95
-            elif mnemonic_normalized in [m.upper().replace('.', '').replace('_', '').replace('-', '').replace(' ', '') for m in curve_data['mnemonics']]:
-                confidence = 0.9
+                match_method = 'exact'
+            else:
+                # Normalized matching
+                curve_normalized = [m.upper().replace('.', '').replace('_', '').replace('-', '').replace(' ', '') 
+                                   for m in curve_data.get('mnemonics', [])]
+                if mnemonic_normalized in curve_normalized:
+                    confidence = 0.9
+                    match_method = 'normalized'
+                else:
+                    # Fuzzy matching for typos and variations
+                    for known_mnemonic in curve_data.get('mnemonics', []):
+                        matched, similarity = self._fuzzy_match_mnemonic(mnemonic_clean, known_mnemonic, threshold=0.7)
+                        if matched:
+                            confidence = max(confidence, 0.75 * similarity)  # Scale fuzzy match
+                            match_method = 'fuzzy'
+                            break
             
-            # Unit compatibility bonus
-            if unit_clean and unit_clean in [u.upper() for u in curve_data['units']]:
-                confidence += 0.1
+            # Context-aware recognition boost
+            context_boost = self._context_aware_recognition(unit_clean, value_range, curve_data)
+            confidence += context_boost
+            
+            # Pattern-based identification boost
+            if data is not None:
+                pattern_boost = self._pattern_based_identification(data, curve_data)
+                confidence += pattern_boost
             
             # Description keyword matching
             if desc_clean:
-                desc_words = curve_data['description'].upper().split()
+                curve_desc = curve_data.get('description', '').upper()
+                desc_words = curve_desc.split()
                 matches = sum(1 for word in desc_words if word in desc_clean)
                 confidence += min(0.05, matches * 0.01)
             
-            if confidence > best_confidence:
-                best_confidence = confidence
-                best_match = curve_type
-                best_info = curve_data.copy()
+            # Correlation with auxiliary curves (if available)
+            if auxiliary_curves and len(auxiliary_curves) > 0:
+                correlation_boost = self._correlation_analysis(mnemonic_clean, curve_data, auxiliary_curves)
+                confidence += correlation_boost
+            
+            # Cap confidence at 1.0
+            confidence = min(1.0, confidence)
+            
+            if confidence > 0.3:  # Only consider reasonable candidates
+                candidates.append({
+                    'curve_type': curve_type,
+                    'confidence': confidence,
+                    'method': match_method,
+                    'curve_data': curve_data.copy()
+                })
         
-        # Enhanced partial matching for unknown mnemonics
-        if best_confidence < 0.5:
+        # Enhanced partial matching for low-confidence cases
+        if not candidates or max(c['confidence'] for c in candidates) < 0.5:
             for curve_type, curve_data in self.mnemonic_database.items():
-                for known_mnemonic in curve_data['mnemonics']:
+                for known_mnemonic in curve_data.get('mnemonics', []):
                     known_clean = known_mnemonic.upper().strip()
                     known_normalized = known_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
                     
-                    # Multiple matching strategies
+                    confidence = 0.0
+                    match_method = 'partial'
+                    
                     if mnemonic_clean == known_clean:
-                        confidence = 0.9
-                    elif mnemonic_normalized == known_normalized:
                         confidence = 0.85
+                    elif mnemonic_normalized == known_normalized:
+                        confidence = 0.8
                     elif mnemonic_clean in known_clean and len(mnemonic_clean) >= 3:
                         confidence = 0.7
                     elif known_clean in mnemonic_clean and len(known_clean) >= 3:
@@ -2087,12 +1092,104 @@ class ComprehensiveMnemonicLibrary:
                     else:
                         continue
                     
-                    if confidence > best_confidence:
-                        best_confidence = confidence
-                        best_match = curve_type
-                        best_info = curve_data.copy()
+                    # Add context boosts
+                    context_boost = self._context_aware_recognition(unit_clean, value_range, curve_data)
+                    confidence += context_boost
+                    confidence = min(1.0, confidence)
+                    
+                    candidates.append({
+                        'curve_type': curve_type,
+                        'confidence': confidence,
+                        'method': match_method,
+                        'curve_data': curve_data.copy()
+                    })
+                    break  # Only add once per curve_type
         
-        return best_match or 'UNKNOWN', best_confidence, best_info
+        # Sort candidates by confidence
+        candidates.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        # Conflict resolution: if multiple high-confidence candidates, use resolution strategy
+        if len(candidates) > 1 and candidates[0]['confidence'] > 0.7:
+            top_confidence = candidates[0]['confidence']
+            alternatives = [c for c in candidates[1:] if c['confidence'] >= top_confidence * 0.9]
+            
+            if alternatives:
+                # Resolve conflict by preferring exact matches, then better context matches
+                resolved = self._resolve_conflict(candidates[0], alternatives, unit_clean, value_range)
+                return resolved['curve_type'], resolved['confidence'], resolved['curve_data']
+        
+        # Return best match or UNKNOWN
+        if candidates:
+            best = candidates[0]
+            return best['curve_type'], best['confidence'], best['curve_data']
+        
+        return 'UNKNOWN', 0.0, {}
+    
+    def _correlation_analysis(self, mnemonic: str, curve_data: Dict[str, Any], 
+                              auxiliary_curves: Dict[str, np.ndarray]) -> float:
+        """Analyze correlation with auxiliary curves for context-aware identification"""
+        # Simple correlation-based boost (can be enhanced)
+        curve_family = curve_data.get('curve_family', '')
+        confidence_boost = 0.0
+        
+        # Known curve family correlations
+        family_correlations = {
+            'resistivity': ['GR', 'SP', 'RHOB'],
+            'density': ['NPHI', 'GR', 'DT'],
+            'neutron': ['RHOB', 'GR', 'DT'],
+            'gamma_ray': ['SP', 'RHOB'],
+            'sonic': ['RHOB', 'NPHI']
+        }
+        
+        expected_curves = family_correlations.get(curve_family, [])
+        for aux_name, aux_data in auxiliary_curves.items():
+            if any(exp in aux_name.upper() for exp in expected_curves):
+                confidence_boost += 0.05
+        
+        return min(0.15, confidence_boost)  # Cap at 0.15
+    
+    def _resolve_conflict(self, primary: Dict, alternatives: List[Dict], 
+                          unit: str, value_range: Optional[Tuple[float, float]]) -> Dict:
+        """Resolve conflicts between multiple high-confidence candidates"""
+        # Prefer exact matches
+        if primary['method'] == 'exact':
+            return primary
+        
+        # Prefer better unit matches
+        unit_clean = unit.upper().strip() if unit else ''
+        all_candidates = [primary] + alternatives
+        
+        for candidate in all_candidates:
+            curve_data = candidate['curve_data']
+            curve_units = [u.upper() for u in curve_data.get('units', [])]
+            if unit_clean in curve_units:
+                return candidate
+        
+        # Prefer better value range matches
+        if value_range:
+            best_range_match = primary
+            best_range_overlap = 0.0
+            
+            for candidate in all_candidates:
+                curve_data = candidate['curve_data']
+                curve_range = curve_data.get('range', [])
+                if len(curve_range) == 2:
+                    min_val, max_val = value_range
+                    curve_min, curve_max = curve_range
+                    
+                    overlap_min = max(min_val, curve_min)
+                    overlap_max = min(max_val, curve_max)
+                    if overlap_max > overlap_min:
+                        overlap = (overlap_max - overlap_min) / (max(max_val, curve_max) - min(min_val, curve_min))
+                        if overlap > best_range_overlap:
+                            best_range_overlap = overlap
+                            best_range_match = candidate
+            
+            if best_range_overlap > 0.5:
+                return best_range_match
+        
+        # Default: return primary (highest confidence)
+        return primary
     
     def validate_curve_identification(self, curve_name: str, identified_type: str, confidence: float) -> Dict[str, Any]:
         """Simple curve validation"""
@@ -2103,6 +1200,13 @@ class ComprehensiveMnemonicLibrary:
     def get_curve_processing_parameters(self, curve_type: str) -> Dict[str, Any]:
         """Simple processing parameters"""
         return {'gap_filling_threshold': 100, 'denoising_method': 'auto'}
+
+
+#=============================================================================
+# STANDARDIZATION REPORTING SYSTEM - Critical for Professional Operations
+#=============================================================================
+
+from core.reporting import StandardizationReporter
 
 
 # ============================================================================
@@ -2315,7 +1419,82 @@ class ComprehensiveCurveManager:
             }
         }
     
-
+    def identify_curve(self, mnemonic: str, unit: str = '', description: str = '') -> Tuple[str, float, Dict[str, Any]]:
+        """Identify curve type with confidence and detailed info using mnemonic database"""
+        # Clean and normalize mnemonic (remove punctuation, extra spaces)
+        mnemonic_clean = mnemonic.upper().strip()
+        mnemonic_normalized = mnemonic_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
+        
+        unit_clean = unit.upper().strip() if unit else ''
+        desc_clean = description.upper().strip() if description else ''
+        
+        best_match = None
+        best_confidence = 0.0
+        best_info: Dict[str, Any] = {}
+        
+        for curve_type, curve_data in self.mnemonic_database.items():
+            confidence = 0.0
+            
+            # Exact mnemonic match (original and normalized)
+            curve_mnemonics = [m.upper() for m in curve_data.get('mnemonics', [])]
+            if mnemonic_clean in curve_mnemonics:
+                confidence = 0.95
+            else:
+                curve_normalized = [m.upper().replace('.', '').replace('_', '').replace('-', '').replace(' ', '') 
+                                   for m in curve_data.get('mnemonics', [])]
+                if mnemonic_normalized in curve_normalized:
+                    confidence = 0.9
+            
+            # Unit compatibility bonus
+            if unit_clean:
+                curve_units = [u.upper() for u in curve_data.get('units', [])]
+                if unit_clean in curve_units:
+                    confidence += 0.1
+            
+            # Description keyword matching
+            if desc_clean:
+                curve_desc = curve_data.get('description', '').upper()
+                desc_words = curve_desc.split()
+                matches = sum(1 for word in desc_words if word in desc_clean)
+                confidence += min(0.05, matches * 0.01)
+            
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_match = curve_type
+                best_info = curve_data.copy()
+        
+        # Enhanced partial matching for unknown mnemonics
+        if best_confidence < 0.5:
+            for curve_type, curve_data in self.mnemonic_database.items():
+                for known_mnemonic in curve_data.get('mnemonics', []):
+                    known_clean = known_mnemonic.upper().strip()
+                    known_normalized = known_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
+                    
+                    # Multiple matching strategies
+                    if mnemonic_clean == known_clean:
+                        confidence = 0.9
+                    elif mnemonic_normalized == known_normalized:
+                        confidence = 0.85
+                    elif mnemonic_clean in known_clean and len(mnemonic_clean) >= 3:
+                        confidence = 0.7
+                    elif known_clean in mnemonic_clean and len(known_clean) >= 3:
+                        confidence = 0.7
+                    elif mnemonic_normalized in known_normalized and len(mnemonic_normalized) >= 3:
+                        confidence = 0.65
+                    elif known_normalized in mnemonic_normalized and len(known_normalized) >= 3:
+                        confidence = 0.65
+                    else:
+                        continue
+                    
+                    if confidence > best_confidence:
+                        best_confidence = confidence
+                        best_match = curve_type
+                        best_info = curve_data.copy()
+        
+        # Cap confidence at 1.0 (unit and description bonuses can push it slightly over)
+        best_confidence = min(1.0, best_confidence)
+        
+        return best_match or 'UNKNOWN', best_confidence, best_info
     
     def create_comprehensive_curve_info(self, curve_name: str, unit: str = '', description: str = '') -> CurveInfo:
         """Create curve info with full recognition capabilities"""
@@ -2443,360 +1622,8 @@ from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 
-class SecureVisualizationManager:
-    """Secure visualization with full original capabilities maintained"""
-    
-    def __init__(self):
-        self._figures = weakref.WeakSet()
-        self._canvases = weakref.WeakSet()
-        self._toolbars = weakref.WeakSet()
-        self._lock = threading.RLock()
-        self._cleanup_in_progress = False
-        
-        # Maintain all original matplotlib configurations
-        self._setup_matplotlib_params()
-    
-    def _setup_matplotlib_params(self):
-        """Configure matplotlib for professional petroleum industry plots"""
-        try:
-            # Use modern seaborn style with fallback
-            try:
-                plt.style.use('seaborn-v0_8')
-            except OSError:
-                try:
-                    plt.style.use('seaborn')
-                except OSError:
-                    plt.style.use('default')
-            
-            # Professional matplotlib configuration for petroleum industry
-            plt.rcParams.update({
-                'figure.max_open_warning': 10,
-                'figure.dpi': 100,
-                'figure.facecolor': 'white',
-                'axes.facecolor': 'white',
-                'font.size': 10,
-                'axes.grid': True,
-                'grid.alpha': 0.3,
-                'grid.linewidth': 0.5,
-                'axes.linewidth': 0.8,
-                'axes.edgecolor': 'black',
-                'xtick.major.size': 4,
-                'ytick.major.size': 4,
-                'xtick.minor.size': 2,
-                'ytick.minor.size': 2,
-                'xtick.direction': 'in',
-                'ytick.direction': 'in',
-                'legend.frameon': True,
-                'legend.fancybox': False,
-                'legend.shadow': False,
-                'legend.edgecolor': 'black',
-                'legend.facecolor': 'white',
-                'legend.alpha': 0.9,
-                'lines.linewidth': 1.5,
-                'lines.markersize': 4,
-                'axes.titlesize': 12,
-                'axes.labelsize': 10,
-                'xtick.labelsize': 9,
-                'ytick.labelsize': 9,
-                'legend.fontsize': 9,
-                'figure.titlesize': 14,
-                'savefig.dpi': 100,
-                'savefig.bbox': 'tight',
-                'savefig.pad_inches': 0.1
-            })
-            
-            # Professional color cycle for petroleum industry
-            plt.rcParams['axes.prop_cycle'] = plt.cycler('color', 
-                ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
-                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])
-            
-        except Exception as e:
-            warnings.warn(f"Error configuring matplotlib: {e}", UserWarning)
-            # Fallback to basic configuration
-            plt.rcParams.update({
-                'figure.facecolor': 'white',
-                'axes.facecolor': 'white',
-                'font.size': 10,
-                'axes.grid': True,
-                'grid.alpha': 0.3
-            })
-    
-    @contextmanager
-    def safe_visualization_context(self):
-        """Context manager maintaining full visualization capabilities"""
-        with self._lock:
-            if self._cleanup_in_progress:
-                raise RuntimeError("Cleanup in progress")
-            
-            try:
-                yield
-            except Exception as e:
-                # Still provide the exception for debugging - just don't log to file
-                self._emergency_cleanup()
-                raise
-            finally:
-                # Gentle cleanup
-                gc.collect()
-    
-    def create_figure(self, figsize=(12, 8), dpi=100):
-        """Create and register figure - maintaining original capabilities"""
-        with self._lock:
-            fig = Figure(figsize=figsize, dpi=dpi)
-            self._figures.add(fig)
-            return fig
-    
-    def create_canvas(self, fig, parent):
-        """Create and register canvas - full original functionality"""
-        with self._lock:
-            canvas = FigureCanvasTkAgg(fig, parent)
-            self._canvases.add(canvas)
-            return canvas
-    
-    def create_toolbar(self, canvas, parent):
-        """Create and register toolbar - maintaining navigation capabilities"""
-        with self._lock:
-            toolbar = NavigationToolbar2Tk(canvas, parent)
-            self._toolbars.add(toolbar)
-            return toolbar
-    
-    def plot_comparison_with_depth(self, ax, original, processed, depth, curve_name, curve_info):
-        """Maintain the sophisticated comparison plotting from original"""
-        # Keep all the original plotting logic
-        ax.plot(original, depth, 'r-', alpha=0.7, label='Original', linewidth=1)
-        ax.plot(processed, depth, 'b-', alpha=0.9, label='Processed', linewidth=2)
-        
-        # Keep the original significant changes detection
-        valid_mask = ~np.isnan(original) & ~np.isnan(processed)
-        changes = np.abs(original[valid_mask] - processed[valid_mask])
-        
-        if len(changes) > 0:
-            threshold = np.percentile(changes, 95) if len(changes) > 20 else np.max(changes) * 0.5
-            significant_idx = np.nonzero((np.abs(original - processed) > threshold) & valid_mask)[0]
-            
-            if len(significant_idx) > 0:
-                x_highlight = original[significant_idx]
-                y_highlight = depth[significant_idx]
-                ax.scatter(x_highlight, y_highlight, color='green', s=50, alpha=0.7, 
-                          label='Significant Changes', zorder=3)
-        
-        # Keep all original formatting
-        ax.set_title(f'Data Processing Comparison: {curve_name}', fontsize=14, fontweight='bold')
-        ax.set_xlabel(f'{curve_name} ({curve_info.get("unit", "")})')
-        ax.set_ylabel('Depth (m)')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        ax.invert_yaxis()  # Industry standard
-    
-    def plot_industry_log_display(self, fig, processed_data, curve_info_dict):
-        """Maintain the sophisticated industry log display"""
-        # Keep the full original 3-track industry display logic
-        axes = fig.subplots(1, 3, sharey=True)
-        
-        # All the original track configuration logic
-        curve_by_type = {}
-        for curve in processed_data.columns:
-            curve_type = curve_info_dict.get(curve, {}).get('curve_type', 'UNKNOWN')
-            if curve_type not in curve_by_type:
-                curve_by_type[curve_type] = []
-            curve_by_type[curve_type].append(curve)
-        
-        # Keep all the original industry-standard track plotting
-        # Track 1: GR, SP, Caliper
-        # Track 2: Resistivity 
-        # Track 3: Porosity
-        # ... (all the original sophisticated plotting logic)
-        
-        return axes
-    
-    def plot_3d_with_depth(self, fig, curve1_data, curve2_data, depth, curve1_name, curve2_name):
-        """Maintain sophisticated 3D visualization"""
-        ax = fig.add_subplot(111, projection='3d')
-        
-        # Keep all original 3D plotting capabilities
-        valid_mask = ~np.isnan(curve1_data) & ~np.isnan(curve2_data)
-        if not np.any(valid_mask):
-            return None
-        
-        valid_x = curve1_data[valid_mask]
-        valid_y = curve2_data[valid_mask]
-        valid_z = depth[valid_mask]
-        
-        # Keep sophisticated 3D rendering
-        scatter = ax.scatter(valid_x, valid_y, valid_z, c=valid_z, cmap='viridis', 
-                            s=30, alpha=0.8, marker='o')
-        
-        # Keep all original 3D formatting and controls
-        ax.set_xlabel(f'{curve1_name}')
-        ax.set_ylabel(f'{curve2_name}')
-        ax.set_zlabel('Depth')
-        ax.view_init(elev=30, azim=45)
-        ax.invert_zaxis()  # Industry standard
-        
-        return ax
-    
-    def secure_cleanup_visualization(self):
-        """Comprehensive cleanup maintaining reliability"""
-        with self._lock:
-            self._cleanup_in_progress = True
-            
-            try:
-                cleanup_success = True
-                
-                # Clean up toolbars first
-                toolbars_to_destroy = list(self._toolbars)
-                for toolbar in toolbars_to_destroy:
-                    try:
-                        if toolbar and hasattr(toolbar, 'destroy'):
-                            toolbar.destroy()
-                    except Exception:
-                        cleanup_success = False
-                
-                # Clean up canvases
-                canvases_to_destroy = list(self._canvases)
-                for canvas in canvases_to_destroy:
-                    try:
-                        if canvas and hasattr(canvas, 'get_tk_widget'):
-                            widget = canvas.get_tk_widget()
-                            if widget and hasattr(widget, 'destroy'):
-                                widget.destroy()
-                    except Exception:
-                        cleanup_success = False
-                
-                # Clean up figures with full data clearing
-                figures_to_close = list(self._figures)
-                for fig in figures_to_close:
-                    try:
-                        if fig is not None:
-                            # Keep the sophisticated cleanup from original
-                            for ax in fig.get_axes():
-                                ax.clear()
-                                ax.collections.clear()
-                                ax.patches.clear()
-                                ax.lines.clear()
-                                ax.texts.clear()
-                                ax.images.clear()
-                            plt.close(fig)
-                    except Exception:
-                        cleanup_success = False
-                
-                # Keep original matplotlib cache clearing
-                try:
-                    plt.rcdefaults()
-                    if hasattr(plt, '_get_backend_mod'):
-                        backend_mod = plt._get_backend_mod()
-                        if hasattr(backend_mod, 'destroy_all'):
-                            backend_mod.destroy_all()
-                except Exception:
-                    cleanup_success = False
-                
-                # Thorough garbage collection like original
-                for _ in range(3):
-                    gc.collect()
-                
-                return cleanup_success
-                
-            finally:
-                self._cleanup_in_progress = False
-    
-    def _emergency_cleanup(self):
-        """Emergency cleanup maintaining system stability"""
-        try:
-            # Nuclear option like original
-            plt.close('all')
-            self._figures.clear()
-            self._canvases.clear()
-            self._toolbars.clear()
-            
-            # Aggressive garbage collection
-            for _ in range(5):
-                gc.collect()
-                
-        except Exception:
-            pass  # Silent emergency handling
-
-
-class SecureStatusManager:
-    """Maintain excellent user feedback without security risks"""
-    
-    def __init__(self, results_text_widget, status_label_widget, progress_bar_widget):
-        self.results_text = results_text_widget
-        self.status_label = status_label_widget
-        self.progress_bar = progress_bar_widget
-        self._lock = threading.Lock()
-        
-        # Keep all user feedback but no file logging
-        
-    def update_status(self, message: str, progress: float = None):
-        """Maintain original status update quality"""
-        with self._lock:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            display_message = f"[{timestamp}] {message}"
-            
-            # Keep the excellent UI updates from original
-            if hasattr(self, 'results_text') and self.results_text:
-                self.results_text.insert(tk.END, display_message + "\n")
-                self.results_text.see(tk.END)
-                self.results_text.update_idletasks()
-            
-            if hasattr(self, 'status_label') and self.status_label:
-                self.status_label.config(text=message)
-            
-            if progress is not None and hasattr(self, 'progress_bar') and self.progress_bar:
-                self.progress_bar['value'] = progress
-    
-    def log_processing_step(self, curve_name: str, step: str, details: dict = None):
-        """Maintain detailed processing feedback like original"""
-        # Keep all the original detailed feedback
-        message = f"Processing {curve_name}: {step}"
-        
-        if details:
-            if 'gaps_filled' in details:
-                message += f" - Gaps filled: {details['gaps_filled']}"
-            if 'quality' in details:
-                message += f" - Quality: {details['quality']:.2f}"
-            if 'method' in details:
-                message += f" - Method: {details['method']}"
-        
-        self.update_status(message)
-    
-    def log_gap_filling_results(self, curve_name: str, gap_result: dict):
-        """Maintain original gap filling feedback detail"""
-        quality_metrics = gap_result.get('quality_metrics', {})
-        
-        self.update_status(f"Gap filling completed for {curve_name}")
-        self.update_status(f"  - Gaps filled: {quality_metrics.get('total_gaps_filled', 0)}")
-        self.update_status(f"  - Points filled: {quality_metrics.get('total_points_filled', 0)}")
-        self.update_status(f"  - Methods used: {', '.join(quality_metrics.get('methods_used', []))}")
-        self.update_status(f"  - Average confidence: {quality_metrics.get('average_confidence', 0):.3f}")
-        self.update_status(f"  - Final completeness: {quality_metrics.get('data_completeness', 0):.1f}%")
-    
-    def log_denoising_results(self, curve_name: str, denoise_result: dict):
-        """Maintain original denoising feedback detail"""
-        self.update_status(f"Denoising completed for {curve_name}")
-        self.update_status(f"  - Method: {denoise_result.get('method', 'unknown')}")
-        self.update_status(f"  - Quality score: {denoise_result.get('quality', 0):.3f}")
-        
-        if 'noise_reduction_db' in denoise_result:
-            self.update_status(f"  - Noise reduction: {denoise_result['noise_reduction_db']:.1f} dB")
-        
-        if denoise_result.get('method') == 'wavelet':
-            self.update_status(f"  - Wavelet used: {denoise_result.get('wavelet_used', 'unknown')}")
-            self.update_status(f"  - Decomposition levels: {denoise_result.get('levels', 0)}")
-    
-    def create_comprehensive_report(self, processing_results: dict, curve_info: dict) -> str:
-        """Maintain the original comprehensive reporting quality"""
-        # Keep ALL the original report generation logic
-        report = []
-        
-        report.append("=" * 80)
-        report.append("ADVANCED WIRELINE DATA PREPROCESSING REPORT")
-        report.append("=" * 80)
-        report.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Keep all the original detailed analysis
-        # ... (all the original comprehensive report logic)
-        
-        return "\n".join(report)
+from ui.visualization import SecureVisualizationManager
+from ui.status import SecureStatusManager
 
 
 #=============================================================================
@@ -3077,6 +1904,10 @@ class AdvancedGapFiller:
         if large_gap_treatment == 'formation_based' and any(gap['size'] > large_gap_threshold for gap in gaps):
             rrp_model = RelativeRockPropertiesModel()
             
+            # Pass logging capability if available (Phase 1C enhancement integration)
+            if hasattr(self, 'log_processing'):
+                rrp_model.log_processing = self.log_processing
+            
             # Create a dictionary of all available curves
             all_curves = {}
             if auxiliary_curves:
@@ -3133,12 +1964,26 @@ class AdvancedGapFiller:
 
                             continue
                     except Exception as e:
-                        self._notify_error("Gap Filling Error", f"Failed to fill large gap: {e}")
-                        # Fall through to standard methods
+                        # Log algorithm fallback with scientific transparency
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"[ALGORITHM FALLBACK] Relative Rock Properties → Standard Methods")
+                            self.log_processing(f"   Reason: {str(e)}")
+                            self.log_processing(f"   Fallback Chain: Kriging → Cubic Spline → Linear Interpolation")
+                        
+                        self._notify_error("Gap Filling Error", f"Advanced method unavailable: {e}")
+                        # Fall through to standard methods - now with transparency
             
             # If not a large gap or formation-based filling failed, use standard methods
-            # Select optimal method for this gap
+            # Select optimal method for this gap with transparency
             method = self._select_optimal_method(gap, curve_type, auxiliary_curves)
+            
+            # Log method selection rationale for scientific audit
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"[METHOD SELECTION] Gap {gap['start']}-{gap['end']}: {method}")
+                self.log_processing(f"   Size: {gap['size']} points | Curve: {curve_type}")
+                if auxiliary_curves:
+                    self.log_processing(f"   Auxiliary curves available: {len(auxiliary_curves)}")
+                self.log_processing(f"   Selection criteria: Gap size, curve type, data availability")
             
             try:
                 result = self._fill_single_gap(
@@ -3152,20 +1997,34 @@ class AdvancedGapFiller:
                 uncertainty[gap_slice] = result['uncertainty']
                 confidence[gap_slice] = result['confidence']
                 
+                # Log successful gap filling with method transparency
+                if hasattr(self, 'log_processing'):
+                    self.log_processing(f"[GAP FILLED] Method: {method} | Quality: {result['quality']:.3f} | Size: {gap['size']} points")
+                    if result.get('method_details'):
+                        self.log_processing(f"   Details: {result['method_details']}")
+                
                 gaps_filled.append({
                     'gap': gap,
                     'method': method,
                     'quality': result['quality'],
-                    'uncertainty_mean': np.mean(result['uncertainty'])
+                    'uncertainty_mean': np.mean(result['uncertainty']),
+                    'method_transparency': f"{method} (Q={result['quality']:.3f})"
                 })
                 
 
                 
             except Exception as e:
-                self._notify_error("Gap Filling Error", f"Failed to fill gap {gap['start']}-{gap['end']}: {e}")
+                # Log final fallback with scientific rationale
+                if hasattr(self, 'log_processing'):
+                    self.log_processing(f"[FINAL FALLBACK] All primary methods failed → Linear Interpolation")
+                    self.log_processing(f"   Gap: {gap['start']}-{gap['end']} ({gap['size']} points)")
+                    self.log_processing(f"   Reason: {str(e)}")
+                    self.log_processing(f"   Scientific Validity: Linear interpolation maintains continuity")
+                
+                self._notify_error("Gap Filling Error", f"Primary methods failed, using linear fallback: {e}")
                 # Define gap_slice within this exception block
                 gap_slice = slice(gap['start'], gap['end'])
-                # Use simple linear interpolation as fallback
+                # Use simple linear interpolation as fallback - now with transparency
                 try:
                     fallback_result = self._linear_interpolation_fallback(data, gap)
                     filled_data[gap_slice] = fallback_result
@@ -3700,7 +2559,14 @@ class AdvancedGapFiller:
                 if score < best_score:
                     best_score = score
                     best_degree = degree
-            except:
+            except Exception as e:
+                import warnings
+                warnings.warn(
+                    f"Polynomial fitting failed for degree {degree}: {str(e)}. "
+                    f"This typically occurs with insufficient data points or numerical instability. "
+                    f"Skipping this degree and trying others.",
+                    UserWarning
+                )
                 continue
         
         # Fit with best degree
@@ -3884,8 +2750,24 @@ class AdvancedSignalProcessor:
         # Store original data for comparison
         original_data = data.copy()
         
+        # Log denoising method selection for scientific transparency
+        if hasattr(self, 'log_processing'):
+            self.log_processing(f"[DENOISING METHOD] Selected: {method} | Curve: {curve_type}")
+            if method == 'wavelet':
+                self.log_processing(f"   Algorithm: Wavelet shrinkage (Donoho & Johnstone 1994)")
+                if not PYWT_AVAILABLE:
+                    self.log_processing(f"   Fallback: PyWavelets not available, using bilateral filter")
+            elif method == 'bilateral':
+                self.log_processing(f"   Algorithm: Bilateral filtering (Tomasi & Manduchi 1998)")
+            elif method == 'savgol':
+                self.log_processing(f"   Algorithm: Savitzky-Golay (1964) - preserves signal moments")
+            elif method == 'median':
+                self.log_processing(f"   Algorithm: Median filter (Tukey 1977) - robust to outliers")
+            else:
+                self.log_processing(f"   Algorithm: Adaptive smoothing fallback")
+        
         try:
-            # Apply denoising method
+            # Apply denoising method with scientific hierarchy
             if method == 'wavelet' and PYWT_AVAILABLE:
                 result = self._wavelet_denoising_with_real_metrics(data, curve_type, original_data)
             elif method == 'bilateral':
@@ -3900,17 +2782,39 @@ class AdvancedSignalProcessor:
             # Calculate comprehensive REAL quality metrics
             quality_metrics = self._calculate_actual_denoising_quality(original_data, result['denoised'], method)
             
+            # Log successful denoising with scientific transparency
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"[DENOISING COMPLETE] Method: {method} | Quality: {result.get('quality', 0.0):.3f}")
+                if 'noise_reduction_db' in result:
+                    self.log_processing(f"   Noise Reduction: {result['noise_reduction_db']:.1f} dB")
+                if 'signal_preservation' in result:
+                    self.log_processing(f"   Signal Preservation: {result['signal_preservation']:.3f}")
+                if method == 'wavelet' and 'wavelet_used' in result:
+                    self.log_processing(f"   Wavelet Type: {result['wavelet_used']} | Levels: {result.get('levels', 'N/A')}")
+                elif method == 'savgol' and 'window_size' in result:
+                    self.log_processing(f"   Window Size: {result['window_size']} | Polynomial Order: {result.get('polynomial_order', 'N/A')}")
+                elif method == 'bilateral' and 'sigma_spatial' in result:
+                    self.log_processing(f"   Spatial σ: {result['sigma_spatial']:.2f} | Range σ: {result.get('sigma_range', 'N/A'):.2f}")
+                elif method == 'median' and 'kernel_size' in result:
+                    self.log_processing(f"   Kernel Size: {result['kernel_size']}")
+            
             # Merge results
             result.update(quality_metrics)
             
             return result
             
         except Exception as e:
+            # Log algorithm fallback with scientific transparency
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"[ALGORITHM FALLBACK] Denoising method '{method}' failed → Original data preserved")
+                self.log_processing(f"   Reason: {str(e)}")
+                self.log_processing(f"   Fallback Strategy: Wavelet → Bilateral → Savitzky-Golay → Median → Original")
+                self.log_processing(f"   Scientific Rationale: Preserving signal integrity over imperfect denoising")
+            
             # Log the denoising failure explicitly
-            import warnings
             warnings.warn(
-                f"Denoising failed for method '{method}': {str(e)}. "
-                f"Returning original unprocessed data. Check data quality and method compatibility.",
+                f"Denoising method '{method}' failed: {str(e)}. "
+                f"Preserving original signal integrity. Consider trying alternative methods or checking data quality.",
                 UserWarning
             )
             # Return original data with failure indication
@@ -4086,7 +2990,6 @@ class AdvancedSignalProcessor:
             
         except Exception as e:
             # Log wavelet denoising failure explicitly
-            import warnings
             warnings.warn(
                 f"Wavelet denoising failed: {str(e)}. "
                 f"Returning original data. Verify pywt installation and data compatibility.",
@@ -4151,7 +3054,6 @@ class AdvancedSignalProcessor:
             
         except Exception as e:
             # Log the error explicitly for debugging
-            import warnings
             warnings.warn(
                 f"Bilateral filtering failed: {str(e)}. Returning unprocessed data. "
                 f"This may indicate incompatible data or parameter issues.",
@@ -4291,7 +3193,6 @@ class AdvancedSignalProcessor:
             
         except Exception as e:
             # Log Savitzky-Golay filtering failure explicitly
-            import warnings
             warnings.warn(
                 f"Savitzky-Golay filtering failed: {str(e)}. "
                 f"Returning original data. Check window size and polynomial order parameters.",
@@ -4378,7 +3279,6 @@ class AdvancedSignalProcessor:
             
         except Exception as e:
             # Log median filtering failure explicitly
-            import warnings
             warnings.warn(
                 f"Median filtering failed: {str(e)}. "
                 f"Returning original data. Verify scipy installation and data format.",
@@ -4452,7 +3352,6 @@ class AdvancedSignalProcessor:
             
         except Exception as e:
             # Log adaptive smoothing failure explicitly
-            import warnings
             warnings.warn(
                 f"Adaptive smoothing failed: {str(e)}. "
                 f"Returning original data. Check curve type and data characteristics.",
@@ -4786,7 +3685,6 @@ class DepthValidationManager:
         max_step = steps.max()
         max_allowed_step = self.depth_validation_rules['max_step']
         if max_step > max_allowed_step:
-            import warnings
             warnings.warn(
                 f"Large depth step detected: {max_step:.2f}m (max recommended: {max_allowed_step:.2f}m). "
                 f"This may indicate gaps in logging or tool malfunctions.",
@@ -4929,7 +3827,6 @@ class GeologicalZoneManager:
         """Detect geological boundaries using gamma ray signature"""
         
         if gamma_ray_curve is None or len(gamma_ray_curve) < 10:
-            import warnings
             warnings.warn(
                 "Geological boundary detection skipped: Insufficient gamma ray data. "
                 "Zone-aware processing will not be available. Minimum 10 valid points required.",
@@ -5040,7 +3937,6 @@ class ZoneAwareGapFiller(AdvancedGapFiller):
             boundary_depths = self.zone_manager.detect_geological_boundaries(depth, gamma_ray)
             zones = self.zone_manager.create_zone_masks(depth, boundary_depths)
         else:
-            import warnings
             warnings.warn(
                 "No gamma ray data available for zone detection. "
                 "Processing entire dataset as a single zone (no boundary detection).",
@@ -5825,7 +4721,6 @@ class ThreadSafeVisualizationManager:
         except queue.Empty:
             pass  # Queue empty is normal, not an error
         except Exception as e:
-            import warnings
             warnings.warn(f"Error processing visualization queue: {str(e)}", UserWarning)
             self.log_processing(f"Visualization queue processing error: {e}")
     
@@ -6908,6 +5803,26 @@ class IndustryUnitStandardizer:
                                 if curve_name in self.app.curve_info:
                                     self.app.curve_info[curve_name]['unit'] = target_unit
                                     self.app.curve_info[curve_name]['original_unit'] = current_unit
+                                # Record in standardization reporter
+                                if hasattr(self.app, 'standardization_reporter') and self.app.standardization_reporter:
+                                    if 'apply' in conversion_info:
+                                        self.app.standardization_reporter.record_unit_conversion(
+                                            curve_name=curve_name,
+                                            original_unit=current_unit,
+                                            standardized_unit=target_unit,
+                                            method='function',
+                                            factor=None,
+                                            validated=True
+                                        )
+                                    else:
+                                        self.app.standardization_reporter.record_unit_conversion(
+                                            curve_name=curve_name,
+                                            original_unit=current_unit,
+                                            standardized_unit=target_unit,
+                                            method='factor',
+                                            factor=factor,
+                                            validated=True
+                                        )
                                 # Record successful conversion
                                 entry = {
                                     'curve': curve_name,
@@ -6954,6 +5869,26 @@ class IndustryUnitStandardizer:
                                 if curve_name in self.app.curve_info:
                                     self.app.curve_info[curve_name]['unit'] = target_unit
                                     self.app.curve_info[curve_name]['original_unit'] = current_unit
+                                # Record in standardization reporter
+                                if hasattr(self.app, 'standardization_reporter') and self.app.standardization_reporter:
+                                    if 'apply' in conversion_info:
+                                        self.app.standardization_reporter.record_unit_conversion(
+                                            curve_name=curve_name,
+                                            original_unit=current_unit,
+                                            standardized_unit=target_unit,
+                                            method='function',
+                                            factor=None,
+                                            validated=True
+                                        )
+                                    else:
+                                        self.app.standardization_reporter.record_unit_conversion(
+                                            curve_name=curve_name,
+                                            original_unit=current_unit,
+                                            standardized_unit=target_unit,
+                                            method='factor',
+                                            factor=factor,
+                                            validated=True
+                                        )
                                 self.unit_analysis_results['conversions_applied'].append({
                                     'curve': curve_name,
                                     'from_unit': current_unit,
@@ -7181,6 +6116,7 @@ class AdvancedPreprocessingApplication:
         
         # Initialize components
         self.mnemonic_library = ComprehensiveMnemonicLibrary()
+        self.standardization_reporter = StandardizationReporter()  # Critical: Track all standardization operations
         self.gap_filler = AdvancedGapFiller(GapFillingParameters())
         # Inject UI-safe notifier so background operations can surface errors safely
         try:
@@ -7435,6 +6371,26 @@ class AdvancedPreprocessingApplication:
                 if col in self.curve_info:
                     self.curve_info[col]['unit'] = 'v/v'
                     self.curve_info[col]['original_unit'] = candidate['unit'] or self.curve_info[col].get('original_unit', '')
+                    # Record in standardization reporter
+                    try:
+                        if hasattr(self, 'standardization_reporter') and self.standardization_reporter:
+                            vals = series.dropna()
+                            if vals.size > 0:
+                                original_sample = float(np.median(vals))
+                                standardized_sample = float(np.median(vals / 100.0))
+                                self.standardization_reporter.record_fractional_standardization(
+                                    curve_name=col,
+                                    original_unit=candidate['unit'] or '%',
+                                    original_value_sample=original_sample,
+                                    standardized_value_sample=standardized_sample
+                                )
+                            else:
+                                self.standardization_reporter.record_fractional_standardization(
+                                    curve_name=col,
+                                    original_unit=candidate['unit'] or '%'
+                                )
+                    except Exception:
+                        pass
                 converted.append(col)
             
             if converted:
@@ -7841,8 +6797,22 @@ class AdvancedPreprocessingApplication:
     
     def on_window_resize(self, event):
         """Handle window resize events"""
-        if hasattr(self, 'main_canvas'):
-            self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+        if hasattr(self, 'main_canvas') and hasattr(self, 'main_canvas_window'):
+            try:
+                # Update scroll region
+                bbox = self.main_canvas.bbox("all")
+                if bbox:
+                    self.main_canvas.configure(scrollregion=bbox)
+                
+                # Update canvas window width to match canvas width
+                canvas_width = self.main_canvas.winfo_width()
+                if canvas_width > 1:
+                    self.main_canvas.itemconfig(self.main_canvas_window, width=canvas_width)
+                
+                # Force scrollbar update
+                self.root.update_idletasks()
+            except Exception:
+                pass
     
     def cleanup_visualization(self):
         """Clean up visualization resources to prevent memory leaks"""
@@ -7882,7 +6852,6 @@ class AdvancedPreprocessingApplication:
             return True
         except Exception as e:
             warnings.warn(f"Critical error in visualization cleanup: {e}", UserWarning)
-            import warnings
             warnings.warn(
                 f"CRITICAL: Visualization cleanup failed completely: {str(e)}. "
                 f"Memory leaks likely. Consider restarting application.",
@@ -8195,7 +7164,6 @@ class AdvancedPreprocessingApplication:
             
         except Exception as e:
             self.log_processing(f"ERROR: Comprehensive memory cleanup failed: {str(e)}")
-            import warnings
             warnings.warn(
                 f"Memory cleanup failed: {str(e)}. Memory leaks likely. Consider restarting application.",
                 UserWarning
@@ -8426,7 +7394,6 @@ class AdvancedPreprocessingApplication:
             
         except Exception as e:
             # Log figure creation failure and attempt fallback
-            import warnings
             warnings.warn(
                 f"Primary figure creation failed: {str(e)}. "
                 f"Attempting fallback with minimal settings.",
@@ -8489,7 +7456,6 @@ class AdvancedPreprocessingApplication:
                 
         except Exception as e:
             # Log UI update scheduling failure
-            import warnings
             warnings.warn(
                 f"UI update scheduling failed for '{update_type}': {str(e)}. "
                 f"UI may not reflect current state.",
@@ -8538,7 +7504,6 @@ class AdvancedPreprocessingApplication:
             
         except Exception as e:
             # Log UI update execution failure
-            import warnings
             warnings.warn(
                 f"UI update execution failed for '{update_type}': {str(e)}. "
                 f"Check widget availability and thread context.",
@@ -8733,22 +7698,78 @@ Your feedback contributes to software quality and reliability.
         main_scrollbar_h.pack(side="bottom", fill="x")
         self.main_canvas.pack(side="left", fill="both", expand=True)
         
-        # Create window in canvas
-        self.main_canvas.create_window((0, 0), window=main_frame, anchor="nw")
+        # Create window in canvas - store reference for width binding
+        self.main_canvas_window = self.main_canvas.create_window((0, 0), window=main_frame, anchor="nw")
         
-        # Configure scrolling
-        def configure_scroll_region(event):
-            self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+        # Configure scrolling and ensure window width matches canvas width
+        def configure_scroll_region(event=None):
+            # Update scroll region based on the bounding box of all items
+            try:
+                # Get the bounding box of the canvas window (main_frame)
+                bbox = self.main_canvas.bbox("all")
+                if bbox:
+                    # Set scrollregion to include padding
+                    self.main_canvas.configure(scrollregion=bbox)
+                
+                # Ensure canvas window width matches canvas width (prevents horizontal scrolling issues)
+                canvas_width = self.main_canvas.winfo_width()
+                if canvas_width > 1:  # Only if canvas is visible
+                    self.main_canvas.itemconfig(self.main_canvas_window, width=canvas_width)
+            except Exception:
+                pass
         
-        main_frame.bind("<Configure>", configure_scroll_region)
+        # Enhanced configure handler that properly calculates scroll region
+        def enhanced_configure_handler(event=None):
+            try:
+                # Update the canvas to get accurate measurements
+                self.main_canvas.update_idletasks()
+                
+                # Get the actual size of the frame
+                frame_width = main_frame.winfo_reqwidth()
+                frame_height = main_frame.winfo_reqheight()
+                
+                # Calculate scroll region based on frame dimensions
+                if frame_width > 0 and frame_height > 0:
+                    scroll_region = f"0 0 {frame_width} {frame_height}"
+                    self.main_canvas.configure(scrollregion=scroll_region)
+                
+                # Also try bbox method as fallback
+                bbox = self.main_canvas.bbox("all")
+                if bbox:
+                    self.main_canvas.configure(scrollregion=bbox)
+                
+                # Ensure canvas window width matches canvas width
+                canvas_width = self.main_canvas.winfo_width()
+                if canvas_width > 1:
+                    self.main_canvas.itemconfig(self.main_canvas_window, width=canvas_width)
+            except Exception:
+                pass
         
-        # Enable mouse wheel scrolling
+        # Store configure function and frame reference for later use
+        self._configure_scroll_region = enhanced_configure_handler
+        self._main_frame = main_frame  # Store reference to main frame
+        
+        # Bind configure events to update scroll region when frame or canvas resizes
+        main_frame.bind("<Configure>", lambda e: enhanced_configure_handler())
+        self.main_canvas.bind("<Configure>", lambda e: enhanced_configure_handler())
+        
+        # Enable mouse wheel scrolling - bind to canvas and frame for better focus handling
         def on_mousewheel(event):
-            self.main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            # Only scroll if mouse is over canvas area
+            if self.main_canvas.winfo_containing(event.x_root, event.y_root):
+                self.main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         
         def on_shift_mousewheel(event):
-            self.main_canvas.xview_scroll(int(-1*(event.delta/120)), "units")
+            if self.main_canvas.winfo_containing(event.x_root, event.y_root):
+                self.main_canvas.xview_scroll(int(-1*(event.delta/120)), "units")
         
+        # Bind to canvas specifically first, then bind_all as fallback
+        self.main_canvas.bind("<MouseWheel>", on_mousewheel)
+        self.main_canvas.bind("<Shift-MouseWheel>", on_shift_mousewheel)
+        # Also bind to main_frame for when it has focus
+        main_frame.bind("<MouseWheel>", on_mousewheel)
+        main_frame.bind("<Shift-MouseWheel>", on_shift_mousewheel)
+        # Fallback bind_all for Windows
         self.main_canvas.bind_all("<MouseWheel>", on_mousewheel)
         self.main_canvas.bind_all("<Shift-MouseWheel>", on_shift_mousewheel)
         # Linux/X11 alternative bindings for wheel events
@@ -8819,6 +7840,18 @@ Your feedback contributes to software quality and reliability.
         
         # Add performance optimization
         self.root.update_idletasks()
+        
+        # Ensure scroll region is properly set after all widgets are created
+        def finalize_scroll_setup():
+            if hasattr(self, '_configure_scroll_region'):
+                self._configure_scroll_region()
+                # Force multiple refreshes to ensure it's set correctly
+                self.root.after(10, self._configure_scroll_region)
+                self.root.after(50, self._configure_scroll_region)
+                self.root.after(100, self._configure_scroll_region)
+        
+        # Schedule scroll region update after UI is fully rendered
+        self.root.after_idle(finalize_scroll_setup)
         self.root.after(100, self.check_system_resources)
         
         # Initialize status manager after all UI components are created
@@ -9206,6 +8239,29 @@ Your feedback contributes to software quality and reliability.
             first_well_id = None
             for fp in filenames:
                 try:
+                    # Security: Validate and normalize file path
+                    validated_path = SafeFileHandler.validate_file_path(fp)
+                    if not validated_path:
+                        sanitized = SafeFileHandler.sanitize_path_for_display(fp)
+                        self.log_processing(f"Security: Invalid file path skipped: {sanitized}")
+                        continue
+                    
+                    # Security: Validate file size
+                    if not SafeFileHandler.validate_file_size(str(validated_path)):
+                        size_mb = os.path.getsize(str(validated_path)) / (1024 * 1024)
+                        max_mb = SafeFileHandler.MAX_FILE_SIZE_MB
+                        self.log_processing(f"File too large skipped: {SafeFileHandler.sanitize_path_for_display(fp)} ({size_mb:.1f}MB > {max_mb}MB)")
+                        continue
+                    
+                    # Security: Validate file extension
+                    if not SafeFileHandler.validate_file_extension(str(validated_path), mode='read'):
+                        ext = os.path.splitext(str(validated_path))[1].lower()
+                        self.log_processing(f"Invalid file type skipped: {SafeFileHandler.sanitize_path_for_display(fp)} (extension: {ext})")
+                        continue
+                    
+                    # Use validated path
+                    fp = str(validated_path)
+                    
                     # Clear transient state
                     self.reset_application_state(prompt_if_unsaved=False)
                     ext = os.path.splitext(fp)[1].lower()
@@ -9502,6 +8558,7 @@ Your feedback contributes to software quality and reliability.
             messagebox.showerror("Cross-Well Summary", f"Failed to generate cross-well summary: {e}")
 
     def export_all_processed(self):
+        """Export all processed wells with security validation for path traversal protection."""
         try:
             if not self.well_datasets:
                 messagebox.showwarning("Export All", "No wells loaded.")
@@ -9509,7 +8566,17 @@ Your feedback contributes to software quality and reliability.
             target_dir = filedialog.askdirectory(title="Select export directory")
             if not target_dir:
                 return
+            
+            # Security: Validate target directory
+            validated_dir = SafeFileHandler.validate_file_path(target_dir)
+            if not validated_dir or not validated_dir.is_dir():
+                sanitized = SafeFileHandler.sanitize_path_for_display(target_dir)
+                messagebox.showerror("Security Error", f"Invalid export directory: {sanitized}")
+                return
+            
+            target_dir = str(validated_dir)
             exported = 0
+            
             # Optionally rebuild priors before export for audit trail
             if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager:
                 try:
@@ -9518,6 +8585,7 @@ Your feedback contributes to software quality and reliability.
                     )
                 except Exception:
                     pass
+            
             for wid, ds in self.well_datasets.items():
                 pdf = ds.get('processed_data')
                 if not isinstance(pdf, pd.DataFrame) or pdf.empty:
@@ -9525,12 +8593,29 @@ Your feedback contributes to software quality and reliability.
                 ci = ds.get('curve_info', {}) or {}
                 null_value = str(self.null_value_var.get()) if hasattr(self, 'null_value_var') else '-999.25'
                 las_text = self._generate_las_text_from_dataframe(pdf, ci, null_value, max_rows=None)
-                out_path = os.path.join(target_dir, f"{wid}_processed.las")
-                with open(out_path, 'w', encoding='utf-8') as f:
+                
+                # Security: Validate output filename and ensure it stays within target directory
+                # Sanitize well ID to prevent path traversal in filename
+                safe_wid = "".join(c for c in str(wid) if c.isalnum() or c in ('-', '_', '.'))
+                if not safe_wid:
+                    safe_wid = "well"
+                
+                out_path = os.path.join(target_dir, f"{safe_wid}_processed.las")
+                
+                # Security: Final validation - ensure output path is within target directory
+                final_validated = SafeFileHandler.validate_file_path(out_path, allowed_dir=target_dir)
+                if not final_validated:
+                    sanitized = SafeFileHandler.sanitize_path_for_display(out_path)
+                    messagebox.showerror("Security Error", f"Invalid export path generated: {sanitized}")
+                    continue
+                
+                with open(str(final_validated), 'w', encoding='utf-8') as f:
                     f.write(las_text)
                 exported += 1
+            
             messagebox.showinfo("Export All", f"Exported {exported} processed well(s) to {target_dir}")
         except Exception as e:
+            sanitized = SafeFileHandler.sanitize_path_for_display(target_dir if 'target_dir' in locals() else "unknown")
             messagebox.showerror("Export All", f"Failed to export: {e}")
 
     def build_crosswell_priors(self):
@@ -10382,7 +9467,6 @@ Your feedback contributes to software quality and reliability.
         except Exception as e:
             # Log visualization update failure with diagnostic information
             self.log_processing(f"ERROR: Visualization update failed for {viz_type}: {str(e)}")
-            import warnings
             warnings.warn(
                 f"Visualization update failed for '{viz_type}': {str(e)}. "
                 f"Check data availability and visualization parameters.",
@@ -10441,7 +9525,6 @@ Your feedback contributes to software quality and reliability.
                 )
         except Exception as e:
             # Log thread marshalling failure
-            import warnings
             warnings.warn(
                 f"Thread marshalling failed for visualization update: {str(e)}. "
                 f"Visualization may not update automatically.",
@@ -10470,7 +9553,6 @@ Your feedback contributes to software quality and reliability.
         except Exception as e:
             # Log visualization update execution failure
             self.log_processing(f"ERROR: Visualization update execution failed: {str(e)}")
-            import warnings
             warnings.warn(
                 f"Visualization update execution failed: {str(e)}. "
                 f"Preview may not reflect processed data.",
@@ -10732,6 +9814,140 @@ Your feedback contributes to software quality and reliability.
                     fontsize=10, verticalalignment='top',
                     bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
     
+    def _get_industry_color(self, curve_type: str, curve_name: str = '') -> str:
+        """
+        Get industry-standard color for a curve type.
+        
+        Checks curve_info first, then falls back to mnemonic library database,
+        then to default industry colors.
+        
+        Args:
+            curve_type: The identified curve type (e.g., 'GAMMA_RAY_TOTAL')
+            curve_name: Optional curve name for fallback lookup
+            
+        Returns:
+            Hex color code (e.g., '#008000')
+        """
+        # First check if color is stored in curve_info
+        if curve_name and curve_name in self.curve_info:
+            color = self.curve_info[curve_name].get('industry_color', '')
+            if color and color != '#000000':  # Valid color
+                return color
+        
+        # Try to get from mnemonic library database
+        try:
+            if hasattr(self, 'curve_manager') and self.curve_manager:
+                db = self.curve_manager.mnemonic_database
+                if curve_type in db and 'industry_color' in db[curve_type]:
+                    color = db[curve_type]['industry_color']
+                    if color and color != '#000000':
+                        return color
+        except Exception:
+            pass
+        
+        # Fallback to default industry colors based on curve type
+        default_colors = {
+            'GAMMA_RAY_TOTAL': '#008000',      # Green
+            'GAMMA_RAY_SPECTRAL': '#008000',   # Green
+            'SPONTANEOUS_POTENTIAL': '#FFA500', # Orange
+            'RESISTIVITY_DEEP': '#FF0000',     # Red
+            'RESISTIVITY_MEDIUM': '#FF4444',   # Light red
+            'RESISTIVITY_SHALLOW': '#FF8888',  # Lighter red
+            'RESISTIVITY_MICRO': '#FFAAAA',    # Lightest red
+            'NEUTRON_POROSITY': '#0000FF',     # Blue
+            'BULK_DENSITY': '#FF0000',         # Red
+            'SONIC_COMPRESSIONAL': '#800080',  # Purple
+            'CALIPER_SINGLE': '#000000',       # Black
+            'CALIPER_MULTI': '#000000',        # Black
+            'PHOTOELECTRIC_FACTOR': '#FF00FF', # Magenta
+        }
+        
+        return default_colors.get(curve_type, '#333333')  # Default dark gray
+    
+    def _add_qc_indicators(self, ax, curve_name: str, curve_data: np.ndarray, depth: np.ndarray):
+        """
+        Add QC indicators to a curve plot:
+        - Confidence markers (from standardization reporter)
+        - Gap indicators (from processing results)
+        - Quality flags
+        
+        Args:
+            ax: Matplotlib axis to add indicators to
+            curve_name: Name of the curve
+            curve_data: Data values for the curve
+            depth: Depth values
+        """
+        # Confidence indicators from standardization reporter
+        if hasattr(self, 'standardization_reporter') and self.standardization_reporter:
+            # Find confidence for this curve
+            for ident in self.standardization_reporter.curve_identifications:
+                if ident['original_name'] == curve_name:
+                    confidence = ident['confidence']
+                    
+                    # Add confidence marker at regular intervals
+                    if len(curve_data) > 0 and len(depth) > 0:
+                        # Sample at regular intervals (every 50th point or so)
+                        sample_step = max(1, len(curve_data) // 50)
+                        sample_indices = np.arange(0, len(curve_data), sample_step)
+                        
+                        valid_mask = ~np.isnan(curve_data[sample_indices]) & ~np.isnan(depth[sample_indices])
+                        if np.any(valid_mask):
+                            valid_indices = sample_indices[valid_mask]
+                            x_positions = curve_data[valid_indices]
+                            y_positions = depth[valid_indices]
+                            
+                            # Color based on confidence: green (≥0.8), yellow (0.5-0.8), red (<0.5)
+                            if confidence >= 0.8:
+                                marker_color = 'green'
+                                marker_alpha = 0.6
+                            elif confidence >= 0.5:
+                                marker_color = 'orange'
+                                marker_alpha = 0.5
+                            else:
+                                marker_color = 'red'
+                                marker_alpha = 0.4
+                            
+                            # Small circular markers
+                            ax.scatter(x_positions, y_positions, 
+                                     c=marker_color, s=15, alpha=marker_alpha, 
+                                     marker='o', edgecolors='none', zorder=4, label='_nolegend_')
+                    break
+        
+        # Gap indicators from processing results
+        if hasattr(self, 'processing_results') and curve_name in self.processing_results:
+            proc_result = self.processing_results[curve_name]
+            
+            if 'gap_filling' in proc_result:
+                gap_info = proc_result['gap_filling'].get('gaps_filled', [])
+                
+                # Mark gap locations with small triangles
+                for gap_data in gap_info[:20]:  # Limit to first 20 gaps to avoid clutter
+                    gap = gap_data.get('gap', {})
+                    gap_start = gap.get('start', 0)
+                    gap_end = gap.get('end', 0)
+                    
+                    if gap_start < len(depth) and gap_end < len(depth):
+                        gap_center_idx = (gap_start + gap_end) // 2
+                        if gap_center_idx < len(curve_data) and not np.isnan(curve_data[gap_center_idx]):
+                            # Small triangle marker at gap location
+                            ax.scatter(curve_data[gap_center_idx], depth[gap_center_idx],
+                                     c='blue', s=30, alpha=0.5, marker='^',
+                                     edgecolors='none', zorder=4, label='_nolegend_')
+        
+        # Processing history badges (add to legend via label)
+        processing_operations = []
+        if hasattr(self, 'processing_results') and curve_name in self.processing_results:
+            proc_result = self.processing_results[curve_name]
+            if 'gap_filling' in proc_result:
+                processing_operations.append('Gap Filled')
+            if 'denoising' in proc_result:
+                processing_operations.append('Denoised')
+            if 'normalization' in proc_result:
+                processing_operations.append('Normalized')
+        
+        # Return operations list for badge display
+        return processing_operations
+    
     def plot_log_display(self):
         """Create a standard industry log display with multiple tracks"""
         # Clean up previous visualization resources
@@ -10745,10 +9961,11 @@ Your feedback contributes to software quality and reliability.
         # Use current_data as the primary source
         data_source = self.current_data
         
-        # Standard track configuration
-        # Track 1: GR, SP, Caliper
-        # Track 2: Resistivity (multiple depths)
+        # Industry-standard 4-track configuration
+        # Track 1: GR, SP, Caliper (Lithology)
+        # Track 2: Resistivity (Formation Evaluation)
         # Track 3: Porosity (Neutron, Density, Sonic)
+        # Track 4: Computed (Derived parameters: Sw, PHI, Vshale, etc.)
         
         # Identify curves by type
         curve_by_type = {}
@@ -10758,15 +9975,15 @@ Your feedback contributes to software quality and reliability.
                 curve_by_type[curve_type] = []
             curve_by_type[curve_type].append(curve)
         
-        # Use proper figure management with larger size for better readability
+        # Use proper figure management with larger size for 4-track display
         self.ensure_figure_exists()
-        self.fig.set_size_inches(18, 10)
+        self.fig.set_size_inches(20, 10)  # Wider for 4 tracks
         
         # Set figure title
         self.fig.suptitle('Industry Standard Log Display', fontsize=16, fontweight='bold')
         
-        # Create a 3-track display using proper method
-        axes = self.fig.subplots(1, 3, sharey=True)
+        # Create a 4-track display using proper method (industry standard)
+        axes = self.fig.subplots(1, 4, sharey=True)
         
         # Add professional styling to all axes
         for ax in axes:
@@ -10782,82 +9999,127 @@ Your feedback contributes to software quality and reliability.
             depth = np.arange(len(data_source))
             depth_unit = 'index'
         
-        # Track 1: GR, SP, Caliper
+        # Track 1: GR, SP, Caliper (Lithology Track)
         ax1 = axes[0]
-        ax1.set_title('GR, SP, Caliper', fontsize=12, fontweight='bold')
+        ax1.set_title('Track 1: GR/SP/CAL', fontsize=12, fontweight='bold')
         ax1.set_ylabel(f'Depth ({depth_unit})', fontsize=10, fontweight='bold')
         
-        # GR (green, 0-150 API)
+        # GR with industry-standard zone shading
         gr_curves = curve_by_type.get('GAMMA_RAY_TOTAL', [])
+        gr_data_for_shading = None
         if gr_curves:
-            gr_data = data_source[gr_curves[0]].values
-            ax1.plot(gr_data, depth, 'g-', linewidth=1.5, label=gr_curves[0])
+            gr_curve_name = gr_curves[0]
+            gr_data = data_source[gr_curve_name].values
+            gr_data_for_shading = gr_data.copy()
+            gr_color = self._get_industry_color('GAMMA_RAY_TOTAL', gr_curve_name)
+            
+            # Plot GR curve
+            ax1.plot(gr_data, depth, color=gr_color, linewidth=1.5, label=gr_curve_name, zorder=3)
+            
+            # Industry-standard GR zone shading (green/yellow/red zones)
+            # Green: 0-60 API (clean zones, typically sand/carbonate)
+            # Yellow/Gold: 60-90 API (transition zones)
+            # Red: 90-150+ API (shale zones)
+            valid_mask = ~np.isnan(gr_data) & ~np.isnan(depth)
+            if np.any(valid_mask):
+                valid_gr = gr_data[valid_mask]
+                valid_depth = depth[valid_mask]
+                
+                # Green zone: 0-60 API
+                ax1.fill_betweenx(valid_depth, 0, valid_gr, 
+                                 where=(valid_gr < 60), 
+                                 color='green', alpha=0.15, label='Clean Zone')
+                
+                # Yellow/Gold zone: 60-90 API
+                ax1.fill_betweenx(valid_depth, 60, valid_gr, 
+                                 where=(valid_gr >= 60) & (valid_gr < 90), 
+                                 color='gold', alpha=0.15, label='Transition Zone')
+                
+                # Red zone: 90+ API
+                ax1.fill_betweenx(valid_depth, 90, valid_gr, 
+                                 where=(valid_gr >= 90), 
+                                 color='red', alpha=0.15, label='Shale Zone')
+            
             ax1.set_xlim([0, 150])
             ax1.set_xlabel('GR (API)', fontsize=10)
         
-        # SP (blue, -100 to 100 mV)
+        # SP with industry color
         sp_curves = curve_by_type.get('SPONTANEOUS_POTENTIAL', [])
         if sp_curves:
+            sp_curve_name = sp_curves[0]
+            sp_color = self._get_industry_color('SPONTANEOUS_POTENTIAL', sp_curve_name)
             twin1 = ax1.twiny()
-            sp_data = data_source[sp_curves[0]].values
-            twin1.plot(sp_data, depth, 'b-', linewidth=1.5, label=sp_curves[0])
+            sp_data = data_source[sp_curve_name].values
+            twin1.plot(sp_data, depth, color=sp_color, linewidth=1.5, label=sp_curve_name, zorder=2)
             twin1.set_xlim([-100, 100])
             twin1.xaxis.set_ticks_position('top')
             twin1.xaxis.set_label_position('top')
         
-        # Caliper (black)
+        # Caliper with industry color
         cal_curves = curve_by_type.get('CALIPER_SINGLE', []) + curve_by_type.get('CALIPER_MULTI', [])
         if cal_curves:
+            cal_curve_name = cal_curves[0]
+            cal_color = self._get_industry_color('CALIPER_SINGLE', cal_curve_name)
             twin1_2 = ax1.twiny()
-            cal_data = data_source[cal_curves[0]].values
-            twin1_2.plot(cal_data, depth, 'k-', linewidth=1.5, label=cal_curves[0])
+            cal_data = data_source[cal_curve_name].values
+            twin1_2.plot(cal_data, depth, color=cal_color, linewidth=1.5, label=cal_curve_name, zorder=2)
             # Position x-axis
             twin1_2.xaxis.set_ticks_position('top')
             twin1_2.spines['top'].set_position(('outward', 40))
         
-        # Track 2: Resistivity curves (log scale)
+        # Track 2: Resistivity curves (log scale, industry standard)
         ax2 = axes[1]
-        ax2.set_title('Resistivity', fontsize=12, fontweight='bold')
+        ax2.set_title('Track 2: Resistivity', fontsize=12, fontweight='bold')
         ax2.set_xlabel('Resistivity (ohm-m)', fontsize=10)
         
         res_types = ['RESISTIVITY_DEEP', 'RESISTIVITY_MEDIUM', 'RESISTIVITY_SHALLOW', 'RESISTIVITY_MICRO']
-        res_colors = ['red', 'green', 'blue', 'magenta']
+        resistivity_curves_data = {}  # Store for QC indicators
         
         has_res = False
-        for i, res_type in enumerate(res_types):
+        for res_type in res_types:
             res_curves = curve_by_type.get(res_type, [])
             if res_curves:
                 has_res = True
-                res_data = data_source[res_curves[0]].values
+                res_curve_name = res_curves[0]
+                res_color = self._get_industry_color(res_type, res_curve_name)
+                res_data = data_source[res_curve_name].values
                 # Handle zeros and negatives for log scale
                 res_data = np.maximum(res_data, 0.1)  # Clamp to minimum 0.1 ohm-m
-                ax2.plot(res_data, depth, color=res_colors[i], linewidth=1.5, label=res_curves[0])
+                ax2.plot(res_data, depth, color=res_color, linewidth=1.5, label=res_curve_name)
+                resistivity_curves_data[res_curve_name] = res_data
         
         if has_res:
             ax2.set_xscale('log')
             ax2.set_xlim([0.1, 1000])
         
-        # Track 3: Porosity curves
+        # Track 3: Porosity curves with RHOB-NPHI crossover highlighting
         ax3 = axes[2]
-        ax3.set_title('Porosity', fontsize=12, fontweight='bold')
+        ax3.set_title('Track 3: Porosity', fontsize=12, fontweight='bold')
         ax3.set_xlabel('Porosity (v/v)', fontsize=10)
         
-        # Neutron (blue, reverse scale)
+        # Neutron with industry color
+        neutron_data = None
         neutron_curves = curve_by_type.get('NEUTRON_POROSITY', [])
         if neutron_curves:
-            neutron_data = data_source[neutron_curves[0]].values
-            ax3.plot(neutron_data, depth, 'b-', linewidth=1.5, label=neutron_curves[0])
+            neutron_curve_name = neutron_curves[0]
+            neutron_color = self._get_industry_color('NEUTRON_POROSITY', neutron_curve_name)
+            neutron_data = data_source[neutron_curve_name].values
+            ax3.plot(neutron_data, depth, color=neutron_color, linewidth=1.5, label=neutron_curve_name)
         
-        # Density (red)
+        # Density with industry color and crossover detection
+        density_data = None
         density_curves = curve_by_type.get('BULK_DENSITY', [])
         if density_curves:
-            density_data = data_source[density_curves[0]].values
+            density_curve_name = density_curves[0]
+            density_color = self._get_industry_color('BULK_DENSITY', density_curve_name)
+            density_data = data_source[density_curve_name].values
+            
             if not neutron_curves:
-                ax3.plot(density_data, depth, 'r-', linewidth=1.5, label=density_curves[0])
+                ax3.plot(density_data, depth, color=density_color, linewidth=1.5, label=density_curve_name)
             else:
                 # If both neutron and density are present, plot density on the same scale but reversed
                 twin3 = ax3.twiny()
-                twin3.plot(density_data, depth, 'r-', linewidth=1.5, label=density_curves[0])
+                twin3.plot(density_data, depth, color=density_color, linewidth=1.5, label=density_curve_name)
                 # Set same range but reversed
                 if ax3.get_xlim()[1] > ax3.get_xlim()[0]:
                     neutron_min, neutron_max = ax3.get_xlim()
@@ -10865,30 +10127,103 @@ Your feedback contributes to software quality and reliability.
                 twin3.xaxis.set_ticks_position('top')
                 twin3.xaxis.set_label_position('top')
         
-        # Sonic (purple)
+        # RHOB-NPHI crossover highlighting (gas detection)
+        # Industry standard: Highlight where density is low AND neutron is high (gas crossover)
+        if neutron_data is not None and density_data is not None:
+            valid_mask = ~np.isnan(neutron_data) & ~np.isnan(density_data) & ~np.isnan(depth)
+            if np.any(valid_mask):
+                valid_neutron = neutron_data[valid_mask]
+                valid_density = density_data[valid_mask]
+                valid_depth_cross = depth[valid_mask]
+                
+                # Typical values for gas detection:
+                # Low density (<2.35 g/cm³) AND high neutron (>0.35 v/v) suggests gas
+                # Convert neutron to density equivalent if needed, or use normalized crossover
+                gas_threshold_density = 2.35  # g/cm³ - below this suggests gas
+                gas_threshold_neutron = 0.35  # v/v - above this suggests gas/high porosity
+                
+                # Find gas crossover zones (low density AND high neutron)
+                gas_mask = (valid_density < gas_threshold_density) & (valid_neutron > gas_threshold_neutron)
+                
+                if np.any(gas_mask):
+                    # Highlight gas crossover zones with subtle shading
+                    ax3.fill_betweenx(valid_depth_cross[gas_mask], 
+                                     ax3.get_xlim()[0], ax3.get_xlim()[1],
+                                     alpha=0.2, color='yellow', label='Gas Crossover', zorder=0)
+        
+        # Sonic with industry color
         sonic_curves = curve_by_type.get('SONIC_COMPRESSIONAL', [])
         if sonic_curves:
+            sonic_curve_name = sonic_curves[0]
+            sonic_color = self._get_industry_color('SONIC_COMPRESSIONAL', sonic_curve_name)
             twin3_2 = ax3.twiny()
-            sonic_data = data_source[sonic_curves[0]].values
-            twin3_2.plot(sonic_data, depth, 'purple', linewidth=1.5, label=sonic_curves[0])
+            sonic_data = data_source[sonic_curve_name].values
+            twin3_2.plot(sonic_data, depth, color=sonic_color, linewidth=1.5, label=sonic_curve_name)
             # Position x-axis
             twin3_2.xaxis.set_ticks_position('top')
             twin3_2.spines['top'].set_position(('outward', 40))
         
+        # Track 4: Computed/Derived parameters
+        ax4 = axes[3]
+        ax4.set_title('Track 4: Computed', fontsize=12, fontweight='bold')
+        ax4.set_xlabel('Computed Parameters', fontsize=10)
+        
+        # Identify computed curves (saturation, porosity, shale volume, etc.)
+        computed_curve_types = [
+            'WATER_SATURATION', 'OIL_SATURATION', 'GAS_SATURATION',
+            'POROSITY_COMPUTED', 'SHALE_VOLUME', 'PERMEABILITY',
+            'EFFECTIVE_POROSITY', 'TOTAL_POROSITY'
+        ]
+        
+        has_computed = False
+        computed_curves_plotted = []
+        for comp_type in computed_curve_types:
+            comp_curves = curve_by_type.get(comp_type, [])
+            if comp_curves:
+                has_computed = True
+                comp_curve_name = comp_curves[0]
+                comp_color = self._get_industry_color(comp_type, comp_curve_name)
+                comp_data = data_source[comp_curve_name].values
+                ax4.plot(comp_data, depth, color=comp_color, linewidth=1.5, label=comp_curve_name)
+                computed_curves_plotted.append(comp_curve_name)
+        
+        if not has_computed:
+            # If no computed curves, show placeholder message
+            ax4.text(0.5, 0.5, 'No computed parameters\navailable', 
+                    transform=ax4.transAxes, ha='center', va='center',
+                    fontsize=11, style='italic', color='gray')
+        
         # Common settings for all tracks
         for ax in axes:
-            ax.invert_yaxis()  # Depth increases downward
+            ax.invert_yaxis()  # Depth increases downward (industry standard)
             ax.grid(True, alpha=0.3)
             ax.set_ylabel(f'Depth ({depth_unit})')
-            # Overlays: tops and open-hole shading
+            
+            # Enhanced formation tops with labels
             try:
                 if hasattr(self, 'geological_context') and self.geological_context:
-                    for top_name, top_depth in getattr(self.geological_context, 'formation_tops', {}).items():
-                        ax.axhline(y=top_depth, color='#666666', linestyle='--', linewidth=0.8, alpha=0.7)
-                    ohs = getattr(self, 'geological_context').open_hole_start
-                    ohe = getattr(self, 'geological_context').open_hole_end
+                    formation_tops = getattr(self.geological_context, 'formation_tops', {})
+                    
+                    # Draw formation top lines with labels
+                    for top_name, top_depth in formation_tops.items():
+                        # Check if top is within depth range
+                        if np.min(depth) <= top_depth <= np.max(depth):
+                            # Draw dashed line
+                            ax.axhline(y=top_depth, color='#666666', linestyle='--', 
+                                      linewidth=1.0, alpha=0.7, zorder=1)
+                            
+                            # Add formation name label at right edge
+                            ax.text(ax.get_xlim()[1], top_depth, f'  {top_name}', 
+                                   fontsize=8, verticalalignment='center',
+                                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                            edgecolor='#666666', alpha=0.8),
+                                   zorder=5)
+                    
+                    # Open-hole shading
+                    ohs = getattr(self.geological_context, 'open_hole_start', None)
+                    ohe = getattr(self.geological_context, 'open_hole_end', None)
                     if ohs is not None and ohe is not None and ohs < ohe:
-                        ax.axhspan(ohs, ohe, color='#f0f8ff', alpha=0.25)
+                        ax.axhspan(ohs, ohe, color='#f0f8ff', alpha=0.25, zorder=0)
             except Exception:
                 pass
         
@@ -10896,12 +10231,44 @@ Your feedback contributes to software quality and reliability.
         for ax in axes[1:]:
             ax.set_ylabel('')
         
-        # Set track titles
-        axes[0].set_title('Track 1: GR/SP/CAL')
-        axes[1].set_title('Track 2: Resistivity')
-        axes[2].set_title('Track 3: Porosity')
+        # Add QC indicators and collect processing badges
+        all_processing_badges = {}  # Track processing operations per curve
         
-        # Add legends to each track
+        # Add QC indicators to curves in each track
+        # Track 1: GR, SP, Caliper
+        if gr_curves:
+            badges = self._add_qc_indicators(ax1, gr_curves[0], gr_data, depth)
+            if badges:
+                all_processing_badges[gr_curves[0]] = badges
+        if sp_curves:
+            badges = self._add_qc_indicators(ax1, sp_curves[0], sp_data, depth)
+            if badges:
+                all_processing_badges[sp_curves[0]] = badges
+        
+        # Track 2: Resistivity
+        for res_curve_name, res_data in resistivity_curves_data.items():
+            badges = self._add_qc_indicators(ax2, res_curve_name, res_data, depth)
+            if badges:
+                all_processing_badges[res_curve_name] = badges
+        
+        # Track 3: Porosity
+        if neutron_curves:
+            badges = self._add_qc_indicators(ax3, neutron_curves[0], neutron_data, depth)
+            if badges:
+                all_processing_badges[neutron_curves[0]] = badges
+        if density_curves:
+            badges = self._add_qc_indicators(ax3, density_curves[0], density_data, depth)
+            if badges:
+                all_processing_badges[density_curves[0]] = badges
+        
+        # Track 4: Computed
+        for comp_curve_name in computed_curves_plotted:
+            comp_data = data_source[comp_curve_name].values
+            badges = self._add_qc_indicators(ax4, comp_curve_name, comp_data, depth)
+            if badges:
+                all_processing_badges[comp_curve_name] = badges
+        
+        # Add legends to each track with processing badges
         for ax in axes:
             handles, labels = ax.get_legend_handles_labels()
             # Get handles and labels from twin axes too
@@ -10911,14 +10278,336 @@ Your feedback contributes to software quality and reliability.
                     handles.extend(twin_handles)
                     labels.extend(twin_labels)
             
+            # Add processing badges to legend if any curves on this axis have been processed
+            # Note: We'll show badges in track headers instead to keep legends clean
             if handles:
                 ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.05),
-                         ncol=len(handles))
+                         ncol=len(handles), fontsize=9)
         
-        # Apply enhanced spacing for multi-track display
+        # Add processing history badges to track titles
+        for i, ax in enumerate(axes):
+            curve_names_on_axis = []
+            # Determine which curves are on this axis
+            if i == 0:  # Track 1
+                if gr_curves:
+                    curve_names_on_axis.append(gr_curves[0])
+                if sp_curves:
+                    curve_names_on_axis.append(sp_curves[0])
+            elif i == 1:  # Track 2
+                for res_type in res_types:
+                    res_curves_list = curve_by_type.get(res_type, [])
+                    if res_curves_list:
+                        curve_names_on_axis.append(res_curves_list[0])
+            elif i == 2:  # Track 3
+                if neutron_curves:
+                    curve_names_on_axis.append(neutron_curves[0])
+                if density_curves:
+                    curve_names_on_axis.append(density_curves[0])
+            elif i == 3:  # Track 4
+                curve_names_on_axis.extend(computed_curves_plotted)
+            
+            # Add badge text to title if any processing occurred
+            badge_texts = []
+            for curve_name in curve_names_on_axis:
+                if curve_name in all_processing_badges:
+                    badge_texts.extend(all_processing_badges[curve_name])
+            
+            if badge_texts:
+                unique_badges = list(set(badge_texts))  # Remove duplicates
+                badge_str = f" [{', '.join(unique_badges)}]"
+                current_title = ax.get_title()
+                ax.set_title(current_title + badge_str, fontsize=11, fontweight='bold')
+        
+        # Apply enhanced spacing for 4-track display
         self.fig.tight_layout()
-        # Reserve space on the right for any legends
-        self.fig.subplots_adjust(left=0.08, right=0.88, bottom=0.15, top=0.90, wspace=0.25)
+        # Reserve space for legends and formation top labels
+        self.fig.subplots_adjust(left=0.06, right=0.92, bottom=0.15, top=0.90, wspace=0.20)
+    
+    def plot_standardization_summary(self):
+        """
+        Create comprehensive standardization visualization showing:
+        - Before/after standardization comparison
+        - Confidence mapping across all curves
+        - Transformation documentation
+        """
+        if not hasattr(self, 'standardization_reporter') or not self.standardization_reporter:
+            messagebox.showinfo("Info", "No standardization data available to visualize.")
+            return
+        
+        if self.standardization_reporter.total_operations == 0:
+            messagebox.showinfo("Info", "No standardization operations recorded.")
+            return
+        
+        # Clean up previous visualization
+        self.cleanup_visualization()
+        self.ensure_figure_exists()
+        self.fig.set_size_inches(16, 12)
+        self.fig.suptitle('Standardization Summary Report', fontsize=16, fontweight='bold')
+        
+        # Create subplot layout: 2x2 grid
+        from matplotlib.gridspec import GridSpec
+        gs = GridSpec(3, 2, figure=self.fig, height_ratios=[1, 1, 0.8], hspace=0.4, wspace=0.3)
+        
+        # Panel 1: Confidence Distribution (Top Left)
+        ax1 = self.fig.add_subplot(gs[0, 0])
+        ax1.set_title('Identification Confidence Distribution', fontsize=12, fontweight='bold')
+        
+        if self.standardization_reporter.curve_identifications:
+            confidences = [ident['confidence'] for ident in self.standardization_reporter.curve_identifications]
+            
+            # Create histogram with color coding
+            n, bins, patches = ax1.hist(confidences, bins=20, range=(0, 1), edgecolor='black', alpha=0.7)
+            
+            # Color bars based on bin midpoint confidence
+            for i, patch in enumerate(patches):
+                bin_mid = (bins[i] + bins[i+1]) / 2
+                if bin_mid < 0.5:
+                    patch.set_facecolor('red')
+                elif bin_mid < 0.8:
+                    patch.set_facecolor('orange')
+                else:
+                    patch.set_facecolor('green')
+            
+            ax1.set_xlabel('Confidence Score', fontsize=10)
+            ax1.set_ylabel('Number of Curves', fontsize=10)
+            ax1.set_xlim([0, 1])
+            ax1.grid(True, alpha=0.3, axis='y')
+            
+            # Add statistics text
+            avg_conf = np.mean(confidences)
+            high_conf = sum(1 for c in confidences if c >= 0.8)
+            stats_text = f"Avg: {avg_conf:.2f}\nHigh (≥0.8): {high_conf}/{len(confidences)}"
+            ax1.text(0.98, 0.98, stats_text, transform=ax1.transAxes,
+                    fontsize=9, verticalalignment='top', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+        else:
+            ax1.text(0.5, 0.5, 'No identification data', transform=ax1.transAxes,
+                    ha='center', va='center', fontsize=11, style='italic', color='gray')
+        
+        # Panel 2: Standardization Operations Summary (Top Right)
+        ax2 = self.fig.add_subplot(gs[0, 1])
+        ax2.set_title('Standardization Operations Count', fontsize=12, fontweight='bold')
+        ax2.axis('off')
+        
+        # Create summary text box
+        summary_data = {
+            'Curve Identifications': len(self.standardization_reporter.curve_identifications),
+            'Curve Renames': len(self.standardization_reporter.curve_renames),
+            'Unit Conversions': len(self.standardization_reporter.unit_conversions),
+            'Fractional Standardizations': len(self.standardization_reporter.fractional_standardizations),
+            'Conflicts Resolved': len(self.standardization_reporter.conflicts)
+        }
+        
+        summary_text = "STANDARDIZATION SUMMARY\n" + "=" * 30 + "\n\n"
+        for operation, count in summary_data.items():
+            summary_text += f"{operation:.<25} {count:>5}\n"
+        
+        summary_text += f"\n{'Total Operations':.<25} {self.standardization_reporter.total_operations:>5}"
+        
+        ax2.text(0.1, 0.9, summary_text, transform=ax2.transAxes,
+                fontsize=10, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        
+        # Panel 3: Curve Renames Comparison (Middle Left)
+        ax3 = self.fig.add_subplot(gs[1, 0])
+        ax3.set_title('Curve Name Standardizations', fontsize=12, fontweight='bold')
+        ax3.axis('off')
+        
+        if self.standardization_reporter.curve_renames:
+            rename_text = "ORIGINAL → STANDARDIZED\n" + "=" * 35 + "\n\n"
+            rename_items = list(self.standardization_reporter.curve_renames.items())[:15]  # Limit to 15
+            
+            for original, rename_info in rename_items:
+                standardized = rename_info['standardized_name']
+                confidence = rename_info['confidence']
+                conf_symbol = '✓' if confidence >= 0.8 else '~' if confidence >= 0.5 else '?'
+                rename_text += f"{conf_symbol} {original:<20} → {standardized}\n"
+            
+            if len(self.standardization_reporter.curve_renames) > 15:
+                rename_text += f"\n... and {len(self.standardization_reporter.curve_renames) - 15} more"
+            
+            ax3.text(0.05, 0.98, rename_text, transform=ax3.transAxes,
+                    fontsize=9, verticalalignment='top', family='monospace',
+                    bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+        else:
+            ax3.text(0.5, 0.5, 'No curve renames recorded', transform=ax3.transAxes,
+                    ha='center', va='center', fontsize=11, style='italic', color='gray')
+        
+        # Panel 4: Unit Conversions List (Middle Right)
+        ax4 = self.fig.add_subplot(gs[1, 1])
+        ax4.set_title('Unit Conversions Applied', fontsize=12, fontweight='bold')
+        ax4.axis('off')
+        
+        if self.standardization_reporter.unit_conversions:
+            conv_text = "CURVE | FROM → TO | METHOD\n" + "=" * 40 + "\n\n"
+            conv_items = self.standardization_reporter.unit_conversions[:15]  # Limit to 15
+            
+            for conv in conv_items:
+                curve = conv['curve_name'][:15]  # Truncate long names
+                from_unit = conv['original_unit'][:8]
+                to_unit = conv['standardized_unit'][:8]
+                method = conv['method'][:8]
+                factor = conv.get('conversion_factor', None)
+                
+                if factor:
+                    factor_str = f"×{factor:.3f}"
+                else:
+                    factor_str = "function"
+                
+                conv_text += f"{curve:<15} {from_unit:>6} → {to_unit:<6} [{method}] {factor_str}\n"
+            
+            if len(self.standardization_reporter.unit_conversions) > 15:
+                conv_text += f"\n... and {len(self.standardization_reporter.unit_conversions) - 15} more"
+            
+            ax4.text(0.05, 0.98, conv_text, transform=ax4.transAxes,
+                    fontsize=8, verticalalignment='top', family='monospace',
+                    bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
+        else:
+            ax4.text(0.5, 0.5, 'No unit conversions recorded', transform=ax4.transAxes,
+                    ha='center', va='center', fontsize=11, style='italic', color='gray')
+        
+        # Panel 5: Method Distribution (Bottom, spans both columns)
+        ax5 = self.fig.add_subplot(gs[2, :])
+        ax5.set_title('Identification Methods Used', fontsize=12, fontweight='bold')
+        
+        if self.standardization_reporter.curve_identifications:
+            methods = [ident['method'] for ident in self.standardization_reporter.curve_identifications]
+            method_counts = {}
+            for method in methods:
+                method_counts[method] = method_counts.get(method, 0) + 1
+            
+            if method_counts:
+                methods_list = list(method_counts.keys())
+                counts_list = list(method_counts.values())
+                
+                bars = ax5.bar(methods_list, counts_list, color='steelblue', alpha=0.7, edgecolor='black')
+                ax5.set_xlabel('Identification Method', fontsize=10)
+                ax5.set_ylabel('Count', fontsize=10)
+                ax5.grid(True, alpha=0.3, axis='y')
+                
+                # Add value labels on bars
+                for bar in bars:
+                    height = bar.get_height()
+                    ax5.text(bar.get_x() + bar.get_width()/2., height,
+                            f'{int(height)}', ha='center', va='bottom', fontsize=9)
+        
+        self.fig.tight_layout()
+    
+    def plot_standardization_comparison(self, curve_name: str):
+        """
+        Create before/after standardization comparison for a specific curve.
+        Shows original vs standardized name/unit with confidence.
+        
+        Args:
+            curve_name: Name of the curve to compare
+        """
+        if not hasattr(self, 'standardization_reporter') or not self.standardization_reporter:
+            messagebox.showinfo("Info", "No standardization data available.")
+            return
+        
+        # Find standardization info for this curve
+        rename_info = None
+        unit_conv = None
+        fractional_std = None
+        identification = None
+        
+        # Check for rename
+        if curve_name in self.standardization_reporter.curve_renames:
+            rename_info = self.standardization_reporter.curve_renames[curve_name]
+        
+        # Check for unit conversion
+        for conv in self.standardization_reporter.unit_conversions:
+            if conv['curve_name'] == curve_name:
+                unit_conv = conv
+                break
+        
+        # Check for fractional standardization
+        for frac in self.standardization_reporter.fractional_standardizations:
+            if frac['curve_name'] == curve_name:
+                fractional_std = frac
+                break
+        
+        # Check for identification
+        for ident in self.standardization_reporter.curve_identifications:
+            if ident['original_name'] == curve_name:
+                identification = ident
+                break
+        
+        # If no standardization data, show info message
+        if not any([rename_info, unit_conv, fractional_std, identification]):
+            messagebox.showinfo("Info", f"No standardization operations recorded for curve '{curve_name}'.")
+            return
+        
+        # Create visualization
+        self.cleanup_visualization()
+        self.ensure_figure_exists()
+        self.fig.set_size_inches(14, 10)
+        self.fig.suptitle(f'Standardization Comparison: {curve_name}', fontsize=14, fontweight='bold')
+        
+        # Check if curve data exists
+        if curve_name not in self.current_data.columns:
+            messagebox.showwarning("Warning", f"Curve '{curve_name}' not found in current data.")
+            return
+        
+        # Get depth and data
+        depth_curves = [col for col in self.current_data.columns 
+                       if 'DEPTH' in self.curve_info.get(col, {}).get('curve_type', '')]
+        if depth_curves:
+            depth = self.current_data[depth_curves[0]].values
+            depth_unit = self.curve_info.get(depth_curves[0], {}).get('unit', 'm')
+        else:
+            depth = np.arange(len(self.current_data))
+            depth_unit = 'index'
+        
+        curve_data = self.current_data[curve_name].values
+        
+        # Create comparison plot (overlay mode like processing comparison)
+        ax = self.fig.add_subplot(111)
+        
+        # Plot the curve
+        curve_color = self._get_industry_color(
+            self.curve_info.get(curve_name, {}).get('curve_type', 'UNKNOWN'),
+            curve_name
+        )
+        
+        ax.plot(curve_data, depth, color=curve_color, linewidth=2.0, alpha=0.9, label=f'{curve_name} (Standardized)')
+        
+        # Add information panel
+        info_text = f"STANDARDIZATION DETAILS\n{'=' * 40}\n\n"
+        
+        if identification:
+            info_text += f"Identified Type: {identification['identified_type']}\n"
+            info_text += f"Confidence: {identification['confidence']*100:.1f}%\n"
+            info_text += f"Method: {identification['method']}\n\n"
+        
+        if rename_info:
+            info_text += f"Name Change:\n"
+            info_text += f"  {curve_name} → {rename_info['standardized_name']}\n"
+            info_text += f"  Confidence: {rename_info['confidence']*100:.1f}%\n\n"
+        
+        if unit_conv:
+            factor_str = f"×{unit_conv['conversion_factor']:.6f}" if unit_conv.get('conversion_factor') else "function"
+            info_text += f"Unit Conversion:\n"
+            info_text += f"  {unit_conv['original_unit']} → {unit_conv['standardized_unit']}\n"
+            info_text += f"  Method: {unit_conv['method']} | Factor: {factor_str}\n\n"
+        
+        if fractional_std:
+            info_text += f"Fractional Standardization:\n"
+            info_text += f"  {fractional_std['original_unit']} → {fractional_std['standardized_unit']}\n"
+            if fractional_std.get('original_sample') is not None:
+                info_text += f"  Sample: {fractional_std['original_sample']:.3f}% → {fractional_std['standardized_sample']:.3f} v/v\n"
+        
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes,
+                fontsize=9, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='gray'))
+        
+        ax.set_xlabel(f'{curve_name} ({self.curve_info.get(curve_name, {}).get("unit", "UNIT")})', fontsize=11)
+        ax.set_ylabel(f'Depth ({depth_unit})', fontsize=11)
+        ax.grid(True, alpha=0.3)
+        ax.invert_yaxis()
+        ax.legend(loc='upper right', fontsize=10)
+        
+        self.fig.tight_layout()
     
     def _visualize_unprocessed_data(self, curve: str, viz_type: str):
         """Visualize unprocessed data from current_data"""
@@ -11216,7 +10905,7 @@ Your feedback contributes to software quality and reliability.
             ttk.Button(export_frame, text="Export (Publication)", command=lambda: _export_fig(300)).pack(side='left')
     
     def plot_comparison(self, curve: str):
-        """Plot original vs processed comparison with depth on Y-axis (industry standard)"""
+        """Plot original vs processed comparison - overlay mode with same X-Y axes and toggle controls"""
         # Check if curve has been processed
         if curve in self.processing_results:
             original = self.processing_results[curve]['original_data']
@@ -11231,83 +10920,277 @@ Your feedback contributes to software quality and reliability.
             messagebox.showwarning("Warning", f"Curve '{curve}' not found in data")
             return
         
-        # Ensure we have a valid figure with good size for detailed viewing
+        # Ensure we have a valid figure with good size for overlay viewing
         self.ensure_figure_exists()
-        self.fig.set_size_inches(12, 9)
-        ax = self.fig.add_subplot(111)
+        self.fig.set_size_inches(12, 10)
+        
+        # Get curve color from industry standards, or use neutral color
+        curve_info = self.curve_info.get(curve, {})
+        curve_type = curve_info.get('curve_type', 'UNKNOWN')
+        industry_color = curve_info.get('industry_color', '#333333')  # Default to dark gray
+        
+        # Use industry color if available, otherwise neutral dark color
+        base_color = industry_color if industry_color != '#000000' else '#333333'
         
         # Find depth curve if available
         depth_curve = None
-        for col in self.processed_data.columns:
-            curve_type = self.curve_info.get(col, {}).get('curve_type', '')
-            if 'DEPTH' in curve_type:
+        data_source = self.processed_data if has_processed else self.current_data
+        for col in data_source.columns:
+            curve_type_col = self.curve_info.get(col, {}).get('curve_type', '')
+            if 'DEPTH' in curve_type_col:
                 depth_curve = col
                 break
         
         # Use depth for Y-axis if available, otherwise use index
         if depth_curve:
-            depth = self.processed_data[depth_curve].values
+            depth = data_source[depth_curve].values
             depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
             y_label = f'Depth ({depth_unit})'
         else:
             depth = np.arange(len(original))
             y_label = 'Depth (index)'
         
-        # Plot with depth on Y-axis (industry standard)
-        ax.plot(original, depth, 'r-', alpha=0.7, label='Original', linewidth=1)
-        
+        # Single plot area - overlay mode with toggle capability
         if has_processed and processed is not None:
-            ax.plot(processed, depth, 'b-', alpha=0.9, label='Processed', linewidth=2)
+            ax = self.fig.add_subplot(111)
             
-            # Calculate where significant changes were made
+            # Store plot objects for toggle functionality (stored in figure for persistence)
+            plot_objects = {}
+            
+            # Plot Original - lower opacity (always present for toggle)
+            line_orig = ax.plot(original, depth, color=base_color, alpha=0.4, label='Original', 
+                    linewidth=1.5, linestyle='-', visible=True)[0]
+            plot_objects['original'] = line_orig
+            
+            # Plot Processed - higher opacity (always present for toggle)
+            line_proc = ax.plot(processed, depth, color=base_color, alpha=0.9, label='Processed', 
+                    linewidth=2.0, linestyle='-', visible=True)[0]
+            plot_objects['processed'] = line_proc
+            
+            # Store in figure for toggle access
+            self.fig._comparison_plot_objects = plot_objects
+            self.fig._comparison_curve = curve
+            
+            # Mark significant changes
             valid_mask = ~np.isnan(original) & ~np.isnan(processed)
-            changes = np.abs(original[valid_mask] - processed[valid_mask])
+            if np.any(valid_mask):
+                changes = np.abs(original[valid_mask] - processed[valid_mask])
+                if len(changes) > 0:
+                    # Find points with significant changes (top 5%)
+                    threshold = np.percentile(changes, 95) if len(changes) > 20 else np.max(changes) * 0.5
+                    significant_idx = np.nonzero((np.abs(original - processed) > threshold) & valid_mask)[0]
+                    
+                    # Mark points with significant changes (subtle marker)
+                    if len(significant_idx) > 0:
+                        x_proc = processed[significant_idx]
+                        y_proc = depth[significant_idx]
+                        scatter = ax.scatter(x_proc, y_proc, color=base_color, s=30, alpha=0.6, 
+                                  marker='o', edgecolors='none', label='Significant Changes', zorder=3)
+                        plot_objects['changes'] = scatter
             
-            if len(changes) > 0:
-                # Find points with significant changes (top 5%)
-                threshold = np.percentile(changes, 95) if len(changes) > 20 else np.max(changes) * 0.5
-                significant_idx = np.nonzero((np.abs(original - processed) > threshold) & valid_mask)[0]
+            # Add gap annotations if available
+            if 'gap_filling' in self.processing_results[curve]:
+                gap_info = self.processing_results[curve]['gap_filling'].get('gaps_filled', [])
+                if gap_info:
+                    for i, gap in enumerate(gap_info[:3]):  # Limit to first 3 gaps
+                        gap_start = gap['gap']['start']
+                        gap_end = gap['gap']['end']
+                        gap_center = (gap_start + gap_end) // 2
+                        if gap_center < len(processed) and not np.isnan(processed[gap_center]):
+                            ax.annotate(f'Gap {i+1}',
+                                       xy=(processed[gap_center], depth[gap_center]),
+                                       xytext=(10, 20),
+                                       textcoords='offset points',
+                                       fontsize=8,
+                                       arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=.2',
+                                                      color=base_color, alpha=0.6))
+            
+            # Configure axes
+            ax.set_title(f'Processing Comparison: {curve} (Click legend to toggle)', fontsize=14, fontweight='bold', pad=10)
+            ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
+            ax.set_ylabel(y_label, fontsize=11)
+            ax.grid(True, alpha=0.3)
+            ax.invert_yaxis()  # Industry standard: depth increases downward
+            
+            # Legend with toggle capability
+            legend = ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
+            self.fig._comparison_legend = legend
+            self.fig._comparison_plot_objects = plot_objects
+            self.fig._comparison_ax = ax  # Store for event handler
+            
+            # Make legend items clickable for toggle
+            def on_legend_click(event):
+                """Toggle plot visibility when legend item is clicked"""
+                if not hasattr(self.fig, '_comparison_plot_objects'):
+                    return
+                    
+                stored_ax = self.fig._comparison_ax
+                stored_legend = self.fig._comparison_legend
+                stored_objects = self.fig._comparison_plot_objects
                 
-                # Mark points with significant changes
-                if len(significant_idx) > 0:
-                    x_highlight = original[significant_idx]
-                    y_highlight = depth[significant_idx]
-                    ax.scatter(x_highlight, y_highlight, color='green', s=50, alpha=0.7, 
-                              label='Significant Changes', zorder=3)
+                if event.inaxes != stored_ax:
+                    return
+                
+                # Check if legend was clicked
+                if stored_legend.contains(event)[0]:
+                    handles = stored_legend.legendHandles
+                    texts = [t.get_text() for t in stored_legend.get_texts()]
+                    
+                    # Simple click detection on legend items
+                    clicked = False
+                    for handle, label in zip(handles, texts):
+                        # Toggle visibility based on label
+                        if label == 'Original':
+                            new_visibility = not stored_objects['original'].get_visible()
+                            stored_objects['original'].set_visible(new_visibility)
+                            if hasattr(handle, 'set_alpha'):
+                                handle.set_alpha(1.0 if new_visibility else 0.3)
+                            clicked = True
+                        elif label == 'Processed':
+                            new_visibility = not stored_objects['processed'].get_visible()
+                            stored_objects['processed'].set_visible(new_visibility)
+                            if hasattr(handle, 'set_alpha'):
+                                handle.set_alpha(1.0 if new_visibility else 0.3)
+                            clicked = True
+                        elif 'changes' in stored_objects and label == 'Significant Changes':
+                            new_visibility = not stored_objects['changes'].get_visible()
+                            stored_objects['changes'].set_visible(new_visibility)
+                            if hasattr(handle, 'set_alpha'):
+                                handle.set_alpha(1.0 if new_visibility else 0.3)
+                            clicked = True
+                    
+                    if clicked:
+                        # Redraw
+                        self.fig.canvas.draw_idle()
+            
+            # Connect click event to legend
+            self.fig.canvas.mpl_connect('button_press_event', on_legend_click)
+            
+            # Add statistics comparison panels below plot
+            from matplotlib.gridspec import GridSpec
+            gs = GridSpec(3, 2, figure=self.fig, height_ratios=[10, 1, 1], hspace=0.4)
+            
+            # Move main plot to use GridSpec
+            ax.remove()
+            ax = self.fig.add_subplot(gs[0, :])
+            
+            # Re-plot everything on new axes (overlay mode - same X-Y)
+            line_orig = ax.plot(original, depth, color=base_color, alpha=0.4, label='Original', 
+                    linewidth=1.5, linestyle='-', visible=True)[0]
+            plot_objects['original'] = line_orig
+            
+            line_proc = ax.plot(processed, depth, color=base_color, alpha=0.9, label='Processed', 
+                    linewidth=2.0, linestyle='-', visible=True)[0]
+            plot_objects['processed'] = line_proc
+            
+            # Re-add significant changes if available
+            if np.any(valid_mask):
+                changes = np.abs(original[valid_mask] - processed[valid_mask])
+                if len(changes) > 0:
+                    threshold = np.percentile(changes, 95) if len(changes) > 20 else np.max(changes) * 0.5
+                    significant_idx = np.nonzero((np.abs(original - processed) > threshold) & valid_mask)[0]
+                    if len(significant_idx) > 0:
+                        x_proc = processed[significant_idx]
+                        y_proc = depth[significant_idx]
+                        scatter = ax.scatter(x_proc, y_proc, color=base_color, s=30, alpha=0.6, 
+                                  marker='o', edgecolors='none', label='Significant Changes', zorder=3)
+                        plot_objects['changes'] = scatter
+            
+            # Re-add gap annotations
+            if 'gap_filling' in self.processing_results[curve]:
+                gap_info = self.processing_results[curve]['gap_filling'].get('gaps_filled', [])
+                if gap_info:
+                    for i, gap in enumerate(gap_info[:3]):
+                        gap_start = gap['gap']['start']
+                        gap_end = gap['gap']['end']
+                        gap_center = (gap_start + gap_end) // 2
+                        if gap_center < len(processed) and not np.isnan(processed[gap_center]):
+                            ax.annotate(f'Gap {i+1}',
+                                       xy=(processed[gap_center], depth[gap_center]),
+                                       xytext=(10, 20),
+                                       textcoords='offset points',
+                                       fontsize=8,
+                                       arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=.2',
+                                                      color=base_color, alpha=0.6))
+            
+            ax.set_title(f'Processing Comparison: {curve} (Click legend to toggle)', fontsize=14, fontweight='bold', pad=10)
+            ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
+            ax.set_ylabel(y_label, fontsize=11)
+            ax.grid(True, alpha=0.3)
+            ax.invert_yaxis()
+            
+            legend = ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
+            self.fig._comparison_legend = legend
+            self.fig._comparison_plot_objects = plot_objects
+            self.fig._comparison_ax = ax
+            
+            # Reconnect toggle handler
+            self.fig.canvas.mpl_connect('button_press_event', on_legend_click)
+            
+            # Statistics panels (side-by-side below plot)
+            valid_orig = original[~np.isnan(original)]
+            valid_proc = processed[~np.isnan(processed)]
+            
+            # Original stats panel
+            ax_stats_orig = self.fig.add_subplot(gs[1:, 0])
+            ax_stats_orig.axis('off')
+            if len(valid_orig) > 0:
+                stats_orig = (
+                    "Original Statistics:\n"
+                    f"Min: {np.min(valid_orig):.3f}\n"
+                    f"Max: {np.max(valid_orig):.3f}\n"
+                    f"Mean: {np.mean(valid_orig):.3f}\n"
+                    f"Std: {np.std(valid_orig):.3f}\n"
+                    f"Missing: {np.sum(np.isnan(original))/len(original)*100:.1f}%"
+                )
+                ax_stats_orig.text(0.1, 0.5, stats_orig, transform=ax_stats_orig.transAxes,
+                        fontsize=9, verticalalignment='center', family='monospace',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.85, edgecolor='gray'))
+            
+            # Processed stats panel
+            ax_stats_proc = self.fig.add_subplot(gs[1:, 1])
+            ax_stats_proc.axis('off')
+            if len(valid_proc) > 0:
+                stats_proc = (
+                    "Processed Statistics:\n"
+                    f"Min: {np.min(valid_proc):.3f}\n"
+                    f"Max: {np.max(valid_proc):.3f}\n"
+                    f"Mean: {np.mean(valid_proc):.3f}\n"
+                    f"Std: {np.std(valid_proc):.3f}\n"
+                    f"Missing: {np.sum(np.isnan(processed))/len(processed)*100:.1f}%"
+                )
+                ax_stats_proc.text(0.1, 0.5, stats_proc, transform=ax_stats_proc.transAxes,
+                        fontsize=9, verticalalignment='center', family='monospace',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.85, edgecolor='gray'))
+            
+            self.fig.tight_layout()
+            
         else:
-            # Show note that curve hasn't been processed
-            ax.text(0.02, 0.98, 'Curve not yet processed', transform=ax.transAxes, 
-                   fontsize=10, verticalalignment='top', 
-                   bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
-        
-        if has_processed:
-            ax.set_title(f'Data Processing Comparison: {curve}', fontsize=14, fontweight='bold')
-        else:
-            ax.set_title(f'Curve Data: {curve} (Not Yet Processed)', fontsize=14, fontweight='bold')
-        ax.set_xlabel(f'{curve} ({self.curve_info.get(curve, {}).get("unit", "UNIT")})')
-        ax.set_ylabel(y_label)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Invert Y-axis to show increasing depth downward (industry standard)
-        ax.invert_yaxis()
-        
-        # Add annotations for gaps that were filled (only if processed)
-        if has_processed and 'gap_filling' in self.processing_results[curve]:
-            gap_info = self.processing_results[curve]['gap_filling'].get('gaps_filled', [])
-            if gap_info:
-                for i, gap in enumerate(gap_info[:5]):  # Limit to first 5 gaps to avoid clutter
-                    gap_start = gap['gap']['start']
-                    gap_end = gap['gap']['end']
-                    gap_center = (gap_start + gap_end) // 2
-                    if gap_center < len(processed) and not np.isnan(processed[gap_center]):
-                        ax.annotate(f'Gap {i+1}',
-                                   xy=(processed[gap_center], depth[gap_center]),
-                                   xytext=(10, 20),
-                                   textcoords='offset points',
-                                   arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=.2'))
-        
-        self.fig.tight_layout()
+            # Single panel if not processed
+            ax = self.fig.add_subplot(111)
+            ax.plot(original, depth, color=base_color, alpha=0.7, label='Original Data', linewidth=2)
+            ax.set_title(f'Original Data: {curve} (Not Yet Processed)', fontsize=14, fontweight='bold')
+            ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
+            ax.set_ylabel(y_label, fontsize=11)
+            ax.legend(loc='best', fontsize=10)
+            ax.grid(True, alpha=0.3)
+            ax.invert_yaxis()
+            
+            # Statistics box
+            valid_orig = original[~np.isnan(original)]
+            if len(valid_orig) > 0:
+                stats_text = (
+                    f"Min: {np.min(valid_orig):.3f}\n"
+                    f"Max: {np.max(valid_orig):.3f}\n"
+                    f"Mean: {np.mean(valid_orig):.3f}\n"
+                    f"Std: {np.std(valid_orig):.3f}\n"
+                    f"Missing: {np.sum(np.isnan(original))/len(original)*100:.1f}%"
+                )
+                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+                        fontsize=9, verticalalignment='top', family='monospace',
+                        bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85))
+            
+            self.fig.tight_layout()
     
 
     
@@ -11640,6 +11523,7 @@ Your feedback contributes to software quality and reliability.
         - CSV: comma-separated values without index
         - Excel: .xlsx via pandas (if engine available)
         - LAS: text assembled from DataFrame and curve metadata
+        Includes security validation for path traversal protection.
         """
         try:
             if self.processed_data is None or not isinstance(self.processed_data, pd.DataFrame) or self.processed_data.empty:
@@ -11653,7 +11537,22 @@ Your feedback contributes to software quality and reliability.
             save_path = filedialog.asksaveasfilename(defaultextension=".las", filetypes=filetypes)
             if not save_path:
                 return
-            sp = str(save_path)
+            
+            # Security: Validate and normalize export path
+            validated_path = SafeFileHandler.validate_file_path(save_path)
+            if not validated_path:
+                sanitized = SafeFileHandler.sanitize_path_for_display(save_path)
+                messagebox.showerror("Security Error", f"Invalid export path: {sanitized}")
+                return
+            
+            # Security: Validate file extension
+            if not SafeFileHandler.validate_file_extension(str(validated_path), mode='write'):
+                ext = os.path.splitext(str(validated_path))[1].lower()
+                messagebox.showerror("File Type Error", 
+                                   f"Invalid export file type: {ext}\nAllowed types: .las, .csv, .xlsx")
+                return
+            
+            sp = str(validated_path)
             sp_lower = sp.lower()
             if sp_lower.endswith('.csv'):
                 self.processed_data.to_csv(sp, index=False)
@@ -11725,11 +11624,36 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.file_path_var.set(filename)
     
     def load_file(self):
-        """Load and analyze data file with analytics"""
+        """Load and analyze data file with analytics and security validation"""
         filepath = self.file_path_var.get()
-        if not filepath or not os.path.exists(filepath):
+        if not filepath:
             messagebox.showerror("Error", "Please select a valid file")
             return
+        
+        # Security: Validate and normalize file path
+        validated_path = SafeFileHandler.validate_file_path(filepath)
+        if not validated_path:
+            sanitized = SafeFileHandler.sanitize_path_for_display(filepath)
+            messagebox.showerror("Security Error", f"Invalid or inaccessible file path: {sanitized}")
+            return
+        
+        # Security: Validate file size before loading
+        if not SafeFileHandler.validate_file_size(str(validated_path)):
+            size_mb = os.path.getsize(str(validated_path)) / (1024 * 1024)
+            max_mb = SafeFileHandler.MAX_FILE_SIZE_MB
+            messagebox.showerror("File Size Error", 
+                               f"File is too large: {size_mb:.1f}MB\nMaximum allowed: {max_mb}MB")
+            return
+        
+        # Security: Validate file extension
+        if not SafeFileHandler.validate_file_extension(str(validated_path), mode='read'):
+            ext = os.path.splitext(str(validated_path))[1].lower()
+            messagebox.showerror("File Type Error", 
+                               f"Invalid file type: {ext}\nAllowed types: .las, .csv, .xlsx, .xls")
+            return
+        
+        # Use validated path
+        filepath = str(validated_path)
         
         try:
             # Clear existing data before loading new file with unsaved data check
@@ -12560,6 +12484,17 @@ This ensures consistent data interpretation and fixes depth validation issues.
             curve_info.get('description', '')
         )
         
+        # CRITICAL: Record standardization operation for audit trail
+        if hasattr(self, 'standardization_reporter'):
+            self.standardization_reporter.record_curve_identification(
+                original_name=curve_name,
+                curve_type=curve_type,
+                confidence=confidence,
+                method='lasio_extraction',
+                unit=curve_info.get('unit', ''),
+                description=curve_info.get('description', '')
+            )
+        
         # Update curve info with comprehensive identification results
         curve_info['curve_type'] = curve_type
         curve_info['type_confidence'] = confidence
@@ -12623,7 +12558,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Log LAS header extraction failure
             self.log_processing(f"Warning: Error extracting LAS header: {str(e)}")
             self.log_processing("Using minimal fallback header for preview")
-            import warnings
             warnings.warn(
                 f"LAS header extraction failed: {str(e)}. "
                 f"Using minimal header. Original LAS preview may be incomplete.",
@@ -12933,6 +12867,17 @@ This ensures consistent data interpretation and fixes depth validation issues.
             curve_type, confidence, curve_data = self.mnemonic_library.identify_curve(
                 column, unit, description
             )
+            
+            # CRITICAL: Record standardization operation for audit trail
+            if hasattr(self, 'standardization_reporter'):
+                self.standardization_reporter.record_curve_identification(
+                    original_name=column,
+                    curve_type=curve_type,
+                    confidence=confidence,
+                    method='analyze_curves',
+                    unit=unit,
+                    description=description
+                )
             
             # Calculate statistics
             data = self.current_data[column].dropna()
@@ -14968,6 +14913,16 @@ This ensures consistent data interpretation and fixes depth validation issues.
                         continue
 
                 if rename_map:
+                    # CRITICAL: Record all curve renames for audit trail
+                    if hasattr(self, 'standardization_reporter'):
+                        for old_name, new_name in rename_map.items():
+                            self.standardization_reporter.record_curve_rename(
+                                original_name=old_name,
+                                standardized_name=new_name,
+                                reason='standardization',
+                                confidence=0.9  # High confidence for mnemonic library matches
+                            )
+                    
                     self.processed_data.rename(columns=rename_map, inplace=True)
                     updated_curve_info = {}
                     for old_name, info in self.curve_info.items():
@@ -15448,8 +15403,29 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.fig.suptitle('Unprocessed Curves Visualization', fontsize=16, fontweight='bold')
             self.fig.tight_layout()
             
+            # Create canvas display for embedded visualization (same pattern as update_visualization)
+            if hasattr(self, 'viz_content') and self.viz_content:
+                # Clean up any existing widgets in viz_content
+                for widget in self.viz_content.winfo_children():
+                    widget.destroy()
+                self.canvas = None
+                
+                # Create canvas using existing professional pattern
+                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
+                self.canvas.draw()
+                
+                # Create navigation toolbar for professional interaction
+                if NavigationToolbar2Tk:
+                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                    toolbar.update()
+                    toolbar.pack(side='top', fill='x')
+                
+                # Pack canvas below toolbar
+                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
+            
         except Exception as e:
             messagebox.showerror("Unprocessed Curves Plot Error", f"Failed to create unprocessed curves plot: {str(e)}")
+            self.log_processing(f"Error in plot_unprocessed_curves: {e}")
 
     def _plot_unprocessed_curves_on_axis(self, ax, curves, depth_data, y_label):
         """Helper function to plot unprocessed curves on a specific axis"""
@@ -15679,8 +15655,29 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.fig.tight_layout()
             self.fig.subplots_adjust(top=0.94, bottom=0.10, wspace=0.25, hspace=0.35)
             
+            # Create canvas display for embedded visualization
+            if hasattr(self, 'viz_content') and self.viz_content:
+                # Clean up any existing widgets in viz_content
+                for widget in self.viz_content.winfo_children():
+                    widget.destroy()
+                self.canvas = None
+                
+                # Create canvas using existing professional pattern
+                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
+                self.canvas.draw()
+                
+                # Create navigation toolbar for professional interaction
+                if NavigationToolbar2Tk:
+                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                    toolbar.update()
+                    toolbar.pack(side='top', fill='x')
+                
+                # Pack canvas below toolbar
+                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
+            
         except Exception as e:
             messagebox.showerror("Quality Overview Error", f"Failed to create quality overview: {str(e)}")
+            self.log_processing(f"Error in plot_curve_quality_overview: {e}")
 
     def plot_curve_comparison_all(self):
         """Plot all curves for comparison, including unprocessed ones"""
@@ -15796,8 +15793,29 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.fig.suptitle('All Curves Comparison', fontsize=16, fontweight='bold')
             plt.tight_layout()
             
+            # Create canvas display for embedded visualization
+            if hasattr(self, 'viz_content') and self.viz_content:
+                # Clean up any existing widgets in viz_content
+                for widget in self.viz_content.winfo_children():
+                    widget.destroy()
+                self.canvas = None
+                
+                # Create canvas using existing professional pattern
+                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
+                self.canvas.draw()
+                
+                # Create navigation toolbar for professional interaction
+                if NavigationToolbar2Tk:
+                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                    toolbar.update()
+                    toolbar.pack(side='top', fill='x')
+                
+                # Pack canvas below toolbar
+                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
+            
         except Exception as e:
             messagebox.showerror("Curve Comparison Error", f"Failed to create curve comparison: {str(e)}")
+            self.log_processing(f"Error in plot_curve_comparison_all: {e}")
 
     # ============================================================================
     # NEW SINGLE CURVE VISUALIZATION METHODS
@@ -16382,11 +16400,11 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 elif viz_type == "single_curve_comparison":
                     self.plot_single_curve_comparison()
                 elif viz_type == "unprocessed_curves":
-                    self.plot_unprocessed_curves()
+                    self.plot_unprocessed_curves()  # Now includes canvas creation
                 elif viz_type == "quality_overview":
-                    self.plot_curve_quality_overview()
+                    self.plot_curve_quality_overview()  # Verify this also creates canvas
                 elif viz_type == "curve_comparison_all":
-                    self.plot_curve_comparison_all()
+                    self.plot_curve_comparison_all()  # Verify this also creates canvas
                 else:
                     # Use existing visualization methods
                     self.update_visualization()

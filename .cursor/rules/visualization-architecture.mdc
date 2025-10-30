@@ -1,5 +1,5 @@
 ---
-description: Architectural specification for visualization system including memory management and figure registry
+description: Documentation for the visualization system architecture, focusing on figure management and memory patterns
 ---
 
 # === USER INSTRUCTIONS ===
@@ -30,33 +30,29 @@ $END$
 
 # visualization-architecture
 
-### Figure Registry and Memory Management
-**File**: `advanced_preprocessing_system10.py`
-**Importance Score**: 80
+Based on the provided specification, there is limited but focused information about the visualization architecture through the referenced UI components:
 
-The visualization architecture implements a specialized memory management system for handling figure objects:
+## Core Components
 
-1. Figure Registry
-- Maintains centralized tracking of all visualization objects
-- Replaces direct matplotlib show() calls with managed Toplevel windows
-- Provides controlled cleanup of visualization resources
+`ui/visualization.py`
+- Generic visualization utilities for displaying petrophysical data
+- Basic visualization infrastructure without significant business logic
 
-2. Window Management
-- Implements Toplevel window containers for plot isolation
-- Prevents memory leaks from orphaned figure objects
-- Enables proper disposal of visualization resources between well analyses
+`ui/status.py`
+- Status update display system for visualization operations
 
-3. Well Information Display
-- Integrates color-coded well identification cards in Data Tab
-- Provides persistent visual confirmation of active well context
-- Ensures visualization context safety across multiple wells
+## Styling
 
-4. Display State Management
-- Implements comprehensive state cleanup for visualization objects
-- Prevents cross-contamination of display elements between wells
-- Handles unit conversion preview displays with user confirmation dialogs
+`.superdesign/design_iterations/default_ui_darkmode.css`
+- UI styling definitions for visualization components
 
-The visualization system specifically focuses on maintaining visualization context safety when working with multiple wells, ensuring proper resource cleanup, and providing clear visual indicators for well identification during analysis sessions.
+## Package Structure
+
+`ui/__init__.py`
+- Package initialization for visualization components 
+
+Importance Score: 45/100
+The visualization architecture appears to contain primarily standard display utilities without significant specialized business logic or domain-specific implementations.
 
 $END$
 

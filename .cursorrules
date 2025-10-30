@@ -62,59 +62,51 @@ $END$
 - Explain your OBSERVATIONS clearly, then provide REASONING to identify the exact issue. Add console logs when needed to gather more information.
 
 
-### Core Safety Systems
-**Importance Score**: 100
-Located in `advanced_preprocessing_system10.py`
+## Core Business Domain Components
 
-The system implements critical safety features for well data processing:
+### Petrophysical Standards Engine
+**Importance Score: 95/100**
+Location: petrophysics/constants.py
 
-1. Well Identification System
-- Extracts well information from LAS headers
-- Displays well data in window titles and UI cards
-- Prevents well confusion through visual confirmation
+Primary domain rules:
+- Formation-specific porosity thresholds and quality criteria
+- Regional Archie parameters for geological contexts
+- Industry-standard lithology density classifications
+- Data quality assessment thresholds
+- Gap filling rules per formation type
 
-2. Depth Validation
-- Provides detailed error messaging for validation failures
-- Includes specific metrics and remediation steps
-- Prevents incorrect data processing
+### Data Standardization System
+**Importance Score: 85/100**
+Location: core/reporting.py
 
-3. State Cleanup
-- Prevents cross-contamination between wells
-- Clears all state variables including:
-  - Data storage
-  - Curve information
-  - Processing results
-  - Geological context
+Business workflows:
+- Curve name standardization tracking
+- Unit conversion audit trails
+- Quality metrics generation
+- Standardization confidence scoring
+- Naming conflict resolution documentation
 
-4. Unit Conversion Safety
-- Requires explicit user approval for conversions
-- Shows preview dialog with conversion details
-- Prevents accidental data corruption
+## Integration Architecture
 
-### Error Management Architecture
-**Importance Score**: 90
-Located in `advanced_preprocessing_system10.py`
+The system connects two primary business components:
+1. Petrophysical constants provide the foundational rules and thresholds
+2. Standardization reporting validates and tracks data transformations
 
-- Replaces silent error suppression with explicit warnings
-- Implements categorized error handling system
-- Provides user-friendly messages with remediation steps
+Key business workflows combine:
+- Formation-specific quality validations
+- Regional parameter applications
+- Industry-standard curve identification
+- Data quality assessment tracking
 
-### Visualization System
-**Importance Score**: 80
-Located in `advanced_preprocessing_system10.py`
+## Business Rules Summary
 
-- Implements figure registry for visualization cleanup
-- Uses Toplevel windows for display management
-- Manages memory allocation for visualization components
-
-### Multi-well Processing
-**Importance Score**: 70
-Located in `advanced_preprocessing_system10.py`
-
-- Supports multiple well analysis in single session
-- Manages active well selection
-- Enables sequential processing of multiple wells
-- Handles bulk LAS file exports
+Critical domain rules implemented:
+1. Formation-dependent porosity validation
+2. Depth-based shale density calculations
+3. Regional geological parameter variations
+4. Gap filling methodologies by curve type
+5. Quality assessment criteria
+6. Curve naming standardization
 
 $END$
 

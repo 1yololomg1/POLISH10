@@ -1,0 +1,63 @@
+COMPARISON VISUALIZATION - OVERLAY MODE WITH TOGGLE
+═══════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  COMPARISON VIEW: Processing Comparison (Overlay Mode)                     │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  CONTROL BAR                                                          │  │
+│  │  [● Original] [○ Processed] [Toggle: Show Both / Single]            │  │
+│  │  Opacity: Original (▁▃▅▇) Processed (▁▃▅▇)                            │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  UNIFIED PLOT AREA (Same X-Y Coordinates)                            │  │
+│  │                                                                       │  │
+│  │  Depth ↓                                                              │  │
+│  │     │                                                                 │  │
+│  │     │  ════ Processed (alpha=0.9, thicker line)                     │  │
+│  │     │  ──── Original (alpha=0.4, thinner line)                      │  │
+│  │     │       • Significant changes marked                             │  │
+│  │     │       ↗ Gap annotations                                        │  │
+│  │     │                                                                 │  │
+│  │     │  [Both curves overlap - same depth axis, same value axis]     │  │
+│  │     │                                                                 │  │
+│  │     └─────────────────────────────────────────────────────           │  │
+│  │              Value Axis (shared)                                      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  STATISTICS COMPARISON (Side-by-side for contrast)                     │  │
+│  │  ┌──────────────┬──────────────┐                                     │  │
+│  │  │ Original     │ Processed    │                                     │  │
+│  │  ├──────────────┼──────────────┤                                     │  │
+│  │  │ Min: X.XXX   │ Min: X.XXX   │                                     │  │
+│  │  │ Max: X.XXX   │ Max: X.XXX   │                                     │  │
+│  │  │ Mean: X.XXX  │ Mean: X.XXX  │                                     │  │
+│  │  │ Std: X.XXX   │ Std: X.XXX   │                                     │  │
+│  │  │ Missing: XX% │ Missing: XX% │                                     │  │
+│  │  └──────────────┴──────────────┘                                     │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  [Export] [Settings] [Reset View]                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+TOGGLE STATES:
+─────────────────────────────────────────────────────────────────────────────
+STATE 1: Both Visible (Default)
+  - Original: alpha=0.4, linewidth=1.5 (light, transparent)
+  - Processed: alpha=0.9, linewidth=2.0 (solid, prominent)
+  - Both use same color (curve's industry color)
+
+STATE 2: Original Only
+  - Original: alpha=0.9, linewidth=2.0 (fully visible)
+  - Processed: hidden
+
+STATE 3: Processed Only  
+  - Processed: alpha=0.9, linewidth=2.0 (fully visible)
+  - Original: hidden
+
+UX BENEFITS:
+- Direct visual comparison on same scale
+- Easy to see exactly where changes occurred
+- Toggle allows focused view of either dataset
+- Statistics panel shows numerical comparison
+- Opacity distinction (not color) maintains visual coherence
+

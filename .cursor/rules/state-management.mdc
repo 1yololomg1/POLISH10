@@ -1,5 +1,5 @@
 ---
-description: Documentation for application state management focusing on multiwell data handling and state cleanup procedures
+description: Core business logic and domain-specific implementations for petrophysical data state management and standardization
 ---
 
 # === USER INSTRUCTIONS ===
@@ -56,45 +56,48 @@ $END$
 
 # state-management
 
-### State Cleanup System
-**File Path**: `advanced_preprocessing_system10.py`
-**Importance Score**: 95
+## Core State Management Components
 
-A comprehensive state reset mechanism preventing cross-contamination between well data processing:
-- Clears all state variables related to well data
-- Resets curve information and processing results
-- Purges geological context data
-- Ensures clean slate for new well processing
+### Petrophysical Data State (Importance: 90/100)
+Location: petrophysics/constants.py
+- Formation-specific state parameters for lithology densities and porosity classifications
+- Regional Archie parameter state management across geological contexts
+- Quality threshold state definitions per formation type
+- State validation rules for curve-specific data quality criteria
 
-### Multiwell State Management
-**File Path**: `advanced_preprocessing_system10.py`
-**Importance Score**: 85
+### Standardization State Tracking (Importance: 85/100)
+Location: core/reporting.py
+- Audit trail state management for curve name standardization
+- Unit conversion state tracking with validation checks
+- Confidence state tracking for curve identification methods
+- State persistence for naming conflict resolutions
+- Quality metrics state collection and reporting
 
-System for handling multiple well states simultaneously:
-- Maintains separate state containers for each loaded well
-- Implements active well selection and switching
-- Preserves processing state for each well independently
-- Manages concurrent well data processing states
+## State Cleanup Procedures
 
-### Well Information State
-**File Path**: `advanced_preprocessing_system10.py`
-**Importance Score**: 80
+### Formation Data Cleanup
+- Formation-specific quality threshold enforcement
+- Depth-dependent state validation for shale density calculations
+- Regional parameter state normalization
 
-State management for well identification and metadata:
-- Extracts and maintains well information from LAS headers
-- Updates UI components with current well state
-- Manages color-coded well identification displays
-- Maintains well context across processing operations
+### Standardization Cleanup
+- Unit conversion state verification
+- Fractional standardization state normalization
+- Naming conflict state resolution
+- Quality metric state aggregation
 
-### Unit Conversion State
-**File Path**: `advanced_preprocessing_system10.py`
-**Importance Score**: 75
+## Data Flow Management
 
-Tracks and manages unit conversion states:
-- Maintains conversion approval status
-- Stores preview information for conversions
-- Manages user confirmation states
-- Preserves original and converted unit information
+### Petrophysical State Flow
+- Lithology density state propagation
+- Porosity classification state transitions
+- Quality threshold state applications
+
+### Reporting State Flow
+- Standardization state tracking
+- Unit conversion state propagation
+- Quality metric state aggregation
+- Audit trail state maintenance
 
 $END$
 

@@ -1,5 +1,5 @@
 ---
-description: Defines well data structures including LAS headers, depth validation, and well dataset schemas
+description: Specifications for well data modeling, LAS file handling, and validation structures in petrophysical systems
 ---
 
 # === USER INSTRUCTIONS ===
@@ -49,48 +49,43 @@ $END$
 
 # well-data-models
 
-### Well Identification Data Structure
-**File Path**: `advanced_preprocessing_system10.py`  
-**Importance Score**: 95
+## Data Structures
 
-Core data models for well identification and metadata:
-- LAS header information extraction and validation
-- Structured storage of well metadata including location, operator, dates
-- Well identification validation against known patterns
-- Cross-referencing system for well aliases and identifiers
+### LAS File Header Model
+- Captures essential well metadata and curve definitions
+- Stores formation-specific parameters and regional settings
+- Manages version information and processing history
+- Tracks curve unit standardization states
 
-### Depth Validation Model
-**File Path**: `advanced_preprocessing_system10.py`
-**Importance Score**: 90
+### DepthValidationResult
+A dataclass containing:
+- Validated depth ranges with geological context
+- Formation boundary markers
+- Quality flags for depth measurements
+- Zone-specific validation rules
 
-DepthValidationResult dataclass:
-- Validation status flags
-- Depth range verification
-- Step size consistency checks
-- Gap detection metrics
-- Missing/invalid depth point identification
-- Remediation recommendations
+### Well Dataset Mappings
+Maps industry-standard curve names and their properties:
+- Measurement types and units
+- Valid value ranges by formation
+- Required companion curves
+- Regional calibration parameters
 
-### Well Information Display Schema
-**File Path**: `advanced_preprocessing_system10.py`
-**Importance Score**: 85
+## Core Business Rules
 
-Data structure for well identification card:
-- Color-coded status indicators
-- Required metadata fields
-- Warning/error status tracking
-- Real-time validation state
+1. Formation-Specific Data Validation
+- Depth-dependent density constraints
+- Porosity quality thresholds
+- Regional parameter variations
+- Gap filling methodologies
 
-### Multiwell Dataset Mapping
-**File Path**: `advanced_preprocessing_system10.py`
-**Importance Score**: 80
+2. Quality Control Framework
+- Industry-standard curve range validation
+- Unit compatibility checks
+- Cross-curve relationship verification
+- Zone-aware data validation
 
-Schema for managing multiple wells:
-- Active well pointer system
-- Well state tracking
-- Processing status mapping
-- Cross-well validation rules
-- Export configuration templates
+Importance Score: 90/100 (Critical data models for well log analysis)
 
 $END$
 
