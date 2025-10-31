@@ -1,0 +1,48 @@
+# Files to exclude from distribution when building standalone executable
+# DO NOT include these in the final executable package
+
+# Source Python files (these get compiled to bytecode in the executable)
+*.py
+!advanced_preprocessing_system10.py  # Needed for build
+
+# Development files
+*.md
+!README.md
+*.txt
+!requirements.txt
+*.spec
+*.bat
+*.sh
+
+# Cache and temporary files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git files
+.git/
+.gitignore
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Documentation (not needed in executable)
+HOW_TO_RUN.md
+PROJECT_STATUS_REPORT.md
+SECURITY_AUDIT_REPORT.md
+RESTORE_BACKUPS.md
+
+# Backup files
+backups/
+

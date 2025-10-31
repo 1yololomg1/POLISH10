@@ -1,0 +1,102 @@
+================================================================================
+  Advanced Wireline Data Preprocessing System - Distribution Instructions
+================================================================================
+
+YES - You just need to send the .exe file!
+
+For a --onefile build, the executable is completely standalone:
+✓ All Python code is bundled
+✓ All dependencies (numpy, pandas, matplotlib, etc.) are included
+✓ All your modules (core, ui, petrophysics) are embedded
+✓ Users do NOT need Python installed
+✓ Users do NOT need to install any packages
+
+================================================================================
+WHAT TO SEND
+================================================================================
+
+Send ONLY:
+  WirelinePreprocessing.exe
+
+That's it! Nothing else is required.
+
+================================================================================
+FILE SIZE EXPECTATION
+================================================================================
+
+The .exe file will be LARGE (approximately 200-400 MB) because it includes:
+- Python interpreter
+- All scientific libraries (numpy, pandas, scipy, sklearn, matplotlib)
+- All your application code and modules
+- All dependencies
+
+This is normal and expected for PyInstaller --onefile builds.
+
+================================================================================
+IMPORTANT NOTES FOR END USERS
+================================================================================
+
+1. WINDOWS DEFENDER / ANTIVIRUS WARNINGS
+   - The .exe may trigger antivirus warnings
+   - This is common for PyInstaller executables (false positive)
+   - Users may need to:
+     * Click "More info" → "Run anyway"
+     * Add exception in Windows Defender
+     * Or temporarily disable antivirus during first run
+
+2. FIRST RUN
+   - The first launch may take 10-30 seconds (unpacking bundled files)
+   - Subsequent launches will be faster
+
+3. SYSTEM REQUIREMENTS
+   - Windows 10 or later
+   - 4GB RAM minimum (8GB+ recommended)
+   - Administrator rights NOT required
+   - No installation needed - just double-click!
+
+4. TROUBLESHOOTING
+   - If exe doesn't start: Right-click → "Run as administrator"
+   - If antivirus blocks it: Add to exclusions
+   - If file is corrupted: Re-download/verify file size
+
+================================================================================
+ALTERNATIVE: CREATE A WINDOWED VERSION (No Console)
+================================================================================
+
+To hide the console window for end users:
+
+1. Open: distribution\WirelinePreprocessing.spec
+2. Find: console=False (should already be set)
+3. Build using: distribution\BUILD_STANDALONE.bat
+
+This creates a GUI-only executable with no console window.
+
+================================================================================
+BUILD INSTRUCTIONS
+================================================================================
+
+To rebuild the executable:
+
+Option 1: Use the batch script (RECOMMENDED)
+  cd distribution
+  BUILD_STANDALONE.bat
+
+Option 2: Use the spec file directly
+  cd distribution
+  pyinstaller WirelinePreprocessing.spec
+
+The executable will be in: distribution\dist\WirelinePreprocessing.exe
+
+================================================================================
+DISTRIBUTION CHECKLIST
+================================================================================
+
+Before distributing:
+✓ Built with --onefile (single executable)
+✓ console=False (no console window for users)
+✓ Tested on clean Windows system
+✓ Verified antivirus doesn't permanently block it
+✓ File size is reasonable (200-400 MB expected)
+
+================================================================================
+

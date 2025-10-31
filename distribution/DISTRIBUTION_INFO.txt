@@ -1,0 +1,90 @@
+================================================================================
+  Advanced Wireline Data Preprocessing System - Distribution Package
+================================================================================
+
+PACKAGE CONTENTS
+----------------
+✓ advanced_preprocessing_system10.py    Main application (816 KB)
+✓ core/                                 Core processing modules
+  ├── reporting.py                      Standardization reporting
+  └── petrophysical_models.py          Petrophysical calculations
+✓ ui/                                   User interface components
+  ├── visualization.py                 Plotting and visualization
+  └── status.py                        Status management
+✓ petrophysics/                        Petrophysical constants
+  └── constants.py                     Industry standards
+✓ requirements.txt                     Python dependencies
+✓ README.md                           Full documentation
+✓ INSTALL.txt                         Installation instructions
+✓ run.bat                             Windows launcher script
+✓ run.sh                              Linux/Mac launcher script
+
+⚠️ IMPORTANT: Python is NOT included in this package!
+You must install Python separately before running this application.
+
+QUICK START
+-----------
+1. INSTALL PYTHON FIRST (if not already installed)
+   - Download from: https://www.python.org/downloads/
+   - Version: Python 3.8 or higher (3.11+ recommended)
+   - IMPORTANT: Check "Add Python to PATH" during installation
+   - Verify: Open terminal, type "python --version"
+
+2. Open terminal in this folder
+
+3. Install dependencies:
+   pip install -r requirements.txt
+
+4. Run the application:
+   python advanced_preprocessing_system10.py
+   
+   OR on Windows: Double-click run.bat
+
+SYSTEM REQUIREMENTS
+-------------------
+- Python 3.8 or higher
+- Windows 10+, macOS 10.14+, or Linux
+- 4GB RAM minimum (8GB+ recommended)
+- 500MB disk space
+
+FEATURES
+--------
+✓ Multi-format file loading (LAS, CSV, Excel)
+✓ Advanced gap filling algorithms
+✓ Signal denoising and filtering
+✓ Industry-standard curve identification
+✓ Automatic unit standardization
+✓ Quality control and validation
+✓ Multi-well processing
+✓ Comprehensive visualization
+✓ Secure file handling
+✓ Processing reports and exports
+
+FILE SIZE LIMITS
+---------------
+- Maximum file size: 500MB (configurable)
+- Supported formats: .las, .csv, .xlsx, .xls
+
+OPTIONAL FEATURES
+-----------------
+Install these for advanced functionality:
+- scipy: Advanced gap filling (Gaussian Process, Kriging)
+- scikit-learn: Machine learning interpolation
+- pywavelets: Wavelet denoising
+
+The application works without these but with reduced functionality.
+
+TROUBLESHOOTING
+---------------
+See INSTALL.txt for detailed troubleshooting steps.
+
+SUPPORT
+-------
+Refer to README.md for comprehensive documentation.
+
+================================================================================
+Package created: 2024
+Version: Advanced Preprocessing System v10
+Python Compatibility: 3.8+
+================================================================================
+

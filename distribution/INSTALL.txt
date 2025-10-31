@@ -1,0 +1,118 @@
+INSTALLATION INSTRUCTIONS
+==========================
+
+Advanced Wireline Data Preprocessing System
+
+⚠️ IMPORTANT: Python is NOT included with this package!
+You must install Python separately before running this application.
+
+QUICK INSTALL (4 steps)
+------------------------
+1. INSTALL PYTHON FIRST (if not already installed)
+   - Download from: https://www.python.org/downloads/
+   - Version required: Python 3.8 or higher
+   - During installation, CHECK "Add Python to PATH"
+   - Verify installation: Open terminal and type "python --version"
+
+2. Install dependencies:
+   Open terminal in this folder and run: pip install -r requirements.txt
+
+3. Run the application:
+   python advanced_preprocessing_system10.py
+   
+   OR on Windows, double-click: run.bat
+
+DETAILED INSTRUCTIONS
+---------------------
+
+STEP 1: Install Python (If Not Already Installed)
+---------------------------------------------------
+Python is NOT included with this distribution package.
+You must download and install it separately.
+
+WHERE TO GET PYTHON:
+- Official website: https://www.python.org/downloads/
+- Select the latest Python 3.x version (3.8 or higher required)
+- Download the installer for your operating system
+
+INSTALLATION TIPS:
+- During installation, CHECK THE BOX "Add Python to PATH"
+- This is crucial for the application to work!
+- Choose "Install for all users" if you have admin rights
+- Click "Install Now" (recommended settings)
+
+VERIFY INSTALLATION:
+After installing, open a terminal/command prompt and type:
+    python --version
+    
+You should see something like: Python 3.11.x or higher
+
+IF PYTHON IS NOT RECOGNIZED:
+- The "Add Python to PATH" option was likely not checked
+- You can either:
+  1. Reinstall Python and check "Add Python to PATH"
+  2. Manually add Python to your system PATH
+  3. Use the full path to python.exe (e.g., C:\Python311\python.exe)
+
+STEP 2: Install Dependencies
+-----------------------------
+Open terminal/command prompt in this distribution folder and run:
+
+    pip install -r requirements.txt
+
+This will install:
+- numpy (numerical operations)
+- pandas (data handling)
+- matplotlib (visualization)
+- lasio (LAS file support)
+- Optional: scipy, scikit-learn, pywavelets (advanced features)
+
+STEP 3: Run the Application
+-----------------------------
+From the same terminal/command prompt:
+
+    python advanced_preprocessing_system10.py
+
+The application window should appear.
+
+TROUBLESHOOTING
+---------------
+
+Problem: "python is not recognized"
+Solution: Python may not be in your PATH. Use "python3" instead of "python",
+          or reinstall Python and check "Add Python to PATH" during installation.
+
+Problem: "No module named 'tkinter'"
+Solution (Windows): Usually included with Python. Try: python -m tkinter
+Solution (Linux): Install python3-tk: sudo apt-get install python3-tk
+Solution (macOS): Usually included with Python installation
+
+Problem: "pip is not recognized"
+Solution: Use "python -m pip" instead of "pip"
+
+Problem: Import errors for optional packages
+Solution: The application will work without optional packages but with reduced
+          functionality. Install them individually:
+          pip install scipy scikit-learn pywavelets
+
+PRO TIP: Use Virtual Environment
+----------------------------------
+To keep dependencies isolated:
+
+1. Create virtual environment:
+   python -m venv venv
+
+2. Activate it:
+   Windows: venv\Scripts\activate
+   Linux/Mac: source venv/bin/activate
+
+3. Install dependencies:
+   pip install -r requirements.txt
+
+4. Run application:
+   python advanced_preprocessing_system10.py
+
+QUESTIONS?
+----------
+See README.md for detailed usage instructions and troubleshooting.
+
