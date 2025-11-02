@@ -331,7 +331,7 @@ except Exception:
 #=============================================================================
 # NOTE: PetrophysicalConstants has been extracted to petrophysics/constants.py
 # Import maintained here for backward compatibility during modularization
-from petrophysics.constants import PetrophysicalConstants, PHYSICAL_CONSTANTS
+from petrophysics.constants import PetrophysicalConstants, PHYSICAL_CONSTANTS, load_basin_parameters, get_basin_names
 
 # Legacy class definition removed - now imported from petrophysics.constants
 # Original code preserved in advanced_preprocessing_system10_PRE_PHASE2_BACKUP_*.py
@@ -342,6 +342,7 @@ from petrophysics.constants import PetrophysicalConstants, PHYSICAL_CONSTANTS
 # NOTE: ArchieEquationCalculator and RelativeRockPropertiesModel have been extracted to core/petrophysical_models.py
 # Import maintained here for backward compatibility during modularization
 from core.petrophysical_models import ArchieEquationCalculator, RelativeRockPropertiesModel, ARCHIE_CALCULATOR
+from core.environmental_corrections import EnvironmentalCorrectionsManager
 
 # Legacy class definitions removed - now imported from core.petrophysical_models
 # Original code preserved in advanced_preprocessing_system10_PRE_PHASE2_BACKUP_*.py
@@ -1624,6 +1625,8 @@ import matplotlib.pyplot as plt
 
 from ui.visualization import SecureVisualizationManager
 from ui.status import SecureStatusManager
+from ui.log_display_renderer import LogDisplayRenderer
+from ui.batch_processing import BatchProcessingManager
 
 
 #=============================================================================
@@ -6191,6 +6194,31 @@ class AdvancedPreprocessingApplication:
         self.rename_curves_var = tk.BooleanVar(value=True)
         self.null_value_var = tk.StringVar(value="-999.25")
         self.standardize_units_var = tk.BooleanVar(value=True)
+        
+        # === NEW PRODUCTION-READY FEATURE VARIABLES ===
+        # Environmental Corrections (Priority 1.1)
+        self.apply_env_corrections_var = tk.BooleanVar(value=False)
+        self.tool_type_var = tk.StringVar(value='generic')
+        self.bit_size_var = tk.StringVar(value='8.5')
+        self.mud_weight_var = tk.StringVar(value='10.0')
+        self.matrix_type_var = tk.StringVar(value='sandstone')
+        
+        # Saturation Calculation (Priority 1.2)
+        self.compute_saturation_var = tk.BooleanVar(value=False)
+        self.archie_a_var = tk.StringVar(value='1.0')
+        self.archie_m_var = tk.StringVar(value='2.0')
+        self.archie_n_var = tk.StringVar(value='2.0')
+        self.rw_var = tk.StringVar(value='0.05')
+        self.gr_clean_var = tk.StringVar(value='20.0')
+        self.gr_shale_var = tk.StringVar(value='120.0')
+        self.rsh_var = tk.StringVar(value='2.0')
+        
+        # Basin Selection (Priority 1.3)
+        self.basin_var = tk.StringVar(value='Generic Clean Sandstone')
+        self.basin_info_label = None  # Will be created in UI setup
+        
+        # Batch Processing Manager (Priority 1.5)
+        self.batch_manager = None  # Will be initialized when batch tab is created
         self.output_format_var = tk.StringVar(value="Company Standard")
         self.large_gap_var = tk.StringVar(value="formation_based")
         # Threshold (in points) beyond which gaps are considered "large"
@@ -7836,6 +7864,7 @@ Your feedback contributes to software quality and reliability.
         self.create_processing_tab()
         self.create_visualization_tab()
         self.create_report_tab()
+        self.create_batch_tab()  # NEW: Batch Processing tab (Priority 1.5)
         # Units UI moved into Processing > Uniformization for better workflow
         
         # Add performance optimization

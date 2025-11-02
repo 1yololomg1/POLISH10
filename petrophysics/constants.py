@@ -630,5 +630,155 @@ class PetrophysicalConstants:
             return "UNKNOWN"
 
 
+def load_basin_parameters(basin_name: str = None) -> dict:
+    """
+    Load basin-specific petrophysical parameters from JSON configuration file.
+    
+    This function provides access to regionally-calibrated parameters that
+    significantly improve calculation accuracy over generic defaults.
+    
+    USAGE:
+    basin_params = load_basin_parameters("Gulf Coast Tertiary")
+    archie_a = basin_params['archie_parameters']['a']
+    archie_m = basin_params['archie_parameters']['m']
+    rw = basin_params['formation_water']['resistivity_rw']
+    
+    PARAMETERS INCLUDED:
+    - Archie parameters (a, m, n) - Formation-specific calibration
+    - Formation water resistivity (Rw) - Regional baseline
+    - Lithology properties (densities, PE values) - Matrix parameters
+    - Shale baselines (GR, resistivity, density) - Shale characterization
+    - Saturation model recommendations - Best practices by basin
+    - Vsh calculation method - Age-dependent corrections
+    
+    VALIDATION:
+    - All parameters sourced from peer-reviewed literature
+    - Based on core-calibrated studies in each basin
+    - Updated with latest industry standards (2020-2025)
+    
+    Args:
+        basin_name: Name of basin to load. If None, returns list of available basins.
+                   Examples: "Gulf Coast Tertiary", "Permian Basin", "North Sea Brent"
+        
+    Returns:
+        dict: Basin parameters dictionary containing:
+            - name: Basin name
+            - region: Geographic region
+            - age: Geological age
+            - description: Basin description
+            - archie_parameters: {'a': float, 'm': float, 'n': float, 'description': str}
+            - formation_water: {'resistivity_rw': float, 'salinity_ppm': int, 'temperature_f': int, ...}
+            - lithology: {lithology_type: {properties}, ...}
+            - saturation_model_recommendation: str
+            - vsh_calculation: str
+            - common_zones: list[str]
+            - typical_porosity_range: list[float, float]
+            - typical_permeability_range: list[float, float]
+        
+        OR dict: {'basins': list[str]} if basin_name is None (list of available basins)
+        
+    Raises:
+        FileNotFoundError: If basin_parameters.json cannot be found
+        ValueError: If specified basin_name is not found in database
+        
+    Example:
+        >>> # List available basins
+        >>> available = load_basin_parameters()
+        >>> print(available['basins'])
+        ['Gulf Coast Tertiary', 'Permian Basin', ...]
+        
+        >>> # Load specific basin
+        >>> params = load_basin_parameters("Gulf Coast Tertiary")
+        >>> print(f"Archie a={params['archie_parameters']['a']}")
+        Archie a=0.62
+        
+        >>> # Apply parameters to calculation
+        >>> archie_calc.set_parameters(
+        ...     a=params['archie_parameters']['a'],
+        ...     m=params['archie_parameters']['m'],
+        ...     n=params['archie_parameters']['n']
+        ... )
+    """
+    import json
+    import os
+    
+    # Determine path to basin_parameters.json
+    # Try multiple locations for robustness
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    possible_paths = [
+        os.path.join(current_dir, '..', 'data', 'basin_parameters.json'),  # ../data/
+        os.path.join(current_dir, '..', '..', 'data', 'basin_parameters.json'),  # ../../data/
+        os.path.join(os.getcwd(), 'data', 'basin_parameters.json'),  # ./data/
+    ]
+    
+    json_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            json_path = path
+            break
+    
+    if json_path is None:
+        raise FileNotFoundError(
+            "Basin parameters file not found. Expected location: data/basin_parameters.json\n"
+            f"Searched paths:\n" + "\n".join(f"  - {p}" for p in possible_paths)
+        )
+    
+    try:
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in basin_parameters.json: {str(e)}")
+    except Exception as e:
+        raise IOError(f"Error reading basin_parameters.json: {str(e)}")
+    
+    # If no basin name specified, return list of available basins
+    if basin_name is None:
+        basin_names = [basin['name'] for basin in data.get('basins', [])]
+        return {
+            'basins': basin_names,
+            'metadata': data.get('_metadata', {}),
+            'count': len(basin_names)
+        }
+    
+    # Search for specified basin
+    basins = data.get('basins', [])
+    for basin in basins:
+        if basin['name'].lower() == basin_name.lower():
+            return basin
+    
+    # Basin not found - provide helpful error message
+    available_basins = [b['name'] for b in basins]
+    raise ValueError(
+        f"Basin '{basin_name}' not found in parameter database.\n"
+        f"Available basins:\n" + "\n".join(f"  - {name}" for name in available_basins)
+    )
+
+
+def get_basin_names() -> list:
+    """
+    Get list of available basin names from parameter database.
+    
+    Convenience function for UI dropdowns and parameter selection.
+    
+    Returns:
+        list[str]: List of basin names available in database
+        
+    Example:
+        >>> basins = get_basin_names()
+        >>> print(basins)
+        ['Gulf Coast Tertiary', 'Permian Basin', 'North Sea Brent', ...]
+    """
+    try:
+        result = load_basin_parameters()
+        return result.get('basins', [])
+    except Exception as e:
+        warnings.warn(
+            f"Could not load basin names: {str(e)}. "
+            f"Returning empty list.",
+            UserWarning
+        )
+        return []
+
+
 # Create a global instance for easy access (maintains backward compatibility)
 PHYSICAL_CONSTANTS = PetrophysicalConstants()
