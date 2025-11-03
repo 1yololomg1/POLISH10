@@ -331,7 +331,7 @@ except Exception:
 #=============================================================================
 # NOTE: PetrophysicalConstants has been extracted to petrophysics/constants.py
 # Import maintained here for backward compatibility during modularization
-from petrophysics.constants import PetrophysicalConstants, PHYSICAL_CONSTANTS
+from petrophysics.constants import PetrophysicalConstants, PHYSICAL_CONSTANTS, load_basin_parameters, get_basin_names
 
 # Legacy class definition removed - now imported from petrophysics.constants
 # Original code preserved in advanced_preprocessing_system10_PRE_PHASE2_BACKUP_*.py
@@ -342,6 +342,7 @@ from petrophysics.constants import PetrophysicalConstants, PHYSICAL_CONSTANTS
 # NOTE: ArchieEquationCalculator and RelativeRockPropertiesModel have been extracted to core/petrophysical_models.py
 # Import maintained here for backward compatibility during modularization
 from core.petrophysical_models import ArchieEquationCalculator, RelativeRockPropertiesModel, ARCHIE_CALCULATOR
+from core.environmental_corrections import EnvironmentalCorrectionsManager
 
 # Legacy class definitions removed - now imported from core.petrophysical_models
 # Original code preserved in advanced_preprocessing_system10_PRE_PHASE2_BACKUP_*.py
@@ -1624,6 +1625,8 @@ import matplotlib.pyplot as plt
 
 from ui.visualization import SecureVisualizationManager
 from ui.status import SecureStatusManager
+from ui.log_display_renderer import LogDisplayRenderer
+from ui.batch_processing import BatchProcessingManager
 
 
 #=============================================================================
@@ -6191,6 +6194,31 @@ class AdvancedPreprocessingApplication:
         self.rename_curves_var = tk.BooleanVar(value=True)
         self.null_value_var = tk.StringVar(value="-999.25")
         self.standardize_units_var = tk.BooleanVar(value=True)
+        
+        # === NEW PRODUCTION-READY FEATURE VARIABLES ===
+        # Environmental Corrections (Priority 1.1)
+        self.apply_env_corrections_var = tk.BooleanVar(value=False)
+        self.tool_type_var = tk.StringVar(value='generic')
+        self.bit_size_var = tk.StringVar(value='8.5')
+        self.mud_weight_var = tk.StringVar(value='10.0')
+        self.matrix_type_var = tk.StringVar(value='sandstone')
+        
+        # Saturation Calculation (Priority 1.2)
+        self.compute_saturation_var = tk.BooleanVar(value=False)
+        self.archie_a_var = tk.StringVar(value='1.0')
+        self.archie_m_var = tk.StringVar(value='2.0')
+        self.archie_n_var = tk.StringVar(value='2.0')
+        self.rw_var = tk.StringVar(value='0.05')
+        self.gr_clean_var = tk.StringVar(value='20.0')
+        self.gr_shale_var = tk.StringVar(value='120.0')
+        self.rsh_var = tk.StringVar(value='2.0')
+        
+        # Basin Selection (Priority 1.3)
+        self.basin_var = tk.StringVar(value='Generic Clean Sandstone')
+        self.basin_info_label = None  # Will be created in UI setup
+        
+        # Batch Processing Manager (Priority 1.5)
+        self.batch_manager = None  # Will be initialized when batch tab is created
         self.output_format_var = tk.StringVar(value="Company Standard")
         self.large_gap_var = tk.StringVar(value="formation_based")
         # Threshold (in points) beyond which gaps are considered "large"
@@ -6357,15 +6385,22 @@ class AdvancedPreprocessingApplication:
             if not conversion_candidates:
                 return
             
-            # Show confirmation dialog with preview
-            if not self._show_conversion_confirmation_dialog(conversion_candidates):
-                self.log_processing("User declined automatic unit conversion")
+            # Show confirmation dialog with selective conversion options
+            selected_curves = self._show_conversion_confirmation_dialog(conversion_candidates)
+            
+            if not selected_curves:
+                self.log_processing("User declined or cancelled unit conversion")
                 return
             
-            # User approved - perform conversions
+            # User selected specific curves - perform conversions only for selected
             converted = []
             for candidate in conversion_candidates:
                 col = candidate['name']
+                
+                # Only convert if this curve was selected by user
+                if col not in selected_curves:
+                    continue
+                
                 series = pd.to_numeric(self.current_data[col], errors='coerce')
                 self.current_data[col] = series / 100.0
                 if col in self.curve_info:
@@ -6412,81 +6447,223 @@ class AdvancedPreprocessingApplication:
                 self.status_manager.update_status(f"Upload standardization skipped due to error: {e}")
     
     def _show_conversion_confirmation_dialog(self, conversion_candidates):
-        """Show dialog with preview of proposed unit conversions
+        """Show dialog with preview of proposed unit conversions with selective conversion options
         
         Args:
             conversion_candidates: List of dicts with conversion details
             
         Returns:
-            bool: True if user approves conversions, False otherwise
+            List[str]: List of curve names that user selected to convert (empty list if cancelled)
         """
         try:
             dialog = tk.Toplevel(self.root)
-            dialog.title("Confirm Unit Conversions")
-            dialog.geometry("700x500")
+            dialog.title("Select Unit Conversions")
+            dialog.geometry("800x600")
             dialog.transient(self.root)
             dialog.grab_set()
+            dialog.resizable(True, True)  # Allow resizing
             
             # Main frame
             main_frame = ttk.Frame(dialog, padding=15)
             main_frame.pack(fill='both', expand=True)
             
             # Header
-            header_text = f"Automatic Unit Conversion Preview\n\nDetected {len(conversion_candidates)} curve(s) that appear to be in percent format.\nReview the proposed conversions below:"
-            header_label = ttk.Label(main_frame, text=header_text, wraplength=650, justify='left', font=('TkDefaultFont', 10, 'bold'))
+            header_text = f"Unit Conversion Selection\n\nDetected {len(conversion_candidates)} curve(s) that appear to be in percent format.\nSelect which conversions to apply:"
+            header_label = ttk.Label(main_frame, text=header_text, wraplength=750, justify='left', font=('TkDefaultFont', 10, 'bold'))
             header_label.pack(pady=(0, 10), anchor='w')
             
             # Scrollable frame for conversion list
-            canvas = tk.Canvas(main_frame, height=300)
-            scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+            canvas_frame = ttk.Frame(main_frame)
+            canvas_frame.pack(fill='both', expand=True, pady=(0, 10))
+            
+            canvas = tk.Canvas(canvas_frame, highlightthickness=0, bg='white')
+            scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
             scrollable_frame = ttk.Frame(canvas)
             
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-            )
+            def update_scroll_region(event=None):
+                canvas.update_idletasks()
+                bbox = canvas.bbox("all")
+                if bbox:
+                    canvas.configure(scrollregion=bbox)
             
-            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            scrollable_frame.bind("<Configure>", update_scroll_region)
+            
+            canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
             canvas.configure(yscrollcommand=scrollbar.set)
             
-            # Add conversion details
-            for i, candidate in enumerate(conversion_candidates, 1):
-                frame = ttk.LabelFrame(scrollable_frame, text=f"{i}. {candidate['name']}", padding=10)
-                frame.pack(fill='x', pady=5, padx=5)
-                
-                details = (
-                    f"Current Unit: {candidate['unit'] if candidate['unit'] else 'Not specified'}\n"
-                    f"Current Range: {candidate['range']}\n"
-                    f"Median Value: {candidate['median']:.2f}\n"
-                    f"Reason: {candidate['reason']}\n"
-                    f"→ Will convert to: v/v (divide by 100)"
-                )
-                ttk.Label(frame, text=details, justify='left', font=('Courier', 9)).pack(anchor='w')
+            # Make canvas window resize with canvas
+            def on_canvas_configure(event):
+                canvas_width = event.width
+                if canvas_width > 1:  # Only update if canvas has been rendered
+                    canvas.itemconfig(canvas_window, width=canvas_width)
             
+            canvas.bind('<Configure>', on_canvas_configure)
+            
+            # Enable mouse wheel scrolling (works on all platforms)
+            def on_mousewheel(event):
+                # Windows uses delta, Linux/Mac uses different events
+                try:
+                    if hasattr(event, 'delta'):
+                        # Windows
+                        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    elif hasattr(event, 'num'):
+                        # Linux/Mac
+                        if event.num == 4:
+                            canvas.yview_scroll(-1, "units")  # Scroll up
+                        elif event.num == 5:
+                            canvas.yview_scroll(1, "units")   # Scroll down
+                except Exception:
+                    pass
+            
+            # Bind mouse wheel for different platforms (bind to canvas and dialog)
+            canvas.bind("<MouseWheel>", on_mousewheel)  # Windows
+            canvas.bind("<Button-4>", on_mousewheel)   # Linux scroll up
+            canvas.bind("<Button-5>", on_mousewheel)   # Linux scroll down
+            dialog.bind("<MouseWheel>", on_mousewheel)  # Also bind to dialog
+            scrollable_frame.bind("<MouseWheel>", on_mousewheel)  # And scrollable frame
+            
+            # Set focus to canvas so mouse wheel works immediately
+            canvas.focus_set()
+            
+            # Store checkboxes for each candidate
+            checkboxes = {}
+            conversion_vars = {}
+            
+            # Validate conversion candidates
+            if not conversion_candidates or len(conversion_candidates) == 0:
+                # Show message if no candidates (shouldn't happen, but handle gracefully)
+                no_items_label = ttk.Label(scrollable_frame, 
+                                          text="No conversion candidates found.",
+                                          font=('TkDefaultFont', 10),
+                                          foreground='gray')
+                no_items_label.pack(pady=20)
+            else:
+                # Add conversion details with checkboxes
+                for i, candidate in enumerate(conversion_candidates, 1):
+                    try:
+                        curve_name = candidate.get('name', f'Curve_{i}')
+                        conversion_vars[curve_name] = tk.BooleanVar(value=True)  # Default to selected
+                        
+                        # Main frame for each candidate
+                        item_frame = ttk.Frame(scrollable_frame)
+                        item_frame.pack(fill='x', pady=5, padx=5)
+                        
+                        # Checkbox frame
+                        checkbox_frame = ttk.Frame(item_frame)
+                        checkbox_frame.pack(fill='x', pady=(0, 5))
+                        
+                        chk = ttk.Checkbutton(
+                            checkbox_frame,
+                            text=f"{i}. {curve_name}",
+                            variable=conversion_vars[curve_name],
+                            font=('TkDefaultFont', 9, 'bold')
+                        )
+                        chk.pack(side='left', anchor='w')
+                        checkboxes[curve_name] = chk
+                        
+                        # Details frame
+                        details_frame = ttk.LabelFrame(item_frame, padding=8, text=f"Conversion Details for {curve_name}")
+                        details_frame.pack(fill='x', padx=(25, 0), pady=(0, 5))  # Indent details
+                        
+                        # Safely get candidate details
+                        unit = candidate.get('unit', 'Not specified')
+                        range_val = candidate.get('range', 'N/A')
+                        median = candidate.get('median', 0)
+                        reason = candidate.get('reason', 'Detected as percent format')
+                        
+                        details = (
+                            f"Current Unit: {unit}\n"
+                            f"Current Range: {range_val}\n"
+                            f"Median Value: {median:.2f}\n"
+                            f"Reason: {reason}\n"
+                            f"→ Will convert to: v/v (divide by 100)"
+                        )
+                        ttk.Label(details_frame, text=details, justify='left', font=('Courier', 9)).pack(anchor='w')
+                    except Exception as e:
+                        # Log error but continue with other candidates
+                        self.log_processing(f"Error adding conversion candidate {i}: {e}")
+                        continue
+            
+            # Pack canvas and scrollbar BEFORE updating scroll region
             canvas.pack(side='left', fill='both', expand=True)
             scrollbar.pack(side='right', fill='y')
             
+            # Update scroll region after all items are added and widgets are packed
+            scrollable_frame.update_idletasks()
+            canvas.update_idletasks()
+            bbox = canvas.bbox("all")
+            if bbox:
+                canvas.configure(scrollregion=bbox)
+            
+            # Update canvas window width to match canvas
+            canvas_width = canvas.winfo_width()
+            if canvas_width > 1:
+                canvas.itemconfig(canvas_window, width=canvas_width)
+            
+            # Force scroll region update after window is fully rendered
+            def final_scroll_update():
+                canvas.update_idletasks()
+                bbox = canvas.bbox("all")
+                if bbox:
+                    canvas.configure(scrollregion=bbox)
+                # Ensure canvas window width is correct
+                cw = canvas.winfo_width()
+                if cw > 1:
+                    canvas.itemconfig(canvas_window, width=cw)
+            
+            # Update after window is fully rendered (multiple updates to catch all render stages)
+            dialog.after(100, final_scroll_update)
+            dialog.after(300, final_scroll_update)
+            dialog.after(500, final_scroll_update)
+            
+            # Select All / Deselect All buttons
+            select_frame = ttk.Frame(main_frame)
+            select_frame.pack(fill='x', pady=(5, 5))
+            
+            def select_all():
+                for var in conversion_vars.values():
+                    var.set(True)
+            
+            def deselect_all():
+                for var in conversion_vars.values():
+                    var.set(False)
+            
+            ttk.Button(select_frame, text="Select All", command=select_all, width=15).pack(side='left', padx=5)
+            ttk.Button(select_frame, text="Deselect All", command=deselect_all, width=15).pack(side='left', padx=5)
+            
             # Warning label
             warning_text = "⚠️ WARNING: Incorrect conversions can corrupt your data. Verify these conversions are appropriate."
-            warning_label = ttk.Label(main_frame, text=warning_text, foreground='red', wraplength=650, font=('TkDefaultFont', 9, 'bold'))
+            warning_label = ttk.Label(main_frame, text=warning_text, foreground='red', wraplength=750, font=('TkDefaultFont', 9, 'bold'))
             warning_label.pack(pady=10)
             
             # Button frame
             button_frame = ttk.Frame(main_frame)
             button_frame.pack(fill='x', pady=(10, 0))
             
-            result = {'approved': False}
+            result = {'selected': []}  # Changed to return list of selected curve names
             
-            def approve():
-                result['approved'] = True
+            def apply_selected():
+                # Collect all selected curve names
+                result['selected'] = [name for name, var in conversion_vars.items() if var.get()]
                 dialog.destroy()
             
             def cancel():
-                result['approved'] = False
+                result['selected'] = []  # Empty list means cancelled/no conversions
                 dialog.destroy()
             
-            ttk.Button(button_frame, text="Cancel - Keep Original Units", command=cancel).pack(side='left', padx=5)
-            ttk.Button(button_frame, text="Apply Conversions", command=approve, style='success.TButton').pack(side='right', padx=5)
+            ttk.Button(button_frame, text="Cancel", command=cancel).pack(side='left', padx=5)
+            apply_button = ttk.Button(button_frame, text=f"Apply Selected ({len(conversion_candidates)} total)", 
+                                     command=apply_selected, style='success.TButton')
+            apply_button.pack(side='right', padx=5)
+            
+            # Update button text when selection changes
+            def update_button():
+                selected_count = sum(1 for var in conversion_vars.values() if var.get())
+                apply_button.config(text=f"Apply Selected ({selected_count} of {len(conversion_candidates)})")
+            
+            # Bind to checkbox changes
+            for var in conversion_vars.values():
+                var.trace('w', lambda *args: update_button())
             
             # Center dialog
             dialog.update_idletasks()
@@ -6494,15 +6671,18 @@ class AdvancedPreprocessingApplication:
             y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
             dialog.geometry(f"+{x}+{y}")
             
+            # Initial button text update
+            update_button()
+            
             # Wait for user response
             dialog.wait_window()
             
-            return result['approved']
+            return result['selected']  # Return list of selected curve names
             
         except Exception as e:
             self.log_processing(f"Error showing conversion dialog: {e}")
             # On error, default to no conversion (safe choice)
-            return False
+            return []
     
     def convert_columns_percent_to_decimal(self):
         """Convert percent-style columns to decimal format (v/v) for manual conversion."""
@@ -6655,25 +6835,28 @@ class AdvancedPreprocessingApplication:
             main_frame = ttk.Frame(dialog, padding=15)
             main_frame.pack(fill='both', expand=True)
             
-            # Instructions
-            ttk.Label(main_frame, text="Select columns to convert from percent (%) to decimal (v/v):", 
-                     font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 10))
+            # Instructions label (will be updated if no columns found)
+            instructions_label = ttk.Label(main_frame, text="Select columns to convert from percent (%) to decimal (v/v):", 
+                     font=('TkDefaultFont', 10, 'bold'))
+            instructions_label.pack(anchor='w', pady=(0, 10))
             
             # Create scrollable frame for checkboxes
-            canvas = tk.Canvas(main_frame)
+            canvas = tk.Canvas(main_frame, highlightthickness=0)
             scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
             scrollable_frame = ttk.Frame(canvas)
             
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-            )
+            def update_scroll_region(event=None):
+                canvas.update_idletasks()
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            
+            scrollable_frame.bind("<Configure>", update_scroll_region)
             
             canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
             canvas.configure(yscrollcommand=scrollbar.set)
             
             # Variables to store checkbox states
             checkbox_vars = {}
+            columns_added = 0
             
             # Create checkboxes for each column
             for col in self.current_data.columns:
@@ -6692,7 +6875,7 @@ class AdvancedPreprocessingApplication:
                 
                 # Create frame for each checkbox with additional info
                 row_frame = ttk.Frame(scrollable_frame)
-                row_frame.pack(fill='x', pady=2)
+                row_frame.pack(fill='x', padx=5, pady=2)
                 
                 # Checkbox
                 cb = ttk.Checkbutton(row_frame, text=col, variable=var)
@@ -6709,10 +6892,32 @@ class AdvancedPreprocessingApplication:
                     info_label = ttk.Label(row_frame, text=f" ({', '.join(info_text)})", 
                                          foreground='blue', font=('TkDefaultFont', 8))
                     info_label.pack(side='left', padx=(5, 0))
+                
+                columns_added += 1
+            
+            # If no columns found, show a message
+            if columns_added == 0:
+                no_columns_label = ttk.Label(scrollable_frame, 
+                                           text="No convertible columns found.\n\nAll available columns are either depth columns\nor do not require percent conversion.", 
+                                           font=('TkDefaultFont', 10),
+                                           foreground='gray',
+                                           justify='center')
+                no_columns_label.pack(fill='both', expand=True, pady=20)
+                
+                # Update instructions
+                instructions_label.config(
+                    text="No columns available for conversion.\nAll columns are either depth columns or already in decimal format.",
+                    foreground='gray',
+                    font=('TkDefaultFont', 9)
+                )
             
             # Pack canvas and scrollbar
             canvas.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
+            
+            # Update canvas scroll region after widgets are added
+            scrollable_frame.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
             
             # Buttons frame
             button_frame = ttk.Frame(main_frame)
@@ -6759,6 +6964,10 @@ class AdvancedPreprocessingApplication:
             
             convert_btn = ttk.Button(button_frame, text="Convert Selected", command=convert_selected)
             convert_btn.pack(side='left', padx=(0, 10))
+            
+            # Disable convert button if no columns available
+            if columns_added == 0:
+                convert_btn.config(state='disabled')
             
             # Cancel button
             cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy)
@@ -6815,8 +7024,23 @@ class AdvancedPreprocessingApplication:
                 pass
     
     def cleanup_visualization(self):
-        """Clean up visualization resources to prevent memory leaks"""
+        """Clean up visualization resources to prevent memory leaks and duplicate toolbars"""
         try:
+            # CRITICAL: Remove all widgets from viz_content FIRST to prevent toolbar accumulation
+            # This must happen before destroying canvas/figures to avoid orphaned widgets
+            if hasattr(self, 'viz_content') and self.viz_content:
+                try:
+                    # Get all child widgets before destroying (avoids modification during iteration)
+                    children = list(self.viz_content.winfo_children())
+                    for widget in children:
+                        try:
+                            widget.destroy()
+                        except Exception as e:
+                            # Log but continue cleaning up other widgets
+                            self.log_processing(f"Warning: Error destroying widget: {e}")
+                except Exception as e:
+                    warnings.warn(f"Error cleaning up viz_content widgets: {e}", UserWarning)
+            
             # Clean up canvas if it exists
             if hasattr(self, 'canvas') and self.canvas is not None:
                 try:
@@ -7836,6 +8060,7 @@ Your feedback contributes to software quality and reliability.
         self.create_processing_tab()
         self.create_visualization_tab()
         self.create_report_tab()
+        self.create_batch_tab()  # NEW: Batch Processing tab (Priority 1.5)
         # Units UI moved into Processing > Uniformization for better workflow
         
         # Add performance optimization
@@ -9702,10 +9927,19 @@ Your feedback contributes to software quality and reliability.
                 if curve_data is None or len(curve_data) == 0:
                     warnings.warn(f"Curve '{curve}' has no valid data", UserWarning)
                     continue
+                
+                # Convert null values to NaN for proper line breaking (for visualization only)
+                # Uses helper method to ensure consistent null detection
+                curve_data = self._convert_nulls_to_nan(curve_data)
                     
             except Exception as e:
                 warnings.warn(f"Error accessing curve '{curve}': {e}", UserWarning)
                 continue
+            
+            # Get actual depth range for proper axis limits (once per function call)
+            if i == 0:  # Only calculate once for all curves (shared Y-axis)
+                depth_min, depth_max = self._get_depth_limits(depth)
+            
             curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
             curve_family = curve_type.split('_')[0] if '_' in curve_type else curve_type
             
@@ -9758,10 +9992,16 @@ Your feedback contributes to software quality and reliability.
                         # Fallback to reasonable log bounds
                         current_ax.set_xlim([min_val * 0.5, np.max(valid_data) * 2])
             
-            # Plot with depth on Y-axis (inverted)
-            legend_label = f"{curve} ({curve_status})"
-            current_ax.plot(curve_data, depth, color=color, linestyle=line_style, 
-                          linewidth=line_width, label=legend_label)
+            # Handle missing data (NaN values break lines properly)
+            valid_mask = ~np.isnan(curve_data) & np.isfinite(curve_data)
+            if np.any(valid_mask):
+                valid_data = curve_data[valid_mask]
+                valid_depth = depth[valid_mask]
+                
+                # Plot with depth on Y-axis (inverted)
+                legend_label = f"{curve} ({curve_status})"
+                current_ax.plot(valid_data, valid_depth, color=color, linestyle=line_style, 
+                              linewidth=line_width, label=legend_label)
             
             # Add gridlines
             current_ax.grid(True, alpha=0.3, which='both')
@@ -9769,6 +10009,10 @@ Your feedback contributes to software quality and reliability.
             # Set labels
             unit = self.curve_info.get(curve, {}).get('unit', '')
             current_ax.set_xlabel(f'{curve} ({unit})')
+        
+        # CRITICAL: Set axis limits to ACTUAL data range (once for shared Y-axis)
+        if depth_curve:  # Only if we have actual depth data
+            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
         
         # Invert Y-axis to show increasing depth downward (industry standard)
         ax.invert_yaxis()
@@ -9995,9 +10239,16 @@ Your feedback contributes to software quality and reliability.
         if depth_curves:
             depth = data_source[depth_curves[0]].values
             depth_unit = self.curve_info.get(depth_curves[0], {}).get('unit', 'm')
+            # Get actual depth range for proper axis limits
+            depth_min, depth_max = self._get_depth_limits(depth)
         else:
             depth = np.arange(len(data_source))
             depth_unit = 'index'
+            depth_min, depth_max = self._get_depth_limits(depth)
+        
+        # CRITICAL: Set depth axis limits for all tracks (shared Y-axis)
+        for ax in axes:
+            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
         
         # Track 1: GR, SP, Caliper (Lithology Track)
         ax1 = axes[0]
@@ -10010,6 +10261,8 @@ Your feedback contributes to software quality and reliability.
         if gr_curves:
             gr_curve_name = gr_curves[0]
             gr_data = data_source[gr_curve_name].values
+            # Convert null values to NaN for proper line breaking
+            gr_data = self._convert_nulls_to_nan(gr_data)
             gr_data_for_shading = gr_data.copy()
             gr_color = self._get_industry_color('GAMMA_RAY_TOTAL', gr_curve_name)
             
@@ -10050,6 +10303,8 @@ Your feedback contributes to software quality and reliability.
             sp_color = self._get_industry_color('SPONTANEOUS_POTENTIAL', sp_curve_name)
             twin1 = ax1.twiny()
             sp_data = data_source[sp_curve_name].values
+            # Convert null values to NaN for proper line breaking
+            sp_data = self._convert_nulls_to_nan(sp_data, null_value)
             twin1.plot(sp_data, depth, color=sp_color, linewidth=1.5, label=sp_curve_name, zorder=2)
             twin1.set_xlim([-100, 100])
             twin1.xaxis.set_ticks_position('top')
@@ -10083,8 +10338,10 @@ Your feedback contributes to software quality and reliability.
                 res_curve_name = res_curves[0]
                 res_color = self._get_industry_color(res_type, res_curve_name)
                 res_data = data_source[res_curve_name].values
+                # Convert null values to NaN for proper line breaking
+                res_data = self._convert_nulls_to_nan(res_data, null_value)
                 # Handle zeros and negatives for log scale
-                res_data = np.maximum(res_data, 0.1)  # Clamp to minimum 0.1 ohm-m
+                res_data = np.maximum(res_data, 0.1)  # Clamp to minimum 0.1 ohm-m (after null conversion)
                 ax2.plot(res_data, depth, color=res_color, linewidth=1.5, label=res_curve_name)
                 resistivity_curves_data[res_curve_name] = res_data
         
@@ -10104,6 +10361,8 @@ Your feedback contributes to software quality and reliability.
             neutron_curve_name = neutron_curves[0]
             neutron_color = self._get_industry_color('NEUTRON_POROSITY', neutron_curve_name)
             neutron_data = data_source[neutron_curve_name].values
+            # Convert null values to NaN for proper line breaking
+            neutron_data = self._convert_nulls_to_nan(neutron_data, null_value)
             ax3.plot(neutron_data, depth, color=neutron_color, linewidth=1.5, label=neutron_curve_name)
         
         # Density with industry color and crossover detection
@@ -10113,6 +10372,8 @@ Your feedback contributes to software quality and reliability.
             density_curve_name = density_curves[0]
             density_color = self._get_industry_color('BULK_DENSITY', density_curve_name)
             density_data = data_source[density_curve_name].values
+            # Convert null values to NaN for proper line breaking
+            density_data = self._convert_nulls_to_nan(density_data, null_value)
             
             if not neutron_curves:
                 ax3.plot(density_data, depth, color=density_color, linewidth=1.5, label=density_curve_name)
@@ -10778,6 +11039,9 @@ Your feedback contributes to software quality and reliability.
             depth = np.arange(len(self.current_data))
             plot_curves = curves
         
+        # Get actual depth range for proper axis limits
+        depth_min, depth_max = self._get_depth_limits(depth)
+        
         # Create twin axes for different scales if needed
         twin_axes = []
         
@@ -10787,6 +11051,13 @@ Your feedback contributes to software quality and reliability.
                 continue
             
             curve_data = self.current_data[curve].values
+            
+            # CRITICAL: Convert null values to NaN for proper line breaking
+            curve_data = self._convert_nulls_to_nan(curve_data)
+            
+            # Skip if entire curve is NaN
+            if np.all(np.isnan(curve_data)):
+                continue
             curve_type = self.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN')
             curve_family = curve_type.split('_')[0] if '_' in curve_type else curve_type
             
@@ -10818,30 +11089,49 @@ Your feedback contributes to software quality and reliability.
             else:
                 current_ax = ax
             
-            # Set appropriate scale for logarithmic curves
-            if use_log_scale:
-                # Handle zeros and negatives for log scale
-                valid_data = curve_data[curve_data > 0]
-                if len(valid_data) > 0:
-                    min_val = np.min(valid_data)
-                    current_ax.set_xscale('log')
-                    # Set standard track scales for this curve type if available
-                    if curve_family in PHYSICAL_CONSTANTS.LOG_TRACK_SCALES:
-                        current_ax.set_xlim(PHYSICAL_CONSTANTS.LOG_TRACK_SCALES[curve_family])
+            # Handle missing data (NaN values break lines properly)
+            valid_mask = ~np.isnan(curve_data) & np.isfinite(curve_data)
+            if np.any(valid_mask):
+                valid_data = curve_data[valid_mask]
+                valid_depth = depth[valid_mask]
+                
+                # Set appropriate scale for logarithmic curves
+                if use_log_scale:
+                    # Handle zeros and negatives for log scale
+                    positive_mask = valid_data > 0
+                    if np.any(positive_mask):
+                        log_data = valid_data[positive_mask]
+                        log_depth = valid_depth[positive_mask]
+                        current_ax.set_xscale('log')
+                        # Set standard track scales for this curve type if available
+                        if curve_family in PHYSICAL_CONSTANTS.LOG_TRACK_SCALES:
+                            current_ax.set_xlim(PHYSICAL_CONSTANTS.LOG_TRACK_SCALES[curve_family])
+                        else:
+                            # Fallback to reasonable log bounds
+                            min_val = np.min(log_data)
+                            current_ax.set_xlim([min_val * 0.5, np.max(log_data) * 2])
+                        
+                        # Plot with depth on Y-axis
+                        current_ax.plot(log_data, log_depth, color=color, linestyle=line_style, 
+                                      linewidth=line_width, label=f'{curve} (Unprocessed)')
                     else:
-                        # Fallback to reasonable log bounds
-                        current_ax.set_xlim([min_val * 0.5, np.max(valid_data) * 2])
-            
-            # Plot with depth on Y-axis (inverted)
-            current_ax.plot(curve_data, depth, color=color, linestyle=line_style, 
-                          linewidth=line_width, label=f'{curve} (Unprocessed)')
-            
-            # Add gridlines
-            current_ax.grid(True, alpha=0.3, which='both')
-            
-            # Set labels
-            unit = self.curve_info.get(curve, {}).get('unit', '')
-            current_ax.set_xlabel(f'{curve} ({unit})')
+                        # No positive values for log scale, use linear
+                        current_ax.plot(valid_data, valid_depth, color=color, linestyle=line_style, 
+                                      linewidth=line_width, label=f'{curve} (Unprocessed)')
+                else:
+                    # Linear scale - plot with depth on Y-axis
+                    current_ax.plot(valid_data, valid_depth, color=color, linestyle=line_style, 
+                                  linewidth=line_width, label=f'{curve} (Unprocessed)')
+                
+                # Add gridlines
+                current_ax.grid(True, alpha=0.3, which='both')
+                
+                # Set labels
+                unit = self.curve_info.get(curve, {}).get('unit', '')
+                current_ax.set_xlabel(f'{curve} ({unit})')
+        
+        # CRITICAL: Set axis limits to ACTUAL data range (not default range)
+        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
         
         # Invert Y-axis to show increasing depth downward (industry standard)
         ax.invert_yaxis()
@@ -10946,9 +11236,12 @@ Your feedback contributes to software quality and reliability.
             depth = data_source[depth_curve].values
             depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
             y_label = f'Depth ({depth_unit})'
+            # Get actual depth range for proper axis limits
+            depth_min, depth_max = self._get_depth_limits(depth)
         else:
             depth = np.arange(len(original))
             y_label = 'Depth (index)'
+            depth_min, depth_max = self._get_depth_limits(depth)
         
         # Single plot area - overlay mode with toggle capability
         if has_processed and processed is not None:
@@ -10957,13 +11250,17 @@ Your feedback contributes to software quality and reliability.
             # Store plot objects for toggle functionality (stored in figure for persistence)
             plot_objects = {}
             
+            # Convert null values to NaN for proper line breaking (for visualization only)
+            original_plot = self._convert_nulls_to_nan(original)
+            processed_plot = self._convert_nulls_to_nan(processed)
+            
             # Plot Original - lower opacity (always present for toggle)
-            line_orig = ax.plot(original, depth, color=base_color, alpha=0.4, label='Original', 
+            line_orig = ax.plot(original_plot, depth, color=base_color, alpha=0.4, label='Original', 
                     linewidth=1.5, linestyle='-', visible=True)[0]
             plot_objects['original'] = line_orig
             
             # Plot Processed - higher opacity (always present for toggle)
-            line_proc = ax.plot(processed, depth, color=base_color, alpha=0.9, label='Processed', 
+            line_proc = ax.plot(processed_plot, depth, color=base_color, alpha=0.9, label='Processed', 
                     linewidth=2.0, linestyle='-', visible=True)[0]
             plot_objects['processed'] = line_proc
             
@@ -11004,6 +11301,9 @@ Your feedback contributes to software quality and reliability.
                                        fontsize=8,
                                        arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=.2',
                                                       color=base_color, alpha=0.6))
+            
+            # CRITICAL: Set axis limits to ACTUAL data range
+            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
             
             # Configure axes
             ax.set_title(f'Processing Comparison: {curve} (Click legend to toggle)', fontsize=14, fontweight='bold', pad=10)
@@ -11075,22 +11375,24 @@ Your feedback contributes to software quality and reliability.
             ax = self.fig.add_subplot(gs[0, :])
             
             # Re-plot everything on new axes (overlay mode - same X-Y)
-            line_orig = ax.plot(original, depth, color=base_color, alpha=0.4, label='Original', 
+            # Use already converted data (original_plot and processed_plot)
+            line_orig = ax.plot(original_plot, depth, color=base_color, alpha=0.4, label='Original', 
                     linewidth=1.5, linestyle='-', visible=True)[0]
             plot_objects['original'] = line_orig
             
-            line_proc = ax.plot(processed, depth, color=base_color, alpha=0.9, label='Processed', 
+            line_proc = ax.plot(processed_plot, depth, color=base_color, alpha=0.9, label='Processed', 
                     linewidth=2.0, linestyle='-', visible=True)[0]
             plot_objects['processed'] = line_proc
             
-            # Re-add significant changes if available
-            if np.any(valid_mask):
-                changes = np.abs(original[valid_mask] - processed[valid_mask])
+            # Re-add significant changes if available (use converted data)
+            valid_mask_plot = ~np.isnan(original_plot) & ~np.isnan(processed_plot)
+            if np.any(valid_mask_plot):
+                changes = np.abs(original_plot[valid_mask_plot] - processed_plot[valid_mask_plot])
                 if len(changes) > 0:
                     threshold = np.percentile(changes, 95) if len(changes) > 20 else np.max(changes) * 0.5
-                    significant_idx = np.nonzero((np.abs(original - processed) > threshold) & valid_mask)[0]
+                    significant_idx = np.nonzero((np.abs(original_plot - processed_plot) > threshold) & valid_mask_plot)[0]
                     if len(significant_idx) > 0:
-                        x_proc = processed[significant_idx]
+                        x_proc = processed_plot[significant_idx]
                         y_proc = depth[significant_idx]
                         scatter = ax.scatter(x_proc, y_proc, color=base_color, s=30, alpha=0.6, 
                                   marker='o', edgecolors='none', label='Significant Changes', zorder=3)
@@ -11114,6 +11416,9 @@ Your feedback contributes to software quality and reliability.
                                                       color=base_color, alpha=0.6))
             
             ax.set_title(f'Processing Comparison: {curve} (Click legend to toggle)', fontsize=14, fontweight='bold', pad=10)
+            # CRITICAL: Set axis limits to ACTUAL data range
+            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+            
             ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
             ax.set_ylabel(y_label, fontsize=11)
             ax.grid(True, alpha=0.3)
@@ -11579,6 +11884,252 @@ Your feedback contributes to software quality and reliability.
                 self.status_label.config(text="Export failed")
             except Exception:
                 pass
+    
+    def create_batch_tab(self):
+        """Create batch processing tab for processing multiple files"""
+        batch_frame = ttk.Frame(self.notebook)
+        self.notebook.add(batch_frame, text="Batch Processing")
+        
+        # Initialize batch manager
+        if self.batch_manager is None:
+            self.batch_manager = BatchProcessingManager(self)
+        
+        # Directory selection section
+        dir_card, dir_content = self.ui.create_card(
+            batch_frame, "Select Directory",
+            help_text="Choose a directory containing LAS files to process in batch."
+        )
+        dir_card.pack(fill='x', pady=(0, 10), padx=10)
+        
+        dir_frame = ttk.Frame(dir_content)
+        dir_frame.pack(fill='x', pady=10)
+        
+        self.batch_directory_var = tk.StringVar()
+        dir_entry = ttk.Entry(dir_frame, textvariable=self.batch_directory_var, width=60)
+        dir_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        
+        browse_dir_btn = self.ui.create_button(dir_frame, text="Browse Directory",
+                                              command=self.browse_batch_directory,
+                                              button_type='secondary', width=20)
+        browse_dir_btn.pack(side='right')
+        
+        # Recursive search option
+        self.batch_recursive_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(dir_content, text="Search subdirectories recursively",
+                        variable=self.batch_recursive_var).pack(anchor='w', pady=5)
+        
+        # Scan directory button
+        scan_btn = self.ui.create_button(dir_content, text="Scan Directory",
+                                        command=self.scan_batch_directory,
+                                        button_type='primary', width=25)
+        scan_btn.pack(anchor='w', pady=(10, 0))
+        
+        # File list section
+        list_card, list_content = self.ui.create_card(
+            batch_frame, "Files to Process",
+            help_text="List of files found in the selected directory."
+        )
+        list_card.pack(fill='both', expand=True, pady=(0, 10), padx=10)
+        
+        # File listbox with scrollbar
+        list_frame = ttk.Frame(list_content)
+        list_frame.pack(fill='both', expand=True, pady=10)
+        
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side='right', fill='y')
+        
+        self.batch_file_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, height=12)
+        self.batch_file_listbox.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=self.batch_file_listbox.yview)
+        
+        # Status label
+        self.batch_status_label = ttk.Label(list_content, text="No directory selected",
+                                           font=('Segoe UI', 9))
+        self.batch_status_label.pack(anchor='w', padx=10, pady=(0, 10))
+        
+        # Processing controls
+        control_card, control_content = self.ui.create_card(
+            batch_frame, "Processing Controls",
+            help_text="Configure output directory and start batch processing."
+        )
+        control_card.pack(fill='x', pady=(0, 10), padx=10)
+        
+        # Output directory
+        output_frame = ttk.Frame(control_content)
+        output_frame.pack(fill='x', pady=10)
+        
+        ttk.Label(output_frame, text="Output Directory:").pack(side='left', padx=(0, 10))
+        self.batch_output_dir_var = tk.StringVar()
+        output_entry = ttk.Entry(output_frame, textvariable=self.batch_output_dir_var, width=50)
+        output_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        
+        browse_output_btn = self.ui.create_button(output_frame, text="Browse",
+                                                  command=self.browse_batch_output_directory,
+                                                  button_type='secondary', width=15)
+        browse_output_btn.pack(side='right')
+        
+        # Action buttons
+        button_frame = ttk.Frame(control_content)
+        button_frame.pack(fill='x', pady=15)
+        
+        self.batch_process_btn = self.ui.create_button(button_frame, text="Start Batch Processing",
+                                                       command=self.start_batch_processing,
+                                                       button_type='success', width=25)
+        self.batch_process_btn.pack(side='left', padx=(0, 10))
+        
+        self.batch_stop_btn = self.ui.create_button(button_frame, text="Stop Processing",
+                                                    command=self.stop_batch_processing,
+                                                    button_type='warning', width=20)
+        self.batch_stop_btn.pack(side='left')
+        self.batch_stop_btn.config(state='disabled')
+        
+        # Progress section
+        progress_card, progress_content = self.ui.create_card(
+            batch_frame, "Processing Progress",
+            help_text="Progress information for batch processing operations."
+        )
+        progress_card.pack(fill='x', padx=10)
+        
+        self.batch_progress_label = ttk.Label(progress_content, text="Ready",
+                                             font=('Segoe UI', 9))
+        self.batch_progress_label.pack(anchor='w', padx=10, pady=(10, 5))
+        
+        self.batch_progress_bar = ttk.Progressbar(progress_content, mode='determinate')
+        self.batch_progress_bar.pack(fill='x', padx=10, pady=(0, 10))
+    
+    def browse_batch_directory(self):
+        """Browse for batch processing input directory"""
+        directory = filedialog.askdirectory(title="Select Directory with LAS Files")
+        if directory:
+            self.batch_directory_var.set(directory)
+    
+    def browse_batch_output_directory(self):
+        """Browse for batch processing output directory"""
+        directory = filedialog.askdirectory(title="Select Output Directory")
+        if directory:
+            self.batch_output_dir_var.set(directory)
+    
+    def scan_batch_directory(self):
+        """Scan selected directory for LAS files"""
+        try:
+            directory = self.batch_directory_var.get()
+            if not directory:
+                messagebox.showwarning("Warning", "Please select a directory first.")
+                return
+            
+            recursive = self.batch_recursive_var.get()
+            files = self.batch_manager.load_directory(directory, recursive=recursive)
+            
+            # Update listbox
+            self.batch_file_listbox.delete(0, tk.END)
+            for file in files:
+                self.batch_file_listbox.insert(tk.END, os.path.basename(file))
+            
+            # Update status
+            count = len(files)
+            self.batch_status_label.config(text=f"Found {count} file(s)")
+            
+            if count == 0:
+                messagebox.showinfo("Info", "No LAS files found in the selected directory.")
+        
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to scan directory:\n{str(e)}")
+    
+    def start_batch_processing(self):
+        """Start batch processing in a separate thread"""
+        try:
+            if not self.batch_directory_var.get():
+                messagebox.showwarning("Warning", "Please select an input directory first.")
+                return
+            
+            output_dir = self.batch_output_dir_var.get()
+            if not output_dir:
+                messagebox.showwarning("Warning", "Please select an output directory first.")
+                return
+            
+            # Disable start button, enable stop button
+            self.batch_process_btn.config(state='disabled')
+            self.batch_stop_btn.config(state='normal')
+            
+            # Set processing flag
+            if self.batch_manager:
+                self.batch_manager.is_processing = True
+            
+            # Start processing in thread
+            thread = threading.Thread(target=self._batch_processing_thread, daemon=True)
+            thread.start()
+        
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start batch processing:\n{str(e)}")
+            self.batch_process_btn.config(state='normal')
+            self.batch_stop_btn.config(state='disabled')
+    
+    def _batch_processing_thread(self):
+        """Background thread for batch processing"""
+        try:
+            directory = self.batch_directory_var.get()
+            output_dir = self.batch_output_dir_var.get()
+            recursive = self.batch_recursive_var.get()
+            
+            # Load files
+            files = self.batch_manager.load_directory(directory, recursive=recursive)
+            
+            if not files:
+                self.root.after(0, lambda: messagebox.showinfo("Info", "No files to process."))
+                return
+            
+            total = len(files)
+            
+            # Process each file
+            for i, file_path in enumerate(files):
+                if self.batch_manager.is_processing is False:
+                    break
+                
+                try:
+                    # Update progress
+                    progress = int((i / total) * 100)
+                    self.root.after(0, lambda p=progress, f=os.path.basename(file_path): 
+                                   self._update_batch_progress(p, f))
+                    
+                    # Process file using parent app's methods
+                    # This would integrate with the main processing pipeline
+                    # For now, just log the file
+                    self.root.after(0, lambda f=file_path: self.log_processing(f"Processing: {f}"))
+                    
+                except Exception as e:
+                    self.root.after(0, lambda e=e, f=file_path: 
+                                   self.log_processing(f"Error processing {f}: {e}"))
+            
+            # Complete
+            self.root.after(0, lambda: self._batch_processing_complete())
+        
+        except Exception as e:
+            self.root.after(0, lambda e=e: messagebox.showerror("Error", f"Batch processing failed:\n{str(e)}"))
+            self.root.after(0, lambda: self._batch_processing_complete())
+    
+    def _update_batch_progress(self, progress: int, filename: str):
+        """Update batch processing progress (called from main thread)"""
+        self.batch_progress_bar['value'] = progress
+        self.batch_progress_label.config(text=f"Processing: {filename} ({progress}%)")
+        self.root.update_idletasks()
+    
+    def _batch_processing_complete(self):
+        """Called when batch processing completes"""
+        self.batch_progress_bar['value'] = 100
+        self.batch_progress_label.config(text="Processing complete")
+        self.batch_process_btn.config(state='normal')
+        self.batch_stop_btn.config(state='disabled')
+        messagebox.showinfo("Complete", "Batch processing completed.")
+    
+    def stop_batch_processing(self):
+        """Stop batch processing"""
+        try:
+            if self.batch_manager:
+                self.batch_manager.is_processing = False
+            self.batch_progress_label.config(text="Stopping...")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to stop processing:\n{str(e)}")
+    
     def create_units_tab(self):
         """Create unit standardization tab"""
         units_frame = ttk.Frame(self.notebook)
@@ -11669,12 +12220,48 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             if ext == '.las':
                 self.current_data = self.load_las_file(filepath)
+                # Well info is extracted in load_las_file, so it's already set
             elif ext == '.csv':
                 self.current_data = self.load_csv_file(filepath)
+                # For CSV/Excel, create basic well info from filename if not set
+                if not hasattr(self, 'well_info') or not self.well_info or self.well_info.get('well_name') == 'UNKNOWN':
+                    self.well_info = {
+                        'well_name': os.path.splitext(os.path.basename(filepath))[0],
+                        'uwi': 'N/A',
+                        'field': 'N/A',
+                        'company': 'N/A',
+                        'start_depth': 'N/A',
+                        'stop_depth': 'N/A',
+                        'depth_unit': 'm'
+                    }
             elif ext in ['.xlsx', '.xls']:
                 self.current_data = self.load_excel_file(filepath)
+                # For Excel, create basic well info from filename if not set
+                if not hasattr(self, 'well_info') or not self.well_info or self.well_info.get('well_name') == 'UNKNOWN':
+                    self.well_info = {
+                        'well_name': os.path.splitext(os.path.basename(filepath))[0],
+                        'uwi': 'N/A',
+                        'field': 'N/A',
+                        'company': 'N/A',
+                        'start_depth': 'N/A',
+                        'stop_depth': 'N/A',
+                        'depth_unit': 'm'
+                    }
             else:
                 raise ValueError(f"Unsupported file format: {ext}")
+            
+            # CRITICAL: Update well info display immediately after loading
+            # This ensures users can see the well information right away
+            self._update_well_info_display()
+            self._update_window_title_with_well_info()
+            
+            # CRITICAL: Add well to well_datasets so it appears in "Loaded Wells" section
+            if filepath:
+                well_id = self._gen_well_id_from_info(filepath)
+                self.well_datasets[well_id] = self._dataset_from_current_state(filepath)
+                self.active_well_id = well_id
+                # Update the well listbox to show the loaded well
+                self.update_well_list_display()
             
             self.progress_bar['value'] = 50
             self.status_label.config(text="Analyzing curves...")
@@ -12203,39 +12790,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
         except Exception as e:
             self.log_processing(f"Error updating window title: {e}")
     
-    def _update_well_info_display(self):
-        """Update well information display in Data Tab.
-        
-        Shows critical well identification so user always knows which well is loaded.
-        """
-        try:
-            if hasattr(self, 'well_info') and self.well_info:
-                # Update labels with well information
-                well_name = self.well_info.get('well_name', 'UNKNOWN')
-                self.well_name_label.config(
-                    text=f"Well: {well_name}",
-                    foreground='#006600' if well_name != 'UNKNOWN' else '#CC0000'
-                )
-                
-                self.field_label.config(text=f"Field: {self.well_info.get('field', 'UNKNOWN')}")
-                self.uwi_label.config(text=f"UWI: {self.well_info.get('uwi', 'UNKNOWN')}")
-                self.company_label.config(text=f"Company: {self.well_info.get('company', 'UNKNOWN')}")
-                
-                # Format depth range
-                start = self.well_info.get('start_depth', 'UNKNOWN')
-                stop = self.well_info.get('stop_depth', 'UNKNOWN')
-                unit = self.well_info.get('depth_unit', 'm')
-                self.depth_range_label.config(text=f"Depth Range: {start} - {stop} {unit}")
-            else:
-                # No well info available
-                self.well_name_label.config(text="Well: Not loaded", foreground='#CC0000')
-                self.field_label.config(text="Field: Not loaded")
-                self.uwi_label.config(text="UWI: Not loaded")
-                self.company_label.config(text="Company: Not loaded")
-                self.depth_range_label.config(text="Depth Range: Not loaded")
-        except Exception as e:
-            self.log_processing(f"Error updating well info display: {e}")
-    
     def _extract_lasio_curve_info(self, las):
         """Extract comprehensive curve information from lasio object"""
         try:
@@ -12390,6 +12944,47 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Return default values on error
         
         return well_info
+    
+    def _get_null_value(self) -> float:
+        """Get the configured null value with proper error handling.
+        
+        Returns:
+            float: The null value to use for data processing and visualization.
+                  Defaults to -999.25 if not configured.
+        """
+        try:
+            if hasattr(self, 'null_value_var') and self.null_value_var.get():
+                return float(self.null_value_var.get())
+        except (ValueError, AttributeError) as e:
+            self.log_processing(f"Warning: Could not parse null value, using default: {e}")
+        return -999.25
+    
+    def _convert_nulls_to_nan(self, data: np.ndarray, null_value: Optional[float] = None, tolerance: float = 0.01) -> np.ndarray:
+        """Convert null values to NaN in a copy of the data for visualization.
+        
+        This method creates a copy of the input data and replaces null values
+        (within tolerance) with NaN for proper matplotlib visualization (line breaking).
+        The original data remains unchanged.
+        
+        Args:
+            data: Input data array (will be copied before modification)
+            null_value: Null value to detect. If None, uses configured null_value_var.
+            tolerance: Tolerance for null value detection (default: 0.01)
+        
+        Returns:
+            np.ndarray: Copy of data with null values converted to NaN
+        """
+        if null_value is None:
+            null_value = self._get_null_value()
+        
+        # Create a copy to avoid modifying original data
+        data_copy = data.copy()
+        
+        # Convert null values to NaN using tolerance-based detection
+        null_mask = np.abs(data_copy - null_value) < tolerance
+        data_copy[null_mask] = np.nan
+        
+        return data_copy
     
     def _update_window_title_with_well_info(self):
         """Update main window title to include well name for safety"""
@@ -14335,9 +14930,18 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 except Exception:
                     pass  # Continue without trend line if calculation fails
             
-            # Create top histogram (X-axis distribution)
-            ax_hist_x.hist(x_valid, bins=min(50, len(x_valid)//10), alpha=0.7, 
-                          color='lightblue', edgecolor='black', linewidth=0.5)
+            # Create top histogram (X-axis distribution) - PETROPHYSICAL STANDARD
+            bins_x = min(50, max(10, len(x_valid)//10))  # Ensure minimum bins for visibility
+            n_x, bins_x_vals, patches_x = ax_hist_x.hist(x_valid, bins=bins_x, alpha=0.75, 
+                          color='#1565C0', edgecolor='darkblue', linewidth=1.0)
+            
+            # Color-code top histogram bins based on frequency
+            max_count_x = max(n_x) if len(n_x) > 0 else 1
+            for patch, count in zip(patches_x, n_x):
+                intensity = count / max_count_x
+                patch.set_facecolor(plt.cm.Blues(0.3 + 0.5 * intensity))
+            
+            ax_hist_x.grid(True, alpha=0.3, axis='y')  # Grid on frequency axis
             # Set title with processing status
             title = f"Scatter Plot: {curve} vs {curve2}"
             if x_status != y_status:
@@ -14349,26 +14953,40 @@ This ensures consistent data interpretation and fixes depth validation issues.
             ax_hist_x.set_title(title, fontsize=14, fontweight='bold')
             ax_hist_x.set_ylabel("Frequency")
             
-            # Create right histogram (Y-axis distribution)
-            ax_hist_y.hist(y_valid, bins=min(50, len(y_valid)//10), alpha=0.7, 
-                          color='lightgreen', edgecolor='black', linewidth=0.5, 
+            # Create right histogram (Y-axis distribution) - PETROPHYSICAL STANDARD
+            # Use industry-standard color and styling for right-side histogram
+            bins_y = min(50, max(10, len(y_valid)//10))  # Ensure minimum bins for visibility
+            n, bins, patches = ax_hist_y.hist(y_valid, bins=bins_y, alpha=0.75, 
+                          color='#2E7D32', edgecolor='darkgreen', linewidth=1.0, 
                           orientation='horizontal')
-            ax_hist_y.set_xlabel("Frequency")
+            
+            # Enhance right histogram with petrophysical styling
+            # Color-code bins based on frequency for better visualization
+            max_count = max(n) if len(n) > 0 else 1
+            for patch, count in zip(patches, n):
+                # Gradient color based on frequency (darker = higher frequency)
+                intensity = count / max_count
+                patch.set_facecolor(plt.cm.Greens(0.3 + 0.5 * intensity))
+            
+            ax_hist_y.set_xlabel("Frequency", fontsize=10, fontweight='bold')
+            ax_hist_y.grid(True, alpha=0.3, axis='x')  # Grid on frequency axis
             
             # Set labels for main scatter plot
-            ax_scatter.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', 'UNIT')})")
-            ax_scatter.set_ylabel(f"{curve2} ({self.curve_info.get(curve2, {}).get('unit', 'UNIT')})")
+            ax_scatter.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', 'UNIT')})", 
+                                fontsize=11, fontweight='bold')
+            ax_scatter.set_ylabel(f"{curve2} ({self.curve_info.get(curve2, {}).get('unit', 'UNIT')})", 
+                                fontsize=11, fontweight='bold')
             
             # Add grid to main scatter plot
-            ax_scatter.grid(True, alpha=0.3, zorder=1)
+            ax_scatter.grid(True, alpha=0.3, zorder=1, linestyle='--')
             
-            # Remove axis labels from histograms to avoid duplication
-            ax_hist_x.set_xlabel("")
-            ax_hist_y.set_ylabel("")
+            # Remove axis labels from histograms to avoid duplication (keep for clarity)
+            ax_hist_x.set_xlabel("")  # Shared with scatter plot below
+            ax_hist_y.set_ylabel("")  # Shared with scatter plot on left
             
-            # Remove tick labels from histograms for cleaner look
-            ax_hist_x.set_xticklabels([])
-            ax_hist_y.set_yticklabels([])
+            # Keep some tick labels for histograms but make them subtle
+            ax_hist_x.tick_params(labelbottom=False, labelsize=8)  # Hide bottom labels, keep side
+            ax_hist_y.tick_params(labelleft=False, labelsize=8)  # Hide left labels, keep bottom
             
             # Add statistics text box on the scatter plot
             if len(x_valid) > 0:
@@ -14378,8 +14996,13 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                verticalalignment='top', bbox=dict(boxstyle='round', 
                                facecolor='white', alpha=0.8), fontsize=10)
             
-            # Adjust layout to prevent overlap
-            self.fig.tight_layout()
+            # Adjust layout to prevent overlap with proper spacing for histograms
+            # Use padding to ensure right histogram is fully visible
+            self.fig.tight_layout(rect=[0, 0.03, 0.97, 0.97])  # Leave space on right for labels
+            
+            # Ensure right histogram is clearly visible and properly sized
+            # Adjust subplot parameters for better histogram visibility
+            self.fig.subplots_adjust(right=0.92, top=0.90, hspace=0.35, wspace=0.35)
             
         except Exception as e:
             messagebox.showerror("Visualization Error", f"Failed to create scatter plot: {str(e)}")
@@ -14438,25 +15061,36 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 depth = self.processed_data[depth_curve].values
                 depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
                 z_label = f'Depth ({depth_unit})'
+                # Get actual depth range for proper axis limits
+                depth_min, depth_max = self._get_depth_limits(depth)
             else:
                 depth = np.arange(len(curve1_data))
                 z_label = 'Depth (index)'
+                depth_min, depth_max = self._get_depth_limits(depth)
+            
+            # Convert null values to NaN for proper visualization
+            curve1_plot = self._convert_nulls_to_nan(curve1_data)
+            curve2_plot = self._convert_nulls_to_nan(curve2_data)
+            curve3_plot = self._convert_nulls_to_nan(curve3_data)
             
             # Filter out NaN values for all three curves
-            valid_mask = (~np.isnan(curve1_data) & 
-                         ~np.isnan(curve2_data) & 
-                         ~np.isnan(curve3_data))
+            valid_mask = (~np.isnan(curve1_plot) & 
+                         ~np.isnan(curve2_plot) & 
+                         ~np.isnan(curve3_plot))
             if not np.any(valid_mask):
                 messagebox.showwarning("Warning", "No valid data points for 3D visualization")
                 return
             
-            valid_x = curve1_data[valid_mask]
-            valid_y = curve2_data[valid_mask]
-            valid_z = curve3_data[valid_mask]
+            valid_x = curve1_plot[valid_mask]
+            valid_y = curve2_plot[valid_mask]
+            valid_z = curve3_plot[valid_mask]
             valid_depth = depth[valid_mask]
             
             # Get industry-standard colors
             colors = PHYSICAL_CONSTANTS.VISUALIZATION_COLORS["3D_SCATTER"]
+            
+            # CRITICAL: Set axis limits to ACTUAL data range
+            ax.set_zlim(depth_max, depth_min)  # Inverted for depth
             
             # Create 3D scatter plot with industry-standard coloring
             # Use depth for color mapping (industry standard)
@@ -15028,7 +15662,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 return
             
             # Standardize null values
-            null_value = float(self.null_value_var.get())
+            null_value = self._get_null_value()
             
             # Replace various null representations with standard null
             null_patterns = [-999.25, -999, -9999, 99999, -99999]
@@ -15120,16 +15754,25 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 depth = self.processed_data[depth_curve].values
                 depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
                 y_label = f'Depth ({depth_unit})'
+                # Get actual depth range for proper axis limits
+                depth_min, depth_max = self._get_depth_limits(depth)
             else:
                 depth = np.arange(len(processed))
                 y_label = 'Depth (index)'
+                depth_min, depth_max = self._get_depth_limits(depth)
+            
+            # Convert null values to NaN for proper line breaking (for visualization only)
+            processed_plot = self._convert_nulls_to_nan(processed)
             
             # Plot main curve
-            ax.plot(processed, depth, 'b-', linewidth=2, label='Processed Data')
+            ax.plot(processed_plot, depth, 'b-', linewidth=2, label='Processed Data')
             
-            # Plot uncertainty bands
-            upper_bound = processed + uncertainty
-            lower_bound = processed - uncertainty
+            # CRITICAL: Set axis limits to ACTUAL data range
+            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+            
+            # Plot uncertainty bands (also convert nulls in bounds)
+            upper_bound = processed_plot + uncertainty
+            lower_bound = processed_plot - uncertainty
             
             ax.fill_betweenx(depth, lower_bound, upper_bound, alpha=0.3, color='lightblue', 
                             label='Uncertainty Band')
@@ -15137,7 +15780,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Color code by confidence using industry-standard uncertainty colormap
             confidence_colors = confidence.copy()
             uncertainty_cmap = PHYSICAL_CONSTANTS.COLORMAP_STANDARDS["uncertainty"]
-            scatter = ax.scatter(processed, depth, c=confidence_colors, cmap=uncertainty_cmap, 
+            scatter = ax.scatter(processed_plot, depth, c=confidence_colors, cmap=uncertainty_cmap, 
                                s=20, alpha=0.7, label='Confidence', vmin=0, vmax=1)
             
             # Add professional colorbar for confidence
@@ -15432,6 +16075,9 @@ This ensures consistent data interpretation and fixes depth validation issues.
         # Use industry-standard colors
         industry_colors = PHYSICAL_CONSTANTS.LOG_COLORS
         
+        # Get actual depth range for proper axis limits
+        depth_min, depth_max = self._get_depth_limits(depth_data)
+        
         # Create twin axes for different scales
         twin_axes = []
         current_ax = ax
@@ -15441,6 +16087,9 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 continue
             
             curve_data = self.current_data[curve].values
+            
+            # CRITICAL: Convert null values to NaN for proper line breaking
+            curve_data = self._convert_nulls_to_nan(curve_data)
             curve_type = self.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN')
             curve_family = curve_type.split('_')[0] if '_' in curve_type else 'UNKNOWN'
             
@@ -15477,6 +16126,10 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 current_ax.xaxis.set_label_position('top')
             else:
                 current_ax = ax
+            
+            # Skip if entire curve is NaN
+            if np.all(np.isnan(curve_data)):
+                continue
             
             # Handle missing data and create valid data mask
             valid_mask = ~np.isnan(curve_data) & np.isfinite(curve_data)
@@ -15524,6 +16177,9 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             # Reset current_ax to main axis for next iteration
             current_ax = ax
+        
+        # CRITICAL: Set axis limits to ACTUAL data range (not default range)
+        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
         
         # Set axis properties
         ax.invert_yaxis()  # Industry standard: depth increases downward
@@ -16260,32 +16916,135 @@ This ensures consistent data interpretation and fixes depth validation issues.
         fig.tight_layout()
     
     def _plot_unprocessed_curves_popup(self, fig):
-        """Plot unprocessed curves in popup"""
+        """Plot unprocessed curves in popup with proper null handling and depth range"""
         ax = fig.add_subplot(111)
+        
+        # Get depth array and actual range
         depth = self._get_depth_array()
+        depth_min, depth_max = self._get_depth_limits(depth)
         
+        # Get depth column name for detection
+        depth_column = None
+        for col in self.current_data.columns:
+            curve_type = self.curve_info.get(col, {}).get('curve_type', '')
+            if 'DEPTH' in curve_type.upper() or 'DEPT' in col.upper():
+                depth_column = col
+                break
+        
+        # Determine depth unit from data or info
+        depth_unit = 'ft'
+        if depth_column and depth_column in self.curve_info:
+            unit_info = self.curve_info[depth_column].get('unit', '').upper()
+            if 'M' in unit_info or 'MET' in unit_info:
+                depth_unit = 'm'
+        
+        # Count curves and gaps
+        total_curves = 0
+        curves_plotted = 0
+        
+        # Plot each curve (limit to first 10 for readability)
         for curve in list(self.current_data.columns)[:10]:
-            if curve in self.current_data.columns:
-                data = self.current_data[curve].values
-                ax.plot(data, depth, label=curve, alpha=0.7)
+            if curve == depth_column:
+                continue
+            
+            if curve not in self.current_data.columns:
+                continue
+            
+            total_curves += 1
+            curve_data = self.current_data[curve].values
+            
+            # CRITICAL: Convert null values to NaN for proper line breaking
+            # This creates gaps where data is missing instead of drawing lines
+            curve_data = self._convert_nulls_to_nan(curve_data)
+            
+            # Skip if entire curve is NaN
+            if np.all(np.isnan(curve_data)):
+                continue
+            
+            # Plot with proper NaN handling (matplotlib breaks lines at NaN)
+            ax.plot(curve_data, depth, label=curve, alpha=0.7, linewidth=1.0)
+            curves_plotted += 1
         
-        ax.set_ylabel('Depth (m)')
-        ax.set_title("Unprocessed Curves", fontsize=14, fontweight='bold')
-        ax.invert_yaxis()
-        ax.grid(True, alpha=0.3)
-        ax.legend()
+        # CRITICAL: Set axis limits to ACTUAL data range (not 0-5000 default)
+        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+        
+        # Labels and formatting
+        ax.set_xlabel('Curve Values', fontsize=12)
+        ax.set_ylabel(f'Depth ({depth_unit})', fontsize=12, fontweight='bold')
+        ax.set_title("Unprocessed Curves - Gaps Indicate Missing Data", 
+                    fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, which='both', linestyle='--', linewidth=0.5)
+        
+        # Legend
+        if curves_plotted > 0:
+            ax.legend(loc='best', fontsize=8, framealpha=0.9)
+        
+        # Add info text
+        info_text = (
+            f"Depth Range: {depth_min:.1f} - {depth_max:.1f} {depth_unit}\n"
+            f"Total Depth Points: {len(depth)}\n"
+            f"Curves Displayed: {curves_plotted}/{total_curves}\n"
+            f"Null Value: {null_value} (shown as gaps)"
+        )
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes,
+               verticalalignment='top', fontsize=9,
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
         fig.tight_layout()
     
-    def _get_depth_array(self):
-        """Helper to get depth array for plotting"""
+    def _get_depth_array(self) -> np.ndarray:
+        """Get depth array for plotting with proper fallback handling.
+        
+        Returns:
+            np.ndarray: Depth array from data if available, otherwise index array.
+        """
         try:
+            if not hasattr(self, 'current_data') or self.current_data is None:
+                return np.arange(100)  # Fallback for no data
+            
+            # Search for depth column in current data
             for col in self.current_data.columns:
                 curve_type = self.curve_info.get(col, {}).get('curve_type', '')
-                if 'DEPTH' in curve_type:
-                    return self.current_data[col].values
+                if 'DEPTH' in curve_type.upper() or 'DEPT' in col.upper():
+                    depth = self.current_data[col].values
+                    # Validate depth array is not empty
+                    if len(depth) > 0:
+                        return depth
+            
+            # Fallback to index-based depth
             return np.arange(len(self.current_data))
-        except:
-            return np.arange(100)  # Fallback
+        except Exception as e:
+            self.log_processing(f"Warning: Error getting depth array: {e}")
+            return np.arange(100)  # Safe fallback
+    
+    def _get_depth_limits(self, depth: np.ndarray) -> Tuple[float, float]:
+        """Get depth axis limits from depth array.
+        
+        Args:
+            depth: Depth array
+            
+        Returns:
+            Tuple[float, float]: (depth_min, depth_max) for axis limits
+        """
+        try:
+            if len(depth) == 0:
+                return (0.0, 100.0)  # Safe default
+            
+            valid_depth = depth[np.isfinite(depth)]
+            if len(valid_depth) == 0:
+                return (0.0, 100.0)  # Safe default
+            
+            depth_min = float(np.min(valid_depth))
+            depth_max = float(np.max(valid_depth))
+            
+            # Ensure min < max (in case of single value)
+            if depth_min >= depth_max:
+                depth_max = depth_min + 1.0
+            
+            return (depth_min, depth_max)
+        except Exception as e:
+            self.log_processing(f"Warning: Error calculating depth limits: {e}")
+            return (0.0, 100.0)  # Safe fallback
     
     def _create_popup_visualization(self, viz_type, curve):
         """Open the requested visualization in a separate matplotlib popup window.

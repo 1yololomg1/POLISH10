@@ -1,5 +1,5 @@
 ---
-description: Specifications for petrophysical data validation algorithms and quality control mechanisms
+description: Validation algorithms for petrophysical data processing, quality control, and error classification
 ---
 
 # === USER INSTRUCTIONS ===
@@ -47,50 +47,47 @@ $END$
 
 ## Core Validation Components
 
-### Quality Threshold System
-File: petrophysics/constants.py
-- Formation-specific quality thresholds for porosity validation
-- Curve-specific data quality assessment criteria
-- Industry-validated ranges for lithology densities
-- Regional parameter validation rules for different geological settings
-Importance Score: 95/100
+### Depth-Based Validation
+- Implements tool-specific correction factors from major service companies
+- Quality control flagging system based on borehole conditions
+- Depth-based gap filling rules aligned with industry practices
 
-### Standardization Validation
-File: core/reporting.py
-- Validation of unit conversions and fractional standardizations
-- Curve identification confidence scoring
-- Quality metrics generation for standardization processes
-- Validation of naming conventions and conflict resolution
+### Formation Property Validation
+- Lithology density range validation against core measurements
+- Formation-specific porosity quality thresholds per SPE standards
+- Regional Archie parameter validation for geological basins
+
+### Environmental Correction Validation
+- Borehole size effects compensation validation
+- Temperature-based resistivity correction verification using Arp's Formula
+- Mudcake impact validation checks
+
+### Quality Control Systems
 Importance Score: 85/100
 
-## Validation Rules
+Located in `core/environmental_corrections.py`:
+- Tool-specific validation algorithms from service companies
+- Quality control flag generation based on:
+  - Borehole conditions
+  - Environmental corrections
+  - Formation characteristics
 
-### Formation-Specific Validation
-- Quality thresholds customized per geological formation
-- Depth-dependent validation criteria
-- Regional Archie parameter validation
+### Saturation Model Validation
 Importance Score: 90/100
 
-### Data Quality Assessment
-- Industry-standard quality control criteria
-- Gap validation methodologies
-- Cross-reference validation between related curves
-Importance Score: 85/100
+Located in `petrophysics/saturation_models.py`:
+- Automatic model selection validation based on shale volume
+- Formation-specific parameter validation logic
+- Correction factor verification for geological scenarios
 
-### Unit Validation
-- Standardized unit conversion validation
-- Fractional standardization verification
-- Naming convention compliance checks
-Importance Score: 80/100
+### Constant Validation
+Importance Score: 95/100
 
-## Feedback Mechanisms
-
-### Quality Reporting
-- Detailed standardization reports
-- Quality metrics tracking
-- Audit trail generation
-- Validation conflict documentation
-Importance Score: 85/100
+Located in `petrophysics/constants.py`:
+- Industry-standard threshold validation
+- Lithology density range verification
+- Porosity quality threshold checks
+- Regional parameter validation
 
 $END$
 

@@ -1,0 +1,427 @@
+{
+  "_metadata": {
+    "description": "Basin-specific petrophysical parameters for wireline data analysis",
+    "version": "1.0",
+    "last_updated": "2025-11-02",
+    "sources": [
+      "SPWLA Well Logging Handbook (2020)",
+      "Schlumberger Log Interpretation Charts (2020)",
+      "Regional basin studies and core calibration databases",
+      "Industry-standard formation evaluation parameters"
+    ],
+    "notes": [
+      "All Archie parameters are averages for basin - local calibration recommended",
+      "Formation water resistivity varies with depth/temperature - use gradient if available",
+      "Shale parameters based on regional core studies",
+      "Lithology densities are matrix values (zero porosity)"
+    ]
+  },
+  "basins": [
+    {
+      "name": "Gulf Coast Tertiary",
+      "region": "North America",
+      "age": "Tertiary (Miocene-Pliocene)",
+      "description": "Unconsolidated to poorly consolidated sandstones and shales. High porosity, low cementation.",
+      "archie_parameters": {
+        "a": 0.62,
+        "m": 2.15,
+        "n": 2.0,
+        "description": "Humble formula (a=0.62, m=2.15) - industry standard for Gulf Coast unconsolidated sands"
+      },
+      "formation_water": {
+        "resistivity_rw": 0.04,
+        "salinity_ppm": 80000,
+        "temperature_f": 150,
+        "gradient_comment": "Rw increases (fresher) updip, decreases (saltier) downdip"
+      },
+      "lithology": {
+        "sandstone": {
+          "matrix_density": 2.65,
+          "grain_density": 2.65,
+          "pe": 1.81,
+          "description": "Quartz-dominated sands"
+        },
+        "shale": {
+          "density": 2.45,
+          "gr_baseline": 120,
+          "resistivity_rsh": 1.5,
+          "description": "Montmorillonite-rich shales, high CEC"
+        }
+      },
+      "saturation_model_recommendation": "Simandoux or Indonesia (dispersed shale common)",
+      "vsh_calculation": "Clavier or Steiber (Tertiary non-linear corrections)",
+      "common_zones": ["Frio", "Wilcox", "Yegua", "Jackson"],
+      "typical_porosity_range": [0.25, 0.35],
+      "typical_permeability_range": [10, 1000]
+    },
+    {
+      "name": "Permian Basin",
+      "region": "North America",
+      "age": "Permian",
+      "description": "Carbonate and mixed clastic-carbonate sequences. Highly variable porosity from tight to vuggy.",
+      "archie_parameters": {
+        "a": 1.0,
+        "m": 2.0,
+        "n": 2.0,
+        "description": "Standard Archie for consolidated carbonates. Use m=1.8-2.2 for vuggy zones."
+      },
+      "formation_water": {
+        "resistivity_rw": 0.025,
+        "salinity_ppm": 150000,
+        "temperature_f": 180,
+        "gradient_comment": "Very high salinity - brine-dominated"
+      },
+      "lithology": {
+        "limestone": {
+          "matrix_density": 2.71,
+          "grain_density": 2.71,
+          "pe": 5.08,
+          "description": "Calcite matrix"
+        },
+        "dolomite": {
+          "matrix_density": 2.87,
+          "grain_density": 2.87,
+          "pe": 3.14,
+          "description": "Dolomite (secondary porosity common)"
+        },
+        "sandstone": {
+          "matrix_density": 2.65,
+          "grain_density": 2.65,
+          "pe": 1.81,
+          "description": "Quartz sands (Wolfcamp)"
+        },
+        "shale": {
+          "density": 2.50,
+          "gr_baseline": 200,
+          "resistivity_rsh": 2.0,
+          "description": "Organic-rich shales (Wolfcamp, Bone Spring)"
+        }
+      },
+      "saturation_model_recommendation": "Archie for clean carbonates. Dual Water for Wolfcamp shales.",
+      "vsh_calculation": "Larionov Older (consolidated rocks)",
+      "common_zones": ["Wolfcamp", "Bone Spring", "Delaware", "Spraberry"],
+      "typical_porosity_range": [0.05, 0.15],
+      "typical_permeability_range": [0.001, 1.0]
+    },
+    {
+      "name": "North Sea Brent",
+      "region": "Europe",
+      "age": "Jurassic",
+      "description": "Marine and deltaic sandstones. Well-sorted, high quality reservoir sands.",
+      "archie_parameters": {
+        "a": 1.0,
+        "m": 1.95,
+        "n": 1.9,
+        "description": "Clean, well-sorted marine sands with low cementation exponent"
+      },
+      "formation_water": {
+        "resistivity_rw": 0.06,
+        "salinity_ppm": 50000,
+        "temperature_f": 200,
+        "gradient_comment": "Marine waters - moderate salinity"
+      },
+      "lithology": {
+        "sandstone": {
+          "matrix_density": 2.65,
+          "grain_density": 2.65,
+          "pe": 1.81,
+          "description": "Quartz arenites"
+        },
+        "shale": {
+          "density": 2.50,
+          "gr_baseline": 100,
+          "resistivity_rsh": 1.8,
+          "description": "Heather and Draupne shales (organic-rich)"
+        }
+      },
+      "saturation_model_recommendation": "Archie (clean sands). Simandoux for shaley intervals.",
+      "vsh_calculation": "Linear or Larionov Older",
+      "common_zones": ["Brent Group", "Statfjord", "Cook"],
+      "typical_porosity_range": [0.20, 0.30],
+      "typical_permeability_range": [100, 5000]
+    },
+    {
+      "name": "Middle East Carbonate",
+      "region": "Middle East",
+      "age": "Cretaceous-Jurassic",
+      "description": "Platform carbonates with extensive diagenesis. Fractures and vugs common.",
+      "archie_parameters": {
+        "a": 1.0,
+        "m": 2.0,
+        "n": 2.0,
+        "description": "Standard carbonate Archie. Reduce m to 1.7-1.8 for vuggy/fractured zones."
+      },
+      "formation_water": {
+        "resistivity_rw": 0.035,
+        "salinity_ppm": 120000,
+        "temperature_f": 220,
+        "gradient_comment": "High temperature, high salinity environment"
+      },
+      "lithology": {
+        "limestone": {
+          "matrix_density": 2.71,
+          "grain_density": 2.71,
+          "pe": 5.08,
+          "description": "Calcite-dominated platform carbonates"
+        },
+        "dolomite": {
+          "matrix_density": 2.87,
+          "grain_density": 2.87,
+          "pe": 3.14,
+          "description": "Extensive dolomitization zones"
+        },
+        "anhydrite": {
+          "matrix_density": 2.96,
+          "grain_density": 2.96,
+          "pe": 5.05,
+          "description": "Evaporite stringers and beds"
+        },
+        "shale": {
+          "density": 2.55,
+          "gr_baseline": 80,
+          "resistivity_rsh": 2.5,
+          "description": "Tight carbonate shales"
+        }
+      },
+      "saturation_model_recommendation": "Archie for matrix porosity. Special models for fractures.",
+      "vsh_calculation": "Linear (low shale content)",
+      "common_zones": ["Arab", "Shuaiba", "Thamama", "Khuff"],
+      "typical_porosity_range": [0.15, 0.25],
+      "typical_permeability_range": [1, 100]
+    },
+    {
+      "name": "Bakken Shale",
+      "region": "North America",
+      "age": "Devonian-Mississippian",
+      "description": "Organic-rich shale with tight sandstone and dolostone members. Unconventional resource play.",
+      "archie_parameters": {
+        "a": 1.2,
+        "m": 2.5,
+        "n": 2.0,
+        "description": "High tortuosity (a) and cementation (m) for tight rock. Often use dual porosity models."
+      },
+      "formation_water": {
+        "resistivity_rw": 0.02,
+        "salinity_ppm": 200000,
+        "temperature_f": 240,
+        "gradient_comment": "Extremely high salinity - often saturated brine"
+      },
+      "lithology": {
+        "shale": {
+          "density": 2.40,
+          "gr_baseline": 250,
+          "resistivity_rsh": 3.0,
+          "description": "Type II kerogen, TOC 5-15%, high maturity"
+        },
+        "dolomite": {
+          "matrix_density": 2.87,
+          "grain_density": 2.87,
+          "pe": 3.14,
+          "description": "Middle Bakken dolostone member"
+        },
+        "sandstone": {
+          "matrix_density": 2.65,
+          "grain_density": 2.65,
+          "pe": 1.81,
+          "description": "Tight sands in Three Forks"
+        }
+      },
+      "saturation_model_recommendation": "Dual Water or Modified Simandoux (high organic content affects resistivity)",
+      "vsh_calculation": "Larionov Older with TOC correction",
+      "common_zones": ["Upper Bakken", "Middle Bakken", "Lower Bakken", "Three Forks"],
+      "typical_porosity_range": [0.03, 0.08],
+      "typical_permeability_range": [0.0001, 0.01]
+    },
+    {
+      "name": "Malay Basin",
+      "region": "Southeast Asia",
+      "age": "Oligocene-Miocene",
+      "description": "Deepwater turbidite sands with high shale content. Gas-prone with significant dispersed shale.",
+      "archie_parameters": {
+        "a": 0.81,
+        "m": 2.0,
+        "n": 1.9,
+        "description": "Modified Humble formula for turbidite sands"
+      },
+      "formation_water": {
+        "resistivity_rw": 0.10,
+        "salinity_ppm": 25000,
+        "temperature_f": 160,
+        "gradient_comment": "Moderate salinity - partially marine, partially meteoric influence"
+      },
+      "lithology": {
+        "sandstone": {
+          "matrix_density": 2.65,
+          "grain_density": 2.65,
+          "pe": 1.81,
+          "description": "Fine-grained turbidite sands"
+        },
+        "shale": {
+          "density": 2.45,
+          "gr_baseline": 110,
+          "resistivity_rsh": 1.2,
+          "description": "Smectite-rich marine shales"
+        }
+      },
+      "saturation_model_recommendation": "Indonesia (dispersed shale is typical). Dual Water for very shaley pay.",
+      "vsh_calculation": "Clavier (Tertiary basins)",
+      "common_zones": ["Group I-VIII sands"],
+      "typical_porosity_range": [0.22, 0.32],
+      "typical_permeability_range": [50, 500]
+    },
+    {
+      "name": "Marcellus Shale",
+      "region": "North America",
+      "age": "Devonian",
+      "description": "Organic-rich marine shale. Major unconventional gas play in Appalachian Basin.",
+      "archie_parameters": {
+        "a": 1.5,
+        "m": 2.8,
+        "n": 2.0,
+        "description": "Very high tortuosity and cementation for mature shale. Complex pore network."
+      },
+      "formation_water": {
+        "resistivity_rw": 0.015,
+        "salinity_ppm": 250000,
+        "temperature_f": 190,
+        "gradient_comment": "Hypersaline brines - among highest salinity globally"
+      },
+      "lithology": {
+        "shale": {
+          "density": 2.50,
+          "gr_baseline": 300,
+          "resistivity_rsh": 4.0,
+          "description": "Type II kerogen, TOC 3-12%, thermally mature"
+        },
+        "limestone": {
+          "matrix_density": 2.71,
+          "grain_density": 2.71,
+          "pe": 5.08,
+          "description": "Limestone stringers (Purcell, Cherry Valley)"
+        }
+      },
+      "saturation_model_recommendation": "Specialized shale models (Passey, Jarvie-Bowker). Standard models unreliable.",
+      "vsh_calculation": "Not applicable - formation is shale. Use TOC and mineralogy instead.",
+      "common_zones": ["Oatka Creek", "Union Springs", "Cherry Valley", "Purcell"],
+      "typical_porosity_range": [0.03, 0.07],
+      "typical_permeability_range": [0.00001, 0.0001]
+    },
+    {
+      "name": "West Texas Delaware",
+      "region": "North America",
+      "age": "Permian",
+      "description": "Mixed carbonate-siliciclastic deepwater basin deposits. Part of greater Permian Basin.",
+      "archie_parameters": {
+        "a": 1.0,
+        "m": 2.2,
+        "n": 2.0,
+        "description": "Moderate cementation for mixed lithology"
+      },
+      "formation_water": {
+        "resistivity_rw": 0.020,
+        "salinity_ppm": 180000,
+        "temperature_f": 200,
+        "gradient_comment": "Very high salinity similar to greater Permian Basin"
+      },
+      "lithology": {
+        "sandstone": {
+          "matrix_density": 2.65,
+          "grain_density": 2.65,
+          "pe": 1.81,
+          "description": "Fine-grained turbidite sands"
+        },
+        "limestone": {
+          "matrix_density": 2.71,
+          "grain_density": 2.71,
+          "pe": 5.08,
+          "description": "Debris flow carbonates"
+        },
+        "shale": {
+          "density": 2.48,
+          "gr_baseline": 220,
+          "resistivity_rsh": 2.2,
+          "description": "Organic-rich basin shales"
+        }
+      },
+      "saturation_model_recommendation": "Simandoux or Indonesia depending on shale distribution. Consider organic matter effects.",
+      "vsh_calculation": "Larionov Older",
+      "common_zones": ["Wolfcamp", "Bone Spring", "Delaware", "Avalon"],
+      "typical_porosity_range": [0.06, 0.12],
+      "typical_permeability_range": [0.001, 0.5]
+    },
+    {
+      "name": "North Sea Chalk",
+      "region": "Europe",
+      "age": "Cretaceous",
+      "description": "Highly porous, low permeability chalk reservoirs. Fractures critical for production.",
+      "archie_parameters": {
+        "a": 1.0,
+        "m": 2.3,
+        "n": 2.0,
+        "description": "Higher m reflects tortuous micropore system in chalk"
+      },
+      "formation_water": {
+        "resistivity_rw": 0.055,
+        "salinity_ppm": 55000,
+        "temperature_f": 185,
+        "gradient_comment": "Marine formation waters"
+      },
+      "lithology": {
+        "chalk": {
+          "matrix_density": 2.71,
+          "grain_density": 2.71,
+          "pe": 5.08,
+          "description": "Biogenic calcite (coccoliths). Dual porosity: matrix + fractures"
+        },
+        "marl": {
+          "density": 2.65,
+          "gr_baseline": 60,
+          "resistivity_rsh": 1.5,
+          "description": "Clayey chalk intervals"
+        }
+      },
+      "saturation_model_recommendation": "Modified Archie for matrix. Dual porosity models for fractured zones.",
+      "vsh_calculation": "Linear (low clay content)",
+      "common_zones": ["Tor", "Ekofisk", "Hod"],
+      "typical_porosity_range": [0.30, 0.45],
+      "typical_permeability_range": [0.5, 5.0]
+    },
+    {
+      "name": "Generic Clean Sandstone",
+      "region": "Global",
+      "age": "All ages",
+      "description": "Default parameters for clean, consolidated quartz sandstones. Use as starting point for calibration.",
+      "archie_parameters": {
+        "a": 1.0,
+        "m": 2.0,
+        "n": 2.0,
+        "description": "Classic Archie (1942) parameters. Universal starting point."
+      },
+      "formation_water": {
+        "resistivity_rw": 0.05,
+        "salinity_ppm": 75000,
+        "temperature_f": 150,
+        "gradient_comment": "Typical formation water values. Always calibrate to local conditions."
+      },
+      "lithology": {
+        "sandstone": {
+          "matrix_density": 2.65,
+          "grain_density": 2.65,
+          "pe": 1.81,
+          "description": "Pure quartz (SiO2) matrix"
+        },
+        "shale": {
+          "density": 2.50,
+          "gr_baseline": 100,
+          "resistivity_rsh": 2.0,
+          "description": "Generic shale baseline"
+        }
+      },
+      "saturation_model_recommendation": "Archie for Vsh < 0.10. Simandoux/Indonesia for higher Vsh.",
+      "vsh_calculation": "Use appropriate non-linear correction based on formation age",
+      "common_zones": ["N/A - generic baseline"],
+      "typical_porosity_range": [0.15, 0.25],
+      "typical_permeability_range": [10, 100]
+    }
+  ]
+}

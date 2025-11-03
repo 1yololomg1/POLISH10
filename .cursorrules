@@ -62,51 +62,59 @@ $END$
 - Explain your OBSERVATIONS clearly, then provide REASONING to identify the exact issue. Add console logs when needed to gather more information.
 
 
-## Core Business Domain Components
+## Core Business Components
 
-### Petrophysical Standards Engine
-**Importance Score: 95/100**
-Location: petrophysics/constants.py
+### Petrophysical Constants Management (95/100)
+- Industry-standard constants for wireline processing
+- Lithology density ranges validated against core measurements
+- Formation-specific porosity thresholds
+- Regional Archie parameters by geological basin
+- Tool-specific correction factors
 
-Primary domain rules:
-- Formation-specific porosity thresholds and quality criteria
-- Regional Archie parameters for geological contexts
-- Industry-standard lithology density classifications
-- Data quality assessment thresholds
-- Gap filling rules per formation type
+### Saturation Modeling System (90/100)
+- Shaly sand water saturation calculations
+- Multiple model implementations (Simandoux, Indonesia, Dual Water)
+- Automatic model selection based on shale content
+- Formation-specific parameter selection
+- Geological scenario correction factors
 
-### Data Standardization System
-**Importance Score: 85/100**
-Location: core/reporting.py
+### Environmental Correction Engine (85/100)
+- Borehole measurement corrections
+- Tool-specific algorithms from service companies
+- Temperature-based resistivity adjustments
+- Mudcake compensation
+- Hole condition quality control
 
-Business workflows:
-- Curve name standardization tracking
-- Unit conversion audit trails
-- Quality metrics generation
-- Standardization confidence scoring
-- Naming conflict resolution documentation
+### Visualization Standards (80/100)
+- SPWLA-compliant log display system
+- Track layout optimization
+- Gas detection crossover visualization
+- Formation markers integration
 
-## Integration Architecture
+## Business Rules Integration
 
-The system connects two primary business components:
-1. Petrophysical constants provide the foundational rules and thresholds
-2. Standardization reporting validates and tracks data transformations
+1. Automatic correction selection based on tool types
+2. Regional parameter overrides for different basins
+3. Formation-aware quality thresholds
+4. Depth-based gap filling protocols
+5. Model selection criteria for saturation calculations
 
-Key business workflows combine:
-- Formation-specific quality validations
-- Regional parameter applications
-- Industry-standard curve identification
-- Data quality assessment tracking
+## Domain-Specific Workflows
 
-## Business Rules Summary
+1. Wireline Log Processing
+   - Tool corrections
+   - Environmental adjustments
+   - Quality control flagging
 
-Critical domain rules implemented:
-1. Formation-dependent porosity validation
-2. Depth-based shale density calculations
-3. Regional geological parameter variations
-4. Gap filling methodologies by curve type
-5. Quality assessment criteria
-6. Curve naming standardization
+2. Saturation Analysis
+   - Shale content evaluation
+   - Model selection
+   - Parameter optimization
+
+3. Visualization Standards
+   - Track organization
+   - Curve presentation
+   - Lithology display
 
 $END$
 

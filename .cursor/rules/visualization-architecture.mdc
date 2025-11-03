@@ -1,5 +1,5 @@
 ---
-description: Documentation for the visualization system architecture, focusing on figure management and memory patterns
+description: Technical architecture specification for petrophysical data visualization components and rendering systems
 ---
 
 # === USER INSTRUCTIONS ===
@@ -30,29 +30,32 @@ $END$
 
 # visualization-architecture
 
-Based on the provided specification, there is limited but focused information about the visualization architecture through the referenced UI components:
+The visualization system architecture consists of a specialized log display renderer implementing industry-standard petrophysical visualization patterns.
 
-## Core Components
+Core Components:
 
-`ui/visualization.py`
-- Generic visualization utilities for displaying petrophysical data
-- Basic visualization infrastructure without significant business logic
+1. Log Display Renderer (`ui/log_display_renderer.py`)
+Importance Score: 80/100
+- Four-track standard layout following SPWLA display specifications 
+- Track configuration system for lithology, resistivity, porosity, and auxiliary data
+- Crossover shading patterns for hydrocarbon detection zones
+- Formation tops and marker bed visualization overlays
 
-`ui/status.py`
-- Status update display system for visualization operations
+Key Visualization Features:
+- Industry-compliant track layouts matching service company standards
+- Domain-specific curve scaling and normalization
+- Lithology pattern fills based on formation classifications
+- Depth-based marker synchronization
+- Multi-well correlation display support
 
-## Styling
+Business Rules:
+- Track layouts must conform to SPWLA standards
+- Crossover patterns follow industry color conventions
+- Formation markers require geological validation
+- Scale ranges adapt to regional norms
+- Depth alignment maintains geological integrity
 
-`.superdesign/design_iterations/default_ui_darkmode.css`
-- UI styling definitions for visualization components
-
-## Package Structure
-
-`ui/__init__.py`
-- Package initialization for visualization components 
-
-Importance Score: 45/100
-The visualization architecture appears to contain primarily standard display utilities without significant specialized business logic or domain-specific implementations.
+The visualization system focuses heavily on petrophysical industry standards and conventional log display formats while supporting advanced features like crossover analysis and formation correlation.
 
 $END$
 

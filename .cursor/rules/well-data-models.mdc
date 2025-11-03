@@ -1,5 +1,5 @@
 ---
-description: Specifications for well data modeling, LAS file handling, and validation structures in petrophysical systems
+description: Specifications for well data models, LAS file structures, and validation rules for petrophysical data
 ---
 
 # === USER INSTRUCTIONS ===
@@ -49,43 +49,32 @@ $END$
 
 # well-data-models
 
-## Data Structures
+## LAS Header Information
+IMPORTANCE SCORE: 95/100
+- Industry-standard LAS header parsing based on petrophysical requirements
+- Validated parameter ranges for formation tops and well trajectory data
+- Regional basin-specific validation rules for header fields
 
-### LAS File Header Model
-- Captures essential well metadata and curve definitions
-- Stores formation-specific parameters and regional settings
-- Manages version information and processing history
-- Tracks curve unit standardization states
+## DepthValidationResult Model
+IMPORTANCE SCORE: 85/100
+- Data class encapsulating depth validation logic for well logs
+- Enforces depth increment consistency checks
+- Validates against formation top markers
+- Flags inconsistent depth ranges
 
-### DepthValidationResult
-A dataclass containing:
-- Validated depth ranges with geological context
-- Formation boundary markers
-- Quality flags for depth measurements
-- Zone-specific validation rules
+## Well Dataset Schemas
+IMPORTANCE SCORE: 90/100
+- Comprehensive well data structures aligned with industry standards
+- Formation-specific petrophysical parameters mapping
+- Regional Archie parameters schema definitions
+- Tool-specific correction factor mappings
+- Validated lithology density ranges
 
-### Well Dataset Mappings
-Maps industry-standard curve names and their properties:
-- Measurement types and units
-- Valid value ranges by formation
-- Required companion curves
-- Regional calibration parameters
-
-## Core Business Rules
-
-1. Formation-Specific Data Validation
-- Depth-dependent density constraints
-- Porosity quality thresholds
-- Regional parameter variations
-- Gap filling methodologies
-
-2. Quality Control Framework
-- Industry-standard curve range validation
-- Unit compatibility checks
-- Cross-curve relationship verification
-- Zone-aware data validation
-
-Importance Score: 90/100 (Critical data models for well log analysis)
+Core Business Rules:
+1. All depth measurements must maintain consistent step sizes within formations
+2. Formation tops must align with well log depth ranges
+3. Regional basin parameters override default petrophysical constants
+4. Tool-specific correction factors must match service company specifications
 
 $END$
 

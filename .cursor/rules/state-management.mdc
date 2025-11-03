@@ -1,5 +1,5 @@
 ---
-description: Core business logic and domain-specific implementations for petrophysical data state management and standardization
+description: Specification for state management in petrophysical analysis systems, focusing on well data and processing states
 ---
 
 # === USER INSTRUCTIONS ===
@@ -56,48 +56,41 @@ $END$
 
 # state-management
 
-## Core State Management Components
+## Core State Components
+IMPORTANCE SCORE: 85/100
 
-### Petrophysical Data State (Importance: 90/100)
-Location: petrophysics/constants.py
-- Formation-specific state parameters for lithology densities and porosity classifications
-- Regional Archie parameter state management across geological contexts
-- Quality threshold state definitions per formation type
-- State validation rules for curve-specific data quality criteria
+1. Basin Parameter States
+- Manages geological basin-specific parameters
+- Regional Archie parameter sets
+- Formation-specific constants 
 
-### Standardization State Tracking (Importance: 85/100)
-Location: core/reporting.py
-- Audit trail state management for curve name standardization
-- Unit conversion state tracking with validation checks
-- Confidence state tracking for curve identification methods
-- State persistence for naming conflict resolutions
-- Quality metrics state collection and reporting
+2. Environmental Correction States
+- Borehole condition tracking
+- Temperature/pressure state management
+- Mud system properties
 
-## State Cleanup Procedures
+## Data Flow Architecture
+IMPORTANCE SCORE: 80/100
 
-### Formation Data Cleanup
-- Formation-specific quality threshold enforcement
-- Depth-dependent state validation for shale density calculations
-- Regional parameter state normalization
+Multiwell Data Handling:
+- Zone-aware state propagation
+- Cross-well parameter synchronization
+- Formation top correlation states
 
-### Standardization Cleanup
-- Unit conversion state verification
-- Fractional standardization state normalization
-- Naming conflict state resolution
-- Quality metric state aggregation
+State Cleanup Rules:
+- Automatic parameter reset between processing zones
+- Tool-specific calibration state cleanup
+- Regional parameter cache invalidation
 
-## Data Flow Management
+## Display State Management 
+IMPORTANCE SCORE: 75/100
 
-### Petrophysical State Flow
-- Lithology density state propagation
-- Porosity classification state transitions
-- Quality threshold state applications
+Log Display States:
+- Track-specific scaling parameters
+- Crossover visualization states
+- Formation marker persistence
 
-### Reporting State Flow
-- Standardization state tracking
-- Unit conversion state propagation
-- Quality metric state aggregation
-- Audit trail state maintenance
+The state management system focuses primarily on maintaining geological consistency across processing stages while handling complex multi-well scenarios and regional parameter variations.
 
 $END$
 
