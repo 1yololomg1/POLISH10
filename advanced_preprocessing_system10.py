@@ -1115,8 +1115,17 @@ class ComprehensiveMnemonicLibrary:
             alternatives = [c for c in candidates[1:] if c['confidence'] >= top_confidence * 0.9]
             
             if alternatives:
+                # Get list of all curve names for suite consistency check
+                all_curve_names = list(auxiliary_curves.keys()) if auxiliary_curves else []
+                
                 # Resolve conflict by preferring exact matches, then better context matches
-                resolved = self._resolve_conflict(candidates[0], alternatives, unit_clean, value_range)
+                resolved = self._resolve_conflict(
+                    candidates[0], 
+                    alternatives, 
+                    unit_clean, 
+                    value_range,
+                    all_curve_names=all_curve_names
+                )
                 return resolved['curve_type'], resolved['confidence'], resolved['curve_data']
         
         # Return best match or UNKNOWN
@@ -1150,47 +1159,106 @@ class ComprehensiveMnemonicLibrary:
         return min(0.15, confidence_boost)  # Cap at 0.15
     
     def _resolve_conflict(self, primary: Dict, alternatives: List[Dict], 
-                          unit: str, value_range: Optional[Tuple[float, float]]) -> Dict:
-        """Resolve conflicts between multiple high-confidence candidates"""
-        # Prefer exact matches
-        if primary['method'] == 'exact':
-            return primary
+                          unit: str, value_range: Optional[Tuple[float, float]],
+                          all_curve_names: Optional[List[str]] = None) -> Dict:
+        """
+        Enhanced conflict resolution using multiple strategies
         
-        # Prefer better unit matches
-        unit_clean = unit.upper().strip() if unit else ''
+        Priority order:
+        1. Service company context (if available)
+        2. Curve suite consistency (check what other curves exist)
+        3. Unit match quality
+        4. Value range overlap
+        5. Confidence score
+        """
         all_candidates = [primary] + alternatives
         
-        for candidate in all_candidates:
-            curve_data = candidate['curve_data']
-            curve_units = [u.upper() for u in curve_data.get('units', [])]
-            if unit_clean in curve_units:
-                return candidate
+        # Strategy 1: Prefer exact method matches
+        exact_matches = [c for c in all_candidates if c['method'] == 'exact']
+        if len(exact_matches) == 1:
+            return exact_matches[0]
         
-        # Prefer better value range matches
+        # Strategy 2: Curve suite consistency
+        if all_curve_names:
+            # Check for related curves
+            suite_scores = {}
+            for candidate in all_candidates:
+                score = 0
+                curve_type = candidate['curve_type']
+                
+                # Known curve families
+                families = {
+                    'RESISTIVITY_DEEP': ['RESISTIVITY_MEDIUM', 'RESISTIVITY_SHALLOW'],
+                    'RESISTIVITY_MEDIUM': ['RESISTIVITY_DEEP', 'RESISTIVITY_SHALLOW'],
+                    'RESISTIVITY_SHALLOW': ['RESISTIVITY_DEEP', 'RESISTIVITY_MEDIUM'],
+                    'NEUTRON_POROSITY': ['BULK_DENSITY', 'PHOTOELECTRIC_FACTOR'],
+                    'BULK_DENSITY': ['NEUTRON_POROSITY', 'PHOTOELECTRIC_FACTOR'],
+                    'GAMMA_RAY_TOTAL': ['SPONTANEOUS_POTENTIAL'],
+                    'GAMMA_RAY_SPECTRAL': ['THORIUM', 'URANIUM', 'POTASSIUM']
+                }
+                
+                related_types = families.get(curve_type, [])
+                
+                # Check if related curves exist in dataset
+                for curve_name in all_curve_names:
+                    name_upper = curve_name.upper()
+                    for related_type in related_types:
+                        # Simple check if curve name contains related type keywords
+                        keywords = related_type.lower().split('_')
+                        if any(kw in name_upper.lower() for kw in keywords):
+                            score += 1
+                
+                suite_scores[candidate['curve_type']] = score
+            
+            # If one candidate has significantly more related curves, prefer it
+            if suite_scores:
+                max_score = max(suite_scores.values())
+                if max_score > 0:
+                    best_types = [t for t, s in suite_scores.items() if s == max_score]
+                    if len(best_types) == 1:
+                        return next(c for c in all_candidates if c['curve_type'] == best_types[0])
+        
+        # Strategy 3: Unit match quality
+        unit_clean = unit.upper().strip() if unit else ''
+        if unit_clean:
+            unit_matches = []
+            for candidate in all_candidates:
+                curve_units = [u.upper() for u in candidate['curve_data'].get('units', [])]
+                if unit_clean in curve_units:
+                    unit_matches.append(candidate)
+            
+            if len(unit_matches) == 1:
+                return unit_matches[0]
+            elif unit_matches:
+                all_candidates = unit_matches  # Narrow down to unit matches
+        
+        # Strategy 4: Value range overlap
         if value_range:
-            best_range_match = primary
-            best_range_overlap = 0.0
+            best_overlap = 0.0
+            best_candidate = primary
             
             for candidate in all_candidates:
-                curve_data = candidate['curve_data']
-                curve_range = curve_data.get('range', [])
+                curve_range = candidate['curve_data'].get('range', [])
                 if len(curve_range) == 2:
                     min_val, max_val = value_range
                     curve_min, curve_max = curve_range
                     
                     overlap_min = max(min_val, curve_min)
                     overlap_max = min(max_val, curve_max)
+                    
                     if overlap_max > overlap_min:
-                        overlap = (overlap_max - overlap_min) / (max(max_val, curve_max) - min(min_val, curve_min))
-                        if overlap > best_range_overlap:
-                            best_range_overlap = overlap
-                            best_range_match = candidate
+                        range_span = max(max_val, curve_max) - min(min_val, curve_min)
+                        overlap = (overlap_max - overlap_min) / range_span if range_span > 0 else 0
+                        
+                        if overlap > best_overlap:
+                            best_overlap = overlap
+                            best_candidate = candidate
             
-            if best_range_overlap > 0.5:
-                return best_range_match
+            if best_overlap > 0.5:
+                return best_candidate
         
-        # Default: return primary (highest confidence)
-        return primary
+        # Strategy 5: Highest confidence
+        return max(all_candidates, key=lambda x: x['confidence'])
     
     def validate_curve_identification(self, curve_name: str, identified_type: str, confidence: float) -> Dict[str, Any]:
         """Simple curve validation"""
@@ -1496,6 +1564,96 @@ class ComprehensiveCurveManager:
         best_confidence = min(1.0, best_confidence)
         
         return best_match or 'UNKNOWN', best_confidence, best_info
+    
+    def detect_and_resolve_duplicates(self, identified_curves: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Detect multiple curves mapped to same type and resolve duplicates
+        
+        Args:
+            identified_curves: Dict of {curve_name: CurveInfo} or {curve_name: dict with curve_type, type_confidence, statistics}
+        
+        Returns:
+            Dict with:
+                - 'duplicates_found': Dict[curve_type, List[curve_names]]
+                - 'resolution_needed': List[curve_type] requiring user input
+                - 'auto_resolved': Dict[curve_type, selected_curve_name]
+        """
+        # Group curves by their identified type
+        type_mapping = {}
+        for curve_name, curve_info in identified_curves.items():
+            # Handle both CurveInfo objects and dicts
+            if hasattr(curve_info, 'curve_type'):
+                curve_type = curve_info.curve_type
+                confidence = curve_info.type_confidence
+                stats = curve_info.statistics if hasattr(curve_info, 'statistics') else {}
+                unit = curve_info.unit if hasattr(curve_info, 'unit') else ''
+            else:
+                curve_type = curve_info.get('curve_type', 'UNKNOWN')
+                confidence = curve_info.get('type_confidence', 0.0)
+                stats = curve_info.get('statistics', {})
+                unit = curve_info.get('unit', '')
+            
+            if curve_type == 'UNKNOWN':
+                continue
+            
+            if curve_type not in type_mapping:
+                type_mapping[curve_type] = []
+            type_mapping[curve_type].append({
+                'name': curve_name,
+                'confidence': confidence,
+                'missing_pct': stats.get('missing_percent', 100) if isinstance(stats, dict) else 100,
+                'unit': unit
+            })
+        
+        # Find duplicates (more than one curve per type)
+        duplicates = {
+            curve_type: curves 
+            for curve_type, curves in type_mapping.items() 
+            if len(curves) > 1
+        }
+        
+        if not duplicates:
+            return {
+                'duplicates_found': {},
+                'resolution_needed': [],
+                'auto_resolved': {}
+            }
+        
+        # Attempt automatic resolution based on data quality
+        auto_resolved = {}
+        needs_user_input = []
+        
+        for curve_type, candidates in duplicates.items():
+            if len(candidates) == 2:
+                # Auto-resolve if one curve is significantly better quality
+                sorted_candidates = sorted(
+                    candidates, 
+                    key=lambda x: (x['confidence'], -x['missing_pct']),
+                    reverse=True
+                )
+                
+                best = sorted_candidates[0]
+                second = sorted_candidates[1]
+                
+                # Auto-select if:
+                # 1. Confidence difference > 0.15, OR
+                # 2. Missing data difference > 30%, OR
+                # 3. One has < 10% missing, other has > 40% missing
+                if (best['confidence'] - second['confidence'] > 0.15 or
+                    second['missing_pct'] - best['missing_pct'] > 30 or
+                    (best['missing_pct'] < 10 and second['missing_pct'] > 40)):
+                    auto_resolved[curve_type] = best['name']
+                else:
+                    needs_user_input.append(curve_type)
+            else:
+                # 3+ candidates always need user input
+                needs_user_input.append(curve_type)
+        
+        return {
+            'duplicates_found': duplicates,
+            'resolution_needed': needs_user_input,
+            'auto_resolved': auto_resolved
+        }
     
     def create_comprehensive_curve_info(self, curve_name: str, unit: str = '', description: str = '') -> CurveInfo:
         """Create curve info with full recognition capabilities"""
@@ -5938,6 +6096,153 @@ class IndustryUnitStandardizer:
         elif self.app:
             self.app.log_processing("  No unit conversions were needed")
 
+    def detect_unit_ambiguities(self, data: pd.DataFrame, curve_info: Dict) -> List[Dict]:
+        """
+        Detect ambiguous units that need clarification
+        
+        Returns:
+            List of dicts with:
+                - curve_name: str
+                - unit: str
+                - issue: str (description of ambiguity)
+                - max_value: float
+                - suggested_conversion: str
+        """
+        ambiguities = []
+        
+        # Known ambiguous units
+        ambiguous_units = {
+            'PU': {
+                'description': 'Porosity Units - could be fraction (0-1) or percent (0-100)',
+                'threshold': 1.0,
+                'conversion_if_above': 'divide by 100'
+            },
+            'FRAC': {
+                'description': 'Fraction - verify if already decimal or percentage',
+                'threshold': 1.0,
+                'conversion_if_above': 'divide by 100'
+            },
+            'DECIMAL': {
+                'description': 'Decimal - verify scale',
+                'threshold': 1.0,
+                'conversion_if_above': 'divide by 100'
+            }
+        }
+        
+        for curve_name, info in curve_info.items():
+            unit = info.get('unit', '').upper().strip()
+            
+            if unit in ambiguous_units:
+                if curve_name in data.columns:
+                    series = pd.to_numeric(data[curve_name], errors='coerce')
+                    max_val = float(series.max())
+                    
+                    ambig_info = ambiguous_units[unit]
+                    
+                    if max_val > ambig_info['threshold']:
+                        ambiguities.append({
+                            'curve_name': curve_name,
+                            'unit': unit,
+                            'issue': ambig_info['description'],
+                            'max_value': max_val,
+                            'suggested_conversion': ambig_info['conversion_if_above']
+                        })
+        
+        return ambiguities
+
+    def show_ambiguity_resolution_dialog(self, ambiguities: List[Dict]) -> Dict[str, bool]:
+        """
+        Show dialog for user to confirm unit conversions for ambiguous cases
+        
+        Returns:
+            Dict[curve_name, should_convert] - user decisions
+        """
+        if not ambiguities:
+            return {}
+        
+        dialog = tk.Toplevel(self.app.root if self.app else None)
+        dialog.title("Unit Ambiguity Resolution")
+        dialog.geometry("800x500")
+        if self.app:
+            dialog.transient(self.app.root)
+        dialog.grab_set()
+        
+        # Header
+        header = ttk.Label(
+            dialog,
+            text="Ambiguous Units Detected\n\nPlease confirm conversions for the following curves:",
+            font=('TkDefaultFont', 10, 'bold'),
+            justify='left'
+        )
+        header.pack(pady=10, padx=10, anchor='w')
+        
+        # Scrollable frame
+        canvas_frame = ttk.Frame(dialog)
+        canvas_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        canvas = tk.Canvas(canvas_frame, bg='white')
+        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Store user decisions
+        decisions = {}
+        
+        for ambig in ambiguities:
+            # Frame for each ambiguous curve
+            frame = ttk.LabelFrame(scrollable_frame, text=f"Curve: {ambig['curve_name']}", padding=10)
+            frame.pack(fill='x', pady=5, padx=5)
+            
+            info_text = f"Unit: {ambig['unit']}\n"
+            info_text += f"Issue: {ambig['issue']}\n"
+            info_text += f"Max Value: {ambig['max_value']:.2f}\n"
+            info_text += f"Suggested: {ambig['suggested_conversion']}"
+            
+            ttk.Label(frame, text=info_text, justify='left').pack(anchor='w', pady=5)
+            
+            # Checkbox for conversion
+            var = tk.BooleanVar(value=True)  # Default to converting
+            decisions[ambig['curve_name']] = var
+            
+            ttk.Checkbutton(
+                frame,
+                text=f"Convert: {ambig['suggested_conversion']}",
+                variable=var
+            ).pack(anchor='w')
+        
+        # Button frame
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill='x', pady=10)
+        
+        result = {}
+        
+        def on_confirm():
+            for curve_name, var in decisions.items():
+                result[curve_name] = var.get()
+            dialog.destroy()
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Apply Conversions", command=on_confirm).pack(side='left', padx=10)
+        ttk.Button(button_frame, text="Skip All", command=on_cancel).pack(side='left')
+        
+        # Wait for dialog
+        if self.app:
+            self.app.root.wait_window(dialog)
+        
+        return result
+
     def _get_curve_category(self, curve_name):
         """Determine unit category for a curve"""
         curve_upper = curve_name.upper()
@@ -6445,6 +6750,33 @@ class AdvancedPreprocessingApplication:
             # Update status manager if available
             if hasattr(self, 'status_manager') and self.status_manager:
                 self.status_manager.update_status(f"Upload standardization skipped due to error: {e}")
+        
+        # === UNIT AMBIGUITY DETECTION ===
+        try:
+            if self.current_data is not None:
+                ambiguities = self.unit_standardizer.detect_unit_ambiguities(
+                    self.current_data, 
+                    self.curve_info
+                )
+                
+                if ambiguities:
+                    self.log_processing(f"[UNIT AMBIGUITY] Detected {len(ambiguities)} ambiguous units")
+                    
+                    # Show resolution dialog
+                    conversions = self.unit_standardizer.show_ambiguity_resolution_dialog(ambiguities)
+                    
+                    if conversions:
+                        for curve_name, should_convert in conversions.items():
+                            if should_convert and curve_name in self.current_data.columns:
+                                self.current_data[curve_name] = self.current_data[curve_name] / 100.0
+                                if curve_name in self.curve_info:
+                                    self.curve_info[curve_name]['unit'] = 'v/v'
+                                self.log_processing(f"   Converted {curve_name}: % → v/v")
+                        
+                        # Refresh statistics
+                        self.ensure_curve_statistics()
+        except Exception as e:
+            self.log_processing(f"[UNIT AMBIGUITY] Error: {str(e)}")
     
     def _show_conversion_confirmation_dialog(self, conversion_candidates):
         """Show dialog with preview of proposed unit conversions with selective conversion options
@@ -13496,6 +13828,165 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             # Store basic curve info only
             pass
+        
+        # === DUPLICATE DETECTION AND RESOLUTION ===
+        try:
+            # Detect duplicates
+            duplicate_info = self.curve_manager.detect_and_resolve_duplicates(self.curve_info)
+            
+            if duplicate_info['duplicates_found']:
+                # Log what was found
+                self.log_processing(f"[DUPLICATE DETECTION] Found {len(duplicate_info['duplicates_found'])} duplicate curve types")
+                
+                # Apply auto-resolved duplicates
+                curves_to_remove = []
+                for curve_type, selected_name in duplicate_info['auto_resolved'].items():
+                    candidates = duplicate_info['duplicates_found'][curve_type]
+                    for candidate in candidates:
+                        if candidate['name'] != selected_name:
+                            curves_to_remove.append(candidate['name'])
+                            self.log_processing(f"   Auto-removed: {candidate['name']} (kept {selected_name})")
+                
+                # Get user input for remaining duplicates
+                if duplicate_info['resolution_needed']:
+                    user_selections = self.show_duplicate_resolution_dialog(duplicate_info)
+                    
+                    if user_selections:
+                        for curve_type, selected_name in user_selections.items():
+                            candidates = duplicate_info['duplicates_found'][curve_type]
+                            for candidate in candidates:
+                                if candidate['name'] != selected_name:
+                                    curves_to_remove.append(candidate['name'])
+                                    self.log_processing(f"   User removed: {candidate['name']} (kept {selected_name})")
+                
+                # Remove duplicate curves from dataset
+                if curves_to_remove:
+                    for curve_name in curves_to_remove:
+                        if curve_name in self.current_data.columns:
+                            self.current_data.drop(columns=[curve_name], inplace=True)
+                        if curve_name in self.curve_info:
+                            del self.curve_info[curve_name]
+                    
+                    self.log_processing(f"[DUPLICATE RESOLUTION] Removed {len(curves_to_remove)} duplicate curves")
+                    
+                    # Record in standardization reporter
+                    if hasattr(self, 'standardization_reporter') and self.standardization_reporter:
+                        for curve_name in curves_to_remove:
+                            self.standardization_reporter.record_operation(
+                                operation_type='duplicate_removal',
+                                curve_name=curve_name,
+                                details=f"Removed as duplicate"
+                            )
+        
+        except Exception as e:
+            self.log_processing(f"[DUPLICATE DETECTION] Error: {str(e)}")
+    
+    def show_duplicate_resolution_dialog(self, duplicate_info: Dict) -> Dict[str, str]:
+        """
+        Show dialog for user to select which curves to keep from duplicates
+        
+        Args:
+            duplicate_info: Result from detect_and_resolve_duplicates()
+        
+        Returns:
+            Dict[curve_type, selected_curve_name] - user selections
+        """
+        if not duplicate_info['resolution_needed']:
+            return {}
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Resolve Duplicate Curves")
+        dialog.geometry("900x600")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Header
+        header = ttk.Label(
+            dialog,
+            text="Duplicate Curves Detected\n\nMultiple curves identified as same type. Please select which to keep:",
+            font=('TkDefaultFont', 10, 'bold'),
+            justify='left'
+        )
+        header.pack(pady=10, padx=10, anchor='w')
+        
+        # Scrollable frame for duplicates
+        canvas_frame = ttk.Frame(dialog)
+        canvas_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        canvas = tk.Canvas(canvas_frame, bg='white')
+        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Store user selections
+        selections = {}
+        
+        # Create selection UI for each duplicate group
+        for idx, curve_type in enumerate(duplicate_info['resolution_needed']):
+            candidates = duplicate_info['duplicates_found'][curve_type]
+            
+            # Group frame
+            group_frame = ttk.LabelFrame(
+                scrollable_frame,
+                text=f"Curve Type: {curve_type}",
+                padding=10
+            )
+            group_frame.pack(fill='x', pady=5, padx=5)
+            
+            # Radio button variable
+            var = tk.StringVar(value=candidates[0]['name'])
+            selections[curve_type] = var
+            
+            # Create radio button for each candidate
+            for candidate in candidates:
+                quality_text = f"{candidate['name']}"
+                quality_text += f" | Confidence: {candidate['confidence']:.2f}"
+                quality_text += f" | Missing: {candidate['missing_pct']:.1f}%"
+                quality_text += f" | Unit: {candidate['unit']}"
+                
+                radio = ttk.Radiobutton(
+                    group_frame,
+                    text=quality_text,
+                    value=candidate['name'],
+                    variable=var
+                )
+                radio.pack(anchor='w', pady=2)
+            
+            # Add visual separator
+            if idx < len(duplicate_info['resolution_needed']) - 1:
+                ttk.Separator(scrollable_frame, orient='horizontal').pack(fill='x', pady=5)
+        
+        # Button frame
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill='x', pady=10)
+        
+        result = {}
+        
+        def on_confirm():
+            for curve_type, var in selections.items():
+                result[curve_type] = var.get()
+            dialog.destroy()
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Confirm Selections", command=on_confirm).pack(side='left', padx=10)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side='left')
+        
+        # Wait for dialog to close
+        self.root.wait_window(dialog)
+        
+        return result
     
     def ensure_curve_statistics(self):
         """Ensure all curves have statistics calculated - prevents KeyError issues"""
