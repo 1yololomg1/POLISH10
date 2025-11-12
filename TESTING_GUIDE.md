@@ -1,5 +1,34 @@
 # Testing Guide - Phase 1 Improvements
 
+## 🔁 Regression Coverage – November 2025 Updates
+
+### Test A: Resistivity Temperature & Mud Corrections  
+1. Load a LAS file that includes deep resistivity, mud resistivity, and bottom-hole temperature metadata.  
+2. Record the raw resistivity curve over a hot interval (>90 °C).  
+3. Run processing with environmental corrections enabled.  
+4. Confirm the corrected curve decreases relative to the raw data according to the 2 % per 10 °C slope.  
+5. Change the mud resistivity input by ±50 % and verify the corrected curve scales using the quarter-power adjustment.  
+6. Capture screenshots/log entries that the correction parameters were applied.
+
+### Test B: Depth-Aware Gap Threshold Reporting  
+1. Load a dataset with 0.25 m sampling and missing intervals.  
+2. Trigger processing and open the processing log.  
+3. Validate the reported geological/large gap thresholds list both point counts and metres that correspond (e.g., 400 pts ≈ 100 m).  
+4. Repeat with a 1.0 m sampled file and confirm the metre values track the change.
+
+### Test C: RRP Fallback Without SciPy  
+1. Temporarily uninstall/disable SciPy (or launch in a virtual environment without it).  
+2. Load a file that contains large gaps and run processing.  
+3. Confirm the log reports that formation-based gap filling is skipped and the pipeline completes using standard methods.  
+4. Re-enable SciPy and confirm formation-based filling is restored.
+
+### Test D: Thread-Safe Error Dialogs  
+1. In a processing session, force a controlled failure (e.g., delete the depth curve after loading).  
+2. Ensure the error dialog appears, the UI remains responsive, and the log captures the `[ERROR]` entry.  
+3. Verify no exceptions are raised in the console about Tkinter thread access.
+
+Document the outcomes in the release checklist before shipping.
+
 ## 🧪 HOW TO TEST THE POPUP VISUALIZATION FIX
 
 ### Before You Start

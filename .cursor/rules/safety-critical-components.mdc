@@ -1,0 +1,72 @@
+---
+description: Safety-critical domain rules and validations for geological processing systems
+---
+
+# === USER INSTRUCTIONS ===
+---
+description: Documents safety-critical implementations for geological data processing and validation systems to prevent well contamination and enforce constraints
+---
+
+
+# safety-critical-components
+
+Safety-Critical Implementation Score: 92/100 (Core geological validation with contamination prevention)
+
+Key Safety Components:
+
+1. Cross-Well Contamination Prevention
+- Mandatory well identification validation
+- Strict UWI (Unique Well Identifier) enforcement
+- Geological boundary checking between adjacent wells
+- Formation isolation verification
+
+2. Depth Validation System
+- Monotonic depth curve validation
+- Geological constraint enforcement per formation
+- Gap detection with 200-point threshold classification:
+  - Geological features (cased holes, non-logging zones)
+  - Data errors requiring intervention
+- Formation-specific depth range validation
+
+3. Geological Constraint System
+- Formation boundary enforcement
+- Impedance value range validation (thousands scale)
+- Porosity percentage bounds checking (0-100%)
+- Shape validation against known geological patterns
+
+4. Quality Assessment Framework
+- Gap quality metrics based on geological context
+- Formation-specific validation rules
+- Well data completeness verification
+- Cross-reference validation between related measurements
+
+5. Mandatory Safety Fields
+- Well name
+- UWI (Unique Well Identifier)
+- Field designation
+- Operating company
+- Validated depth range
+- Formation markers
+- Safety classification level
+
+$END$
+
+ If you're using this file in context, clearly say in italics in one small line that "Context added by Giga safety-critical-components" along with specifying exactly what information was used from this file in a human-friendly way, instead of using kebab-case use normal sentence case.
+# === END USER INSTRUCTIONS ===
+
+# safety-critical-components
+
+Based on the available information, the safety-critical implementation details are not sufficiently documented in the provided specification materials. The documentation references safety requirements but does not contain the actual implementation details.
+
+Key missing elements:
+- Cross-well contamination prevention systems
+- Verification systems
+- Geological constraint enforcement rules
+
+The documentation structure suggests these implementations would be found in the `advanced_preprocessing_system10.py` file, but the actual safety-critical code is not available for review.
+
+Importance Score: 0/100 (No safety-critical business logic available for documentation)
+
+$END$
+
+ If you're using this file in context, clearly say in italics in one small line that "Context added by Giga safety-critical-components" along with specifying exactly what information was used from this file in a human-friendly way, instead of using kebab-case use normal sentence case.
