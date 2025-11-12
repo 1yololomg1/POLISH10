@@ -1,5 +1,5 @@
 ---
-description: Specification for state management in petrophysical analysis systems, focusing on well data and processing states
+description: Specifications for analyzing state management aspects of petrophysical processing systems
 ---
 
 # === USER INSTRUCTIONS ===
@@ -56,41 +56,44 @@ $END$
 
 # state-management
 
-## Core State Components
-IMPORTANCE SCORE: 85/100
+The system does not contain explicit state management documentation in the provided specification. Based on the business domain context, the following high-level state aspects can be inferred:
 
-1. Basin Parameter States
-- Manages geological basin-specific parameters
-- Regional Archie parameter sets
-- Formation-specific constants 
+## Data Flow Components
 
-2. Environmental Correction States
-- Borehole condition tracking
-- Temperature/pressure state management
-- Mud system properties
+The state management would likely involve:
 
-## Data Flow Architecture
-IMPORTANCE SCORE: 80/100
+- Environmental correction state tracking between processing stages
+- Preservation of calibration parameters during multi-well analysis
+- Stateful tracking of quality control flags
+- Management of visualization states for log displays
 
-Multiwell Data Handling:
-- Zone-aware state propagation
-- Cross-well parameter synchronization
-- Formation top correlation states
+## Petrophysical Processing State
 
-State Cleanup Rules:
-- Automatic parameter reset between processing zones
-- Tool-specific calibration state cleanup
-- Regional parameter cache invalidation
+The saturation model implementations require managing:
 
-## Display State Management 
-IMPORTANCE SCORE: 75/100
+- Formation parameter states
+- Regional calibration coefficients
+- Model selection criteria states
+- Quality control flags
 
-Log Display States:
-- Track-specific scaling parameters
-- Crossover visualization states
-- Formation marker persistence
+## Log Display State
 
-The state management system focuses primarily on maintaining geological consistency across processing stages while handling complex multi-well scenarios and regional parameter variations.
+The log display renderer maintains:
+
+- Track configuration states
+- Scaling parameters
+- Crossover detection states
+- Depth correlation states
+
+## State Dependencies
+
+Critical state relationships exist between:
+
+- Environmental corrections and quality control flags
+- Formation parameters and saturation model selection
+- Regional calibrations and correction factors
+
+While specific state management implementations are not detailed, the business logic indicates stateful processing requirements for maintaining petrophysical analysis integrity across the workflow components.
 
 $END$
 

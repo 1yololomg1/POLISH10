@@ -6402,6 +6402,11 @@ class IndustryUnitStandardizer:
 class AdvancedPreprocessingApplication:
     """Main application class with advanced preprocessing capabilities"""
     
+    # Performance and memory management constants
+    MAX_ACTIVE_WELLS = 20  # Maximum number of wells that can be loaded simultaneously
+    LARGE_FILE_WARNING_MB = 100  # Warn user for files larger than this
+    MEMORY_WARNING_THRESHOLD = 70  # Warn when system memory usage exceeds this percentage
+    
     def __init__(self):
         # Initialize feature flags first
         if BETA_SYSTEM_AVAILABLE:
@@ -7160,21 +7165,56 @@ class AdvancedPreprocessingApplication:
             dialog.title("Select Columns for Percent to Decimal Conversion")
             dialog.transient(self.root)
             dialog.grab_set()
-            dialog.resizable(False, False)
-            dialog.geometry("500x400")
+            dialog.resizable(True, True)
+            dialog.geometry("600x500")
             
-            # Main frame
+            # Main frame with proper layout
             main_frame = ttk.Frame(dialog, padding=15)
             main_frame.pack(fill='both', expand=True)
             
-            # Instructions label (will be updated if no columns found)
-            instructions_label = ttk.Label(main_frame, text="Select columns to convert from percent (%) to decimal (v/v):", 
+            # Header section with instructions
+            header_frame = ttk.Frame(main_frame)
+            header_frame.pack(fill='x', pady=(0, 10))
+            
+            instructions_label = ttk.Label(header_frame, 
+                     text="Select columns to convert from percent (%) to decimal (v/v):", 
                      font=('TkDefaultFont', 10, 'bold'))
-            instructions_label.pack(anchor='w', pady=(0, 10))
+            instructions_label.pack(anchor='w')
+            
+            help_label = ttk.Label(header_frame, 
+                     text="Columns with % units or fractional family types are pre-selected.", 
+                     font=('TkDefaultFont', 8),
+                     foreground='gray')
+            help_label.pack(anchor='w', pady=(2, 0))
+            
+            # Variables to store checkbox states (defined before use)
+            checkbox_vars = {}
+            columns_added = 0
+            
+            # Selection controls frame
+            select_controls = ttk.Frame(header_frame)
+            select_controls.pack(fill='x', pady=(8, 0))
+            
+            def select_all():
+                for var in checkbox_vars.values():
+                    var.set(True)
+            
+            def deselect_all():
+                for var in checkbox_vars.values():
+                    var.set(False)
+            
+            select_all_btn = ttk.Button(select_controls, text="Select All", command=select_all, width=12)
+            select_all_btn.pack(side='left', padx=(0, 5))
+            
+            deselect_all_btn = ttk.Button(select_controls, text="Deselect All", command=deselect_all, width=12)
+            deselect_all_btn.pack(side='left')
             
             # Create scrollable frame for checkboxes
-            canvas = tk.Canvas(main_frame, highlightthickness=0)
-            scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+            canvas_frame = ttk.Frame(main_frame)
+            canvas_frame.pack(fill='both', expand=True, pady=(0, 10))
+            
+            canvas = tk.Canvas(canvas_frame, highlightthickness=0)
+            scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
             scrollable_frame = ttk.Frame(canvas)
             
             def update_scroll_region(event=None):
@@ -7186,11 +7226,16 @@ class AdvancedPreprocessingApplication:
             canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
             canvas.configure(yscrollcommand=scrollbar.set)
             
-            # Variables to store checkbox states
-            checkbox_vars = {}
-            columns_added = 0
+            # Ensure canvas window width matches canvas width
+            def configure_canvas_width(event=None):
+                canvas_width = canvas.winfo_width()
+                if canvas_width > 1:
+                    canvas_window = canvas.find_all()[0] if canvas.find_all() else None
+                    if canvas_window:
+                        canvas.itemconfig(canvas_window, width=canvas_width)
+            canvas.bind('<Configure>', configure_canvas_width)
             
-            # Create checkboxes for each column
+            # Create checkboxes for each column with better layout
             for col in self.current_data.columns:
                 name_upper = str(col).upper()
                 if name_upper in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
@@ -7205,25 +7250,31 @@ class AdvancedPreprocessingApplication:
                 var = tk.BooleanVar(value=is_percent or is_fractional)
                 checkbox_vars[col] = var
                 
-                # Create frame for each checkbox with additional info
+                # Create frame for each checkbox with better organization
                 row_frame = ttk.Frame(scrollable_frame)
-                row_frame.pack(fill='x', padx=5, pady=2)
+                row_frame.pack(fill='x', padx=8, pady=3)
                 
-                # Checkbox
-                cb = ttk.Checkbutton(row_frame, text=col, variable=var)
-                cb.pack(side='left')
+                # Checkbox with column name
+                cb = ttk.Checkbutton(row_frame, text=col, variable=var, width=25)
+                cb.pack(side='left', anchor='w')
                 
-                # Additional info label
+                # Additional info label with better formatting
                 info_text = []
                 if is_percent:
                     info_text.append("Unit: %")
                 if is_fractional:
-                    info_text.append("Fractional family")
+                    info_text.append("Fractional")
                 
                 if info_text:
-                    info_label = ttk.Label(row_frame, text=f" ({', '.join(info_text)})", 
-                                         foreground='blue', font=('TkDefaultFont', 8))
-                    info_label.pack(side='left', padx=(5, 0))
+                    info_label = ttk.Label(row_frame, text=f"({', '.join(info_text)})", 
+                                         foreground='#0066CC', font=('TkDefaultFont', 8))
+                    info_label.pack(side='left', padx=(8, 0))
+                else:
+                    # Show unit info for non-percent columns
+                    if unit:
+                        unit_label = ttk.Label(row_frame, text=f"Unit: {unit}", 
+                                             foreground='gray', font=('TkDefaultFont', 8))
+                        unit_label.pack(side='left', padx=(8, 0))
                 
                 columns_added += 1
             
@@ -7251,9 +7302,9 @@ class AdvancedPreprocessingApplication:
             scrollable_frame.update_idletasks()
             canvas.configure(scrollregion=canvas.bbox("all"))
             
-            # Buttons frame
+            # Buttons frame with proper layout
             button_frame = ttk.Frame(main_frame)
-            button_frame.pack(fill='x', pady=(15, 0))
+            button_frame.pack(fill='x', pady=(10, 0))
             
             # Convert selected button
             def convert_selected():
@@ -7294,15 +7345,20 @@ class AdvancedPreprocessingApplication:
                 except Exception as e:
                     messagebox.showerror("Conversion Error", f"Error during conversion: {str(e)}")
             
-            convert_btn = ttk.Button(button_frame, text="Convert Selected", command=convert_selected)
+            # Action buttons (right-aligned)
+            action_buttons = ttk.Frame(button_frame)
+            action_buttons.pack(side='right')
+            
+            convert_btn = self.ui.create_button(action_buttons, text="Convert Selected", 
+                                              command=convert_selected, button_type='primary', width=18)
             convert_btn.pack(side='left', padx=(0, 10))
             
             # Disable convert button if no columns available
             if columns_added == 0:
                 convert_btn.config(state='disabled')
             
-            # Cancel button
-            cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy)
+            cancel_btn = self.ui.create_button(action_buttons, text="Cancel", 
+                                             command=dialog.destroy, button_type='secondary', width=12)
             cancel_btn.pack(side='left')
             
             # Center dialog on screen
@@ -8554,22 +8610,26 @@ Your feedback contributes to software quality and reliability.
                                           command=self.browse_file, button_type='secondary', width=20)
         browse_btn.pack(side='right')
         
-        # Create a button frame for Load and Clear buttons
-        button_frame = ttk.Frame(load_content)
-        button_frame.pack(fill='x', pady=15)
+        # Create button frames for logical grouping
+        # Primary actions: file loading
+        primary_actions_frame = ttk.Frame(load_content)
+        primary_actions_frame.pack(fill='x', pady=(10, 5))
         
-        load_btn = self.ui.create_button(button_frame, text="Load & Analyze File",
+        load_btn = self.ui.create_button(primary_actions_frame, text="Load & Analyze File",
                                         command=self.load_file, button_type='success', width=25)
         load_btn.pack(side='left', padx=(0, 15))
         
-        clear_btn = self.ui.create_button(button_frame, text="Clear Data",
+        multi_btn = self.ui.create_button(primary_actions_frame, text="Load Multiple Files",
+                                         command=self.load_multiple_files, button_type='primary', width=25)
+        multi_btn.pack(side='left')
+        
+        # Secondary action: data management (separated for clarity)
+        secondary_actions_frame = ttk.Frame(load_content)
+        secondary_actions_frame.pack(fill='x', pady=(5, 10))
+        
+        clear_btn = self.ui.create_button(secondary_actions_frame, text="Clear Data",
                                          command=self.clear_data, button_type='warning', width=20)
         clear_btn.pack(side='left')
-        
-        # New: Load multiple files (multiwell)
-        multi_btn = self.ui.create_button(button_frame, text="Load Multiple Files",
-                                         command=self.load_multiple_files, button_type='primary', width=25)
-        multi_btn.pack(side='left', padx=(15, 0))
         
         # CRITICAL: Well Information Card for safety
         well_card, well_content = self.ui.create_card(
@@ -8602,25 +8662,25 @@ Your feedback contributes to software quality and reliability.
         # New: Loaded Wells manager
         wells_card, wells_content = self.ui.create_card(
             data_frame, "Loaded Wells",
-            help_text="Manage multiple wells in the session. Set the active well, remove entries, or process all/selected wells."
+            help_text="Manage multiple wells in the session. Set the active well or remove entries. Processing actions are available in the Processing tab."
         )
         wells_card.pack(fill='x', pady=(0, 10))
-        wells_toolbar = ttk.Frame(wells_content)
-        wells_toolbar.pack(fill='x', pady=(5, 5))
+        
+        # Well listbox
         self.well_listbox = tk.Listbox(wells_content, height=6, selectmode='extended')
-        self.well_listbox.pack(fill='x', padx=10, pady=(0, 8))
+        self.well_listbox.pack(fill='x', padx=10, pady=(10, 10))
+        
+        # Well management buttons (separated from processing actions)
+        wells_toolbar = ttk.Frame(wells_content)
+        wells_toolbar.pack(fill='x', pady=(0, 10), padx=10)
+        
         set_active_btn = self.ui.create_button(wells_toolbar, text="Set Active Well",
                                               command=self.on_set_active_well, button_type='secondary', width=20)
         set_active_btn.pack(side='left', padx=(0, 10))
+        
         remove_btn = self.ui.create_button(wells_toolbar, text="Remove Selected",
                                           command=self.on_remove_selected_wells, button_type='warning', width=20)
         remove_btn.pack(side='left')
-        process_all_quick_btn = self.ui.create_button(wells_toolbar, text="Process All Wells",
-                                                     command=self.process_all_wells, button_type='success', width=20)
-        process_all_quick_btn.pack(side='left', padx=(10, 0))
-        process_sel_btn = self.ui.create_button(wells_toolbar, text="Process Selected",
-                                               command=self.process_selected_wells, button_type='primary', width=20)
-        process_sel_btn.pack(side='left', padx=(10, 0))
         
         # Data summary section
         summary_card, summary_content = self.ui.create_card(
@@ -9329,18 +9389,21 @@ Your feedback contributes to software quality and reliability.
         process_frame = ttk.Frame(self.notebook)
         self.notebook.add(process_frame, text="Processing")
         
-        # Left panel - Configuration (no nested scrolling)
+        # Left panel - Configuration with fixed execution section
         config_frame = ttk.Frame(process_frame)
         config_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
 
-        # Make left configuration panel scrollable
-        config_canvas = tk.Canvas(config_frame)
-        config_scrollbar = ttk.Scrollbar(config_frame, orient='vertical', command=config_canvas.yview)
+        # Scrollable configuration area container (only config tabs)
+        config_scrollable_container = ttk.Frame(config_frame)
+        config_scrollable_container.pack(side='top', fill='both', expand=True)
+        
+        config_canvas = tk.Canvas(config_scrollable_container)
+        config_scrollbar = ttk.Scrollbar(config_scrollable_container, orient='vertical', command=config_canvas.yview)
         config_canvas.configure(yscrollcommand=config_scrollbar.set)
         config_scrollbar.pack(side='right', fill='y')
         config_canvas.pack(side='left', fill='both', expand=True)
 
-        # Inner frame that holds all configuration widgets
+        # Inner frame that holds configuration widgets only
         config_inner = ttk.Frame(config_canvas)
         config_canvas.create_window((0, 0), window=config_inner, anchor='nw')
 
@@ -9653,41 +9716,35 @@ Your feedback contributes to software quality and reliability.
                                           command=_apply_cohort_selection, button_type='secondary', width=25)
         apply_btn.pack(anchor='e', padx=10, pady=(0, 10))
         
-        # Processing execution - placed below the notebook; now reachable via scrolling
+        # Fixed execution section (outside scrollable area, always visible at bottom)
         exec_card, exec_content = self.ui.create_card(
-            config_inner, "Execute Processing",
-            help_text="Run processing for the active well or all wells. Use Cross-Well Cohort to enable priors and two-pass refinement."
+            config_frame, "Execute Processing",
+            help_text="Run processing for the active well, selected wells, or all wells. Use Cross-Well Cohort to enable priors and two-pass refinement."
         )
-        exec_card.pack(fill='x', pady=10)
+        exec_card.pack(side='bottom', fill='x', pady=(10, 0))
         
+        # Primary processing actions
         process_btn = self.ui.create_button(exec_content, text="Start Processing (Active Well)",
                                            command=self.start_processing, button_type='primary', width=30)
         process_btn.pack(fill='x', pady=(10, 5), padx=10)
 
+        process_selected_btn = self.ui.create_button(exec_content, text="Process Selected Wells",
+                                                    command=self.process_selected_wells, button_type='success', width=30)
+        process_selected_btn.pack(fill='x', pady=(0, 5), padx=10)
+
         process_all_btn = self.ui.create_button(exec_content, text="Process All Wells",
                                                command=self.process_all_wells, button_type='success', width=30)
-        process_all_btn.pack(fill='x', pady=(0, 5), padx=10)
-
-        cross_summary_btn = self.ui.create_button(exec_content, text="Cross-Well Summary",
-                                                 command=self.show_cross_well_summary, button_type='secondary', width=30)
-        cross_summary_btn.pack(fill='x', pady=(0, 5), padx=10)
-
-        export_all_btn = self.ui.create_button(exec_content, text="Export All Processed (LAS)",
-                                              command=self.export_all_processed, button_type='secondary', width=30)
-        export_all_btn.pack(fill='x', pady=(0, 10), padx=10)
+        process_all_btn.pack(fill='x', pady=(0, 10), padx=10)
         
-        # Add a separator for visual clarity
+        # Add a separator for visual clarity between processing and visualization
         separator = ttk.Separator(exec_content, orient='horizontal')
-        separator.pack(fill='x', pady=20)
+        separator.pack(fill='x', pady=(0, 10))
         
-        # Add quick visualization buttons for unprocessed curves
-        viz_buttons_frame = ttk.Frame(exec_content)
-        viz_buttons_frame.pack(fill='x', pady=(10, 10), padx=10)
+        # Quick visualization actions (grouped together)
+        ttk.Label(exec_content, text="Quick Visualization:", style='Card.TLabel').pack(anchor='w', padx=10, pady=(0, 8))
         
-        ttk.Label(viz_buttons_frame, text="Quick Visualization:", style='Card.TLabel').pack(anchor='w', pady=(0, 8))
-        
-        quick_viz_frame = ttk.Frame(viz_buttons_frame)
-        quick_viz_frame.pack(fill='x')
+        quick_viz_frame = ttk.Frame(exec_content)
+        quick_viz_frame.pack(fill='x', pady=(0, 10), padx=10)
         
         # Button to visualize unprocessed curves
         unprocessed_btn = self.ui.create_button(quick_viz_frame, text="View Unprocessed Curves",
@@ -11836,11 +11893,52 @@ Your feedback contributes to software quality and reliability.
         report_frame = ttk.Frame(self.notebook)
         self.notebook.add(report_frame, text="Report")
         
-        # Report controls - redesigned with logical grouping
+        # Report controls - compact horizontal layout to maximize report display space
         control_frame = ttk.Frame(report_frame)
-        control_frame.pack(side='top', fill='x', padx=10, pady=10)
+        control_frame.pack(side='top', fill='x', padx=10, pady=(10, 5))
 
-        # Tab-level Help button
+        # Compact horizontal button layout (reduced vertical space)
+        buttons_row = ttk.Frame(control_frame)
+        buttons_row.pack(fill='x', pady=(0, 5))
+        
+        # Primary actions (left side)
+        primary_frame = ttk.Frame(buttons_row)
+        primary_frame.pack(side='left', fill='x', expand=True)
+        
+        ttk.Label(primary_frame, text="Primary:", font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 5))
+        generate_btn = self.ui.create_button(primary_frame, text="Generate Report",
+                                            command=self.generate_report, button_type='success', width=18)
+        generate_btn.pack(side='left', padx=(0, 8))
+        
+        export_btn = self.ui.create_button(primary_frame, text="Export Data",
+                                          command=self.export_data, button_type='primary', width=16)
+        export_btn.pack(side='left', padx=(0, 15))
+        
+        # Secondary actions (middle)
+        ttk.Label(primary_frame, text="Secondary:", font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 5))
+        export_all_btn = self.ui.create_button(primary_frame, text="Export All",
+                                               command=self.export_all_processed, button_type='secondary', width=16)
+        export_all_btn.pack(side='left', padx=(0, 8))
+        
+        cross_btn = self.ui.create_button(primary_frame, text="Cross-Well Summary",
+                                         command=self.show_cross_well_summary, button_type='secondary', width=18)
+        cross_btn.pack(side='left', padx=(0, 8))
+        
+        build_priors_btn = self.ui.create_button(primary_frame, text="Build Priors",
+                                                command=self.build_crosswell_priors, button_type='secondary', width=14)
+        build_priors_btn.pack(side='left', padx=(0, 15))
+        
+        # Preview actions (right side)
+        ttk.Label(primary_frame, text="Preview:", font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 5))
+        preview_orig_btn = self.ui.create_button(primary_frame, text="Original LAS",
+                                                command=self.preview_original_las, button_type='secondary', width=16)
+        preview_orig_btn.pack(side='left', padx=(0, 8))
+        
+        preview_proc_btn = self.ui.create_button(primary_frame, text="Processed LAS",
+                                                command=self.preview_processed_las, button_type='secondary', width=16)
+        preview_proc_btn.pack(side='left')
+        
+        # Help button (rightmost)
         def _show_report_help():
             try:
                 from tkinter import Toplevel
@@ -11854,7 +11952,7 @@ Your feedback contributes to software quality and reliability.
                 text = (
                     "Generate a comprehensive processing report for the active well. "
                     "Use Cross-Well Summary to view field-wide statistics across loaded wells. "
-                    "Export Data exports the active well’s processed data; Export All Processed writes LAS for every well."
+                    "Export Data exports the active well's processed data; Export All Processed writes LAS for every well."
                 )
                 lbl = ttk.Label(body, text=text, wraplength=560, justify='left')
                 lbl.pack(fill='x', expand=True)
@@ -11865,51 +11963,10 @@ Your feedback contributes to software quality and reliability.
                 dialog.geometry(f"+{x}+{y}")
             except Exception:
                 pass
-        help_btn = ttk.Button(control_frame, text='Help', command=_show_report_help)
+        help_btn = ttk.Button(buttons_row, text='Help', command=_show_report_help, width=8)
         help_btn.pack(side='right')
         
-        # Group 1: Report Actions
-        report_actions_frame = ttk.Frame(control_frame)
-        report_actions_frame.pack(side='top', fill='x', pady=(0, 10))
-        
-        ttk.Label(report_actions_frame, text="Report Actions:", 
-                 font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 15))
-        
-        generate_btn = self.ui.create_button(report_actions_frame, text="Generate Report",
-                                            command=self.generate_report, button_type='success', width=20)
-        generate_btn.pack(side='left', padx=(0, 15))
-        
-        export_btn = self.ui.create_button(report_actions_frame, text="Export Data",
-                                          command=self.export_data, button_type='primary', width=18)
-        export_btn.pack(side='left')
-
-        # New: Cross-well utilities in Report tab
-        cross_btn = self.ui.create_button(report_actions_frame, text="Cross-Well Summary",
-                                         command=self.show_cross_well_summary, button_type='secondary', width=20)
-        cross_btn.pack(side='left', padx=(15, 0))
-        export_all_btn2 = self.ui.create_button(report_actions_frame, text="Export All Processed",
-                                               command=self.export_all_processed, button_type='secondary', width=20)
-        export_all_btn2.pack(side='left', padx=(10, 0))
-        build_priors_btn = self.ui.create_button(report_actions_frame, text="Build Priors",
-                                                command=self.build_crosswell_priors, button_type='secondary', width=14)
-        build_priors_btn.pack(side='left', padx=(10, 0))
-        
-        # Group 2: LAS Preview Actions
-        preview_actions_frame = ttk.Frame(control_frame)
-        preview_actions_frame.pack(side='top', fill='x')
-        
-        ttk.Label(preview_actions_frame, text="LAS Preview Actions:", 
-                 font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 15))
-        
-        preview_orig_btn = self.ui.create_button(preview_actions_frame, text="Preview Original LAS",
-                                                command=self.preview_original_las, button_type='secondary', width=22)
-        preview_orig_btn.pack(side='left', padx=(0, 15))
-        
-        preview_proc_btn = self.ui.create_button(preview_actions_frame, text="Preview Processed LAS",
-                                                command=self.preview_processed_las, button_type='secondary', width=22)
-        preview_proc_btn.pack(side='left')
-        
-        # Create notebook for report tabs
+        # Create notebook for report tabs - maximize space for report content
         report_notebook = ttk.Notebook(report_frame)
         report_notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         
@@ -11917,27 +11974,43 @@ Your feedback contributes to software quality and reliability.
         report_tab = ttk.Frame(report_notebook)
         report_notebook.add(report_tab, text="Processing Report")
         
-        self.report_text = tk.Text(report_tab, font=('Consolas', 10), wrap='word')
-        report_scroll_v = ttk.Scrollbar(report_tab, orient='vertical', command=self.report_text.yview)
-        report_scroll_h = ttk.Scrollbar(report_tab, orient='horizontal', command=self.report_text.xview)
+        # Create proper scrolling container for report text
+        report_container = ttk.Frame(report_tab)
+        report_container.pack(fill='both', expand=True)
+        
+        # Text widget with proper scrolling (wrap='none' for better scrolling control)
+        self.report_text = tk.Text(report_container, font=('Consolas', 10), wrap='none', state='normal')
+        report_scroll_v = ttk.Scrollbar(report_container, orient='vertical', command=self.report_text.yview)
+        report_scroll_h = ttk.Scrollbar(report_container, orient='horizontal', command=self.report_text.xview)
         self.report_text.configure(yscrollcommand=report_scroll_v.set, xscrollcommand=report_scroll_h.set)
         
-        self.report_text.pack(side='left', fill='both', expand=True)
-        report_scroll_v.pack(side='right', fill='y')
-        report_scroll_h.pack(side='bottom', fill='x')
+        # Pack with proper layout for scrolling
+        self.report_text.grid(row=0, column=0, sticky='nsew')
+        report_scroll_v.grid(row=0, column=1, sticky='ns')
+        report_scroll_h.grid(row=1, column=0, sticky='ew')
+        
+        # Configure grid weights for proper expansion
+        report_container.grid_rowconfigure(0, weight=1)
+        report_container.grid_columnconfigure(0, weight=1)
         
         # Original LAS preview tab
         original_las_preview_tab = ttk.Frame(report_notebook)
         report_notebook.add(original_las_preview_tab, text="Original LAS Preview")
         
-        self.original_las_preview_text = tk.Text(original_las_preview_tab, font=('Consolas', 10), wrap='none', state='disabled', selectbackground='#F0F0F0', selectforeground='black')
-        original_las_preview_scroll_y = ttk.Scrollbar(original_las_preview_tab, orient='vertical', command=self.original_las_preview_text.yview)
-        original_las_preview_scroll_x = ttk.Scrollbar(original_las_preview_tab, orient='horizontal', command=self.original_las_preview_text.xview)
+        original_container = ttk.Frame(original_las_preview_tab)
+        original_container.pack(fill='both', expand=True)
+        
+        self.original_las_preview_text = tk.Text(original_container, font=('Consolas', 10), wrap='none', state='disabled', selectbackground='#F0F0F0', selectforeground='black')
+        original_las_preview_scroll_y = ttk.Scrollbar(original_container, orient='vertical', command=self.original_las_preview_text.yview)
+        original_las_preview_scroll_x = ttk.Scrollbar(original_container, orient='horizontal', command=self.original_las_preview_text.xview)
         self.original_las_preview_text.configure(yscrollcommand=original_las_preview_scroll_y.set, xscrollcommand=original_las_preview_scroll_x.set)
         
-        self.original_las_preview_text.pack(side='top', fill='both', expand=True)
-        original_las_preview_scroll_y.pack(side='right', fill='y')
-        original_las_preview_scroll_x.pack(side='bottom', fill='x')
+        self.original_las_preview_text.grid(row=0, column=0, sticky='nsew')
+        original_las_preview_scroll_y.grid(row=0, column=1, sticky='ns')
+        original_las_preview_scroll_x.grid(row=1, column=0, sticky='ew')
+        
+        original_container.grid_rowconfigure(0, weight=1)
+        original_container.grid_columnconfigure(0, weight=1)
         
         # Disable copy functionality for original preview
         self.original_las_preview_text.bind("<Control-c>", lambda e: "break")
@@ -11949,14 +12022,20 @@ Your feedback contributes to software quality and reliability.
         processed_las_preview_tab = ttk.Frame(report_notebook)
         report_notebook.add(processed_las_preview_tab, text="Processed LAS Preview")
         
-        self.processed_las_preview_text = tk.Text(processed_las_preview_tab, font=('Consolas', 10), wrap='none', state='disabled', selectbackground='#F0F0F0', selectforeground='black')
-        processed_las_preview_scroll_y = ttk.Scrollbar(processed_las_preview_tab, orient='vertical', command=self.processed_las_preview_text.yview)
-        processed_las_preview_scroll_x = ttk.Scrollbar(processed_las_preview_tab, orient='horizontal', command=self.processed_las_preview_text.xview)
+        processed_container = ttk.Frame(processed_las_preview_tab)
+        processed_container.pack(fill='both', expand=True)
+        
+        self.processed_las_preview_text = tk.Text(processed_container, font=('Consolas', 10), wrap='none', state='disabled', selectbackground='#F0F0F0', selectforeground='black')
+        processed_las_preview_scroll_y = ttk.Scrollbar(processed_container, orient='vertical', command=self.processed_las_preview_text.yview)
+        processed_las_preview_scroll_x = ttk.Scrollbar(processed_container, orient='horizontal', command=self.processed_las_preview_text.xview)
         self.processed_las_preview_text.configure(yscrollcommand=processed_las_preview_scroll_y.set, xscrollcommand=processed_las_preview_scroll_x.set)
         
-        self.processed_las_preview_text.pack(side='top', fill='both', expand=True)
-        processed_las_preview_scroll_y.pack(side='right', fill='y')
-        processed_las_preview_scroll_x.pack(side='bottom', fill='x')
+        self.processed_las_preview_text.grid(row=0, column=0, sticky='nsew')
+        processed_las_preview_scroll_y.grid(row=0, column=1, sticky='ns')
+        processed_las_preview_scroll_x.grid(row=1, column=0, sticky='ew')
+        
+        processed_container.grid_rowconfigure(0, weight=1)
+        processed_container.grid_columnconfigure(0, weight=1)
         
         # Disable copy functionality for processed preview
         self.processed_las_preview_text.bind("<Control-c>", lambda e: "break")
@@ -11975,11 +12054,14 @@ Your feedback contributes to software quality and reliability.
                 return
             # Build report from current application state
             report_text = self.create_comprehensive_report()
-            # Update UI text widget
+            # Update UI text widget - keep normal state for scrolling
             self.report_text.config(state='normal')
             self.report_text.delete('1.0', 'end')
             self.report_text.insert('1.0', report_text)
-            self.report_text.config(state='disabled')
+            # Keep in normal state so scrolling works properly
+            self.report_text.config(state='normal')
+            # Scroll to top
+            self.report_text.see('1.0')
             try:
                 self.status_label.config(text="Report generated")
             except Exception:
@@ -12506,6 +12588,188 @@ This ensures consistent data interpretation and fixes depth validation issues.
         if filename:
             self.file_path_var.set(filename)
     
+    # ============================================================================
+    # MEMORY MANAGEMENT AND PERFORMANCE METHODS
+    # ============================================================================
+    
+    def check_system_memory(self) -> tuple[float, bool]:
+        """Check current system memory usage.
+        
+        Returns:
+            tuple: (memory_percent, is_critical) where is_critical=True if above threshold
+        """
+        try:
+            if PSUTIL_AVAILABLE:
+                mem = psutil.virtual_memory()
+                return mem.percent, mem.percent >= self.MEMORY_WARNING_THRESHOLD
+            else:
+                # If psutil not available, return safe values
+                return 0.0, False
+        except Exception:
+            return 0.0, False
+    
+    def warn_if_memory_high(self) -> bool:
+        """Check memory and warn user if high. Returns False if user wants to abort.
+        
+        Returns:
+            bool: True to continue, False to abort operation
+        """
+        mem_percent, is_critical = self.check_system_memory()
+        
+        if is_critical:
+            result = messagebox.askyesno(
+                "Memory Warning",
+                f"System memory usage is at {mem_percent:.1f}%.\n\n"
+                f"Loading more data may cause slowdowns or crashes.\n\n"
+                f"Continue anyway?",
+                icon='warning'
+            )
+            return result
+        
+        return True
+    
+    def check_well_count_limit(self) -> bool:
+        """Check if well count limit has been reached.
+        
+        Returns:
+            bool: True if under limit, False if at/over limit
+        """
+        current_count = len(self.well_datasets)
+        
+        if current_count >= self.MAX_ACTIVE_WELLS:
+            messagebox.showerror(
+                "Well Limit Reached",
+                f"Maximum of {self.MAX_ACTIVE_WELLS} wells can be loaded simultaneously.\n\n"
+                f"Current wells loaded: {current_count}\n\n"
+                f"Please unload some wells before loading more.\n"
+                f"(Use the 'Unload Well' button in the well list)"
+            )
+            return False
+        
+        return True
+    
+    def check_file_size_warning(self, filepath: str) -> bool:
+        """Warn user if file is large. Returns False if user wants to abort.
+        
+        Args:
+            filepath: Path to file to check
+            
+        Returns:
+            bool: True to continue, False to abort
+        """
+        try:
+            size_bytes = os.path.getsize(filepath)
+            size_mb = size_bytes / (1024 * 1024)
+            
+            if size_mb > self.LARGE_FILE_WARNING_MB:
+                estimated_memory_mb = size_mb * 3  # Rough estimate: 3x file size
+                
+                result = messagebox.askyesno(
+                    "Large File Warning",
+                    f"File size: {size_mb:.1f} MB\n"
+                    f"Estimated memory usage: ~{estimated_memory_mb:.0f} MB\n\n"
+                    f"Large files may:\n"
+                    f"  • Take longer to load\n"
+                    f"  • Use significant memory\n"
+                    f"  • Slow down processing\n\n"
+                    f"Continue loading this file?",
+                    icon='warning'
+                )
+                return result
+            
+            return True
+        except Exception:
+            # If we can't determine size, allow load
+            return True
+    
+    def unload_well(self, well_id: str) -> None:
+        """Remove a well from memory to free up resources.
+        
+        Args:
+            well_id: ID of well to unload
+        """
+        try:
+            if well_id not in self.well_datasets:
+                messagebox.showwarning("Warning", f"Well '{well_id}' not found in loaded wells.")
+                return
+            
+            # Confirm with user
+            well_name = self.well_datasets[well_id].get('well_info', {}).get('well_name', well_id)
+            result = messagebox.askyesno(
+                "Confirm Unload",
+                f"Unload well: {well_name}?\n\n"
+                f"Any unsaved changes will be lost.\n"
+                f"The well can be reloaded from the original file."
+            )
+            
+            if not result:
+                return
+            
+            # If this is the active well, clear current state
+            if self.active_well_id == well_id:
+                self.current_data = None
+                self.processed_data = None
+                self.processing_results = {}
+                self.curve_info = {}
+                self.active_well_id = None
+                self.file_path_var.set("")
+                
+                # Update UI
+                self.update_data_display()
+                self.update_curve_options()
+            
+            # Remove from datasets
+            del self.well_datasets[well_id]
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            # Update well list display
+            self.update_well_list_display()
+            
+            # Show success message with memory info
+            mem_percent, _ = self.check_system_memory()
+            mem_info = f"\nCurrent memory usage: {mem_percent:.1f}%" if PSUTIL_AVAILABLE else ""
+            
+            messagebox.showinfo(
+                "Well Unloaded",
+                f"Successfully unloaded: {well_name}\n"
+                f"Remaining wells: {len(self.well_datasets)}{mem_info}"
+            )
+            
+            self.log_processing(f"Unloaded well: {well_id}")
+            
+        except Exception as e:
+            messagebox.showerror("Unload Error", f"Failed to unload well: {str(e)}")
+            self.log_processing(f"Error unloading well {well_id}: {e}")
+    
+    def get_memory_usage_summary(self) -> str:
+        """Get a formatted summary of current memory usage.
+        
+        Returns:
+            str: Formatted memory usage summary
+        """
+        try:
+            if not PSUTIL_AVAILABLE:
+                return "Memory monitoring unavailable (psutil not installed)"
+            
+            mem = psutil.virtual_memory()
+            process = psutil.Process()
+            process_mem_mb = process.memory_info().rss / (1024 * 1024)
+            
+            summary = f"System Memory: {mem.percent:.1f}% ({mem.used / (1024**3):.1f} GB / {mem.total / (1024**3):.1f} GB)\n"
+            summary += f"This App: {process_mem_mb:.1f} MB\n"
+            summary += f"Wells Loaded: {len(self.well_datasets)} / {self.MAX_ACTIVE_WELLS} max"
+            
+            return summary
+        except Exception as e:
+            return f"Error getting memory info: {e}"
+    
+    # ============================================================================
+    # FILE LOADING (with memory and limit checks)
+    # ============================================================================
+    
     def load_file(self):
         """Load and analyze data file with analytics and security validation"""
         filepath = self.file_path_var.get()
@@ -12537,6 +12801,18 @@ This ensures consistent data interpretation and fixes depth validation issues.
         
         # Use validated path
         filepath = str(validated_path)
+        
+        # PERFORMANCE CHECK 1: Check well count limit
+        if not self.check_well_count_limit():
+            return
+        
+        # PERFORMANCE CHECK 2: Check system memory
+        if not self.warn_if_memory_high():
+            return
+        
+        # PERFORMANCE CHECK 3: Warn for large files
+        if not self.check_file_size_warning(filepath):
+            return
         
         try:
             # Clear existing data before loading new file with unsaved data check
@@ -12647,7 +12923,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 self.beta_analytics.track_error("file_load_failed", str(e), filepath)
             
             messagebox.showerror("File Load Error", f"Failed to load file: {e}")
-            messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
             self.status_label.config(text="Failed to load file")
             self.progress_bar['value'] = 0
     
@@ -17082,6 +17357,20 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             self.fig.tight_layout()
             
+            # Create canvas and display in viz_content
+            if hasattr(self, 'viz_content') and self.viz_content:
+                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
+                self.canvas.draw()
+                
+                # Create navigation toolbar
+                if NavigationToolbar2Tk is not None:
+                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                    toolbar.update()
+                    toolbar.pack(side='top', fill='x')
+                
+                # Pack canvas below toolbar
+                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
+            
         except Exception as e:
             messagebox.showerror("Single Curve Plot Error", f"Failed to create single curve plot: {str(e)}")
             self.log_processing(f"Error in plot_single_curve: {e}")
@@ -17201,6 +17490,20 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Apply proper spacing
             self.fig.tight_layout()
             self.fig.subplots_adjust(top=0.93, wspace=0.30)
+            
+            # Create canvas and display in viz_content
+            if hasattr(self, 'viz_content') and self.viz_content:
+                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
+                self.canvas.draw()
+                
+                # Create navigation toolbar
+                if NavigationToolbar2Tk is not None:
+                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                    toolbar.update()
+                    toolbar.pack(side='top', fill='x')
+                
+                # Pack canvas below toolbar
+                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
             
         except Exception as e:
             messagebox.showerror("Single Curve Comparison Error", f"Failed to create comparison plot: {str(e)}")
@@ -17755,7 +18058,11 @@ This ensures consistent data interpretation and fixes depth validation issues.
     def run(self):
         """Run the application"""
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        except KeyboardInterrupt:
+            # Handle Ctrl+C gracefully - exit immediately without confirmation
+            self.root.destroy()
     
     def on_closing(self):
         """Handle application closing"""
@@ -17778,6 +18085,10 @@ def main():
         app = AdvancedPreprocessingApplication()
         app.run()
         
+    except KeyboardInterrupt:
+        # Handle Ctrl+C gracefully - exit silently
+        print("\nApplication interrupted by user. Exiting...")
+        sys.exit(0)
     except Exception as e:
         messagebox.showerror("Startup Error", f"Failed to start application:\n{str(e)}")
 

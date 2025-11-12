@@ -1,5 +1,5 @@
 ---
-description: Technical architecture specification for petrophysical data visualization components and rendering systems
+description: Technical documentation for wireline log visualization system architecture and figure management
 ---
 
 # === USER INSTRUCTIONS ===
@@ -30,32 +30,44 @@ $END$
 
 # visualization-architecture
 
-The visualization system architecture consists of a specialized log display renderer implementing industry-standard petrophysical visualization patterns.
+The visualization architecture implements industry-standard wireline log display conventions with specialized components:
 
-Core Components:
+## Core Display Architecture
+`ui/log_display_renderer.py` handles the primary 4-track log visualization system:
 
-1. Log Display Renderer (`ui/log_display_renderer.py`)
-Importance Score: 80/100
-- Four-track standard layout following SPWLA display specifications 
-- Track configuration system for lithology, resistivity, porosity, and auxiliary data
-- Crossover shading patterns for hydrocarbon detection zones
-- Formation tops and marker bed visualization overlays
+1. Track Layout Management
+- Four-track industry standard configuration
+- Service company compatible scaling and spacing
+- Automatic depth-based track configuration
 
-Key Visualization Features:
-- Industry-compliant track layouts matching service company standards
-- Domain-specific curve scaling and normalization
-- Lithology pattern fills based on formation classifications
-- Depth-based marker synchronization
-- Multi-well correlation display support
+2. Industry Color Schemes
+- Service company standardized color palettes
+- Crossover shading for gas detection zones
+- Lithology-specific fill patterns
 
-Business Rules:
-- Track layouts must conform to SPWLA standards
-- Crossover patterns follow industry color conventions
-- Formation markers require geological validation
-- Scale ranges adapt to regional norms
-- Depth alignment maintains geological integrity
+3. Curve Rendering
+- Automated curve placement logic
+- Depth correlation alignment
+- Track-specific scaling optimization
 
-The visualization system focuses heavily on petrophysical industry standards and conventional log display formats while supporting advanced features like crossover analysis and formation correlation.
+## Specialized Visual Elements
+
+1. Log Track Configuration
+- Standard oil industry 4-track layout
+- Service company specification compliance
+- Formation correlation indicators
+
+2. Visualization Patterns
+- Gas detection crossover highlighting
+- Depth-based correlation markers
+- Quality control visual indicators
+
+The visualization system focuses on professional wireline log display standards with particular emphasis on service company compatibility and industry-standard track layouts.
+
+Importance Score: 75/100
+- Core business visualization requirements
+- Industry-standard display conventions
+- Professional log visualization compliance
 
 $END$
 

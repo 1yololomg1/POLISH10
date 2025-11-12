@@ -1,5 +1,5 @@
 ---
-description: Validation algorithms for petrophysical data processing, quality control, and error classification
+description: Validation specifications for wireline log processing and quality control systems in petrophysical analysis
 ---
 
 # === USER INSTRUCTIONS ===
@@ -45,49 +45,52 @@ $END$
 
 # validation-algorithms
 
-## Core Validation Components
+## Depth Validation System
+Core validation logic integrates geological context with tool-specific data quality checks:
 
-### Depth-Based Validation
-- Implements tool-specific correction factors from major service companies
-- Quality control flagging system based on borehole conditions
-- Depth-based gap filling rules aligned with industry practices
+1. Environmental Correction Validation
+- Borehole size validation against tool specifications
+- Temperature drift validation using Arp's formula thresholds
+- Quality flagging based on hole conditions and mudcake effects
+- Tool-specific calibration factor verification
 
-### Formation Property Validation
-- Lithology density range validation against core measurements
-- Formation-specific porosity quality thresholds per SPE standards
-- Regional Archie parameter validation for geological basins
+2. Regional Parameter Validation
+- Formation-specific Archie parameter bounds checking
+- Basin calibration consistency validation
+- Lithology-dependent correction factor ranges
+- Gap filling threshold validation based on geological zones
 
-### Environmental Correction Validation
-- Borehole size effects compensation validation
-- Temperature-based resistivity correction verification using Arp's Formula
-- Mudcake impact validation checks
+3. Quality Control Mechanisms
+The system implements industry-standard quality checks:
 
-### Quality Control Systems
+- Tool-specific environmental corrections validation
+- Formation evaluation parameter verification
+- Regional calibration consistency checks
+- Depth-based data quality assessment
+
+## Validation Architecture
+Located in core/environmental_corrections.py:
+
+1. Quality Flag Generation:
+- Automated detection of invalid tool responses
+- Environmental condition verification
+- Calibration factor range checking
+- Depth alignment validation
+
+2. Validation Thresholds:
+- Formation-specific parameter bounds
+- Tool-specific calibration ranges
+- Environmental correction limits
+- Regional parameter constraints
+
+3. Feedback Systems:
+- Quality control indicators
+- Validation status reporting
+- Correction factor verification
+- Parameter bound checking
+
 Importance Score: 85/100
-
-Located in `core/environmental_corrections.py`:
-- Tool-specific validation algorithms from service companies
-- Quality control flag generation based on:
-  - Borehole conditions
-  - Environmental corrections
-  - Formation characteristics
-
-### Saturation Model Validation
-Importance Score: 90/100
-
-Located in `petrophysics/saturation_models.py`:
-- Automatic model selection validation based on shale volume
-- Formation-specific parameter validation logic
-- Correction factor verification for geological scenarios
-
-### Constant Validation
-Importance Score: 95/100
-
-Located in `petrophysics/constants.py`:
-- Industry-standard threshold validation
-- Lithology density range verification
-- Porosity quality threshold checks
-- Regional parameter validation
+The validation system implements sophisticated domain-specific quality control mechanisms critical for accurate petrophysical analysis.
 
 $END$
 

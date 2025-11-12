@@ -1,5 +1,5 @@
 ---
-description: Specifications for well data models, LAS file structures, and validation rules for petrophysical data
+description: Documents well data structures and models for petrophysical analysis, focusing on log headers, depth validation, and dataset schemas
 ---
 
 # === USER INSTRUCTIONS ===
@@ -49,32 +49,30 @@ $END$
 
 # well-data-models
 
-## LAS Header Information
-IMPORTANCE SCORE: 95/100
-- Industry-standard LAS header parsing based on petrophysical requirements
-- Validated parameter ranges for formation tops and well trajectory data
-- Regional basin-specific validation rules for header fields
+The specification does not contain explicit details about well data models. However, based on the technical summary and overall project context, the following high-level structure can be inferred:
 
-## DepthValidationResult Model
-IMPORTANCE SCORE: 85/100
-- Data class encapsulating depth validation logic for well logs
-- Enforces depth increment consistency checks
-- Validates against formation top markers
-- Flags inconsistent depth ranges
+Core Well Data Components:
 
-## Well Dataset Schemas
-IMPORTANCE SCORE: 90/100
-- Comprehensive well data structures aligned with industry standards
-- Formation-specific petrophysical parameters mapping
-- Regional Archie parameters schema definitions
-- Tool-specific correction factor mappings
-- Validated lithology density ranges
+1. LAS Header Information
+- Storage of well log file headers
+- Capture of key well metadata
+- Management of curve information blocks
+- Parameter section handling
 
-Core Business Rules:
-1. All depth measurements must maintain consistent step sizes within formations
-2. Formation tops must align with well log depth ranges
-3. Regional basin parameters override default petrophysical constants
-4. Tool-specific correction factors must match service company specifications
+2. DepthValidationResult Structure 
+- Validation of depth-based measurements
+- Quality control flags for depth data
+- Correlation between different depth references
+- Handling of depth shifts and corrections
+
+3. Well Datasets Schema
+- Mapping between raw logs and processed data
+- Organization of multi-well information
+- Linking of related geological and petrophysical data
+- Cross-referencing capabilities
+
+Importance Score: 75/100
+The well data models provide critical structure for organizing and validating petrophysical measurements while maintaining industry-standard formatting and relationships.
 
 $END$
 
