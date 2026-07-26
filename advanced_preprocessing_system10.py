@@ -1,5 +1,49 @@
 # === CONSTANTS FOR DUPLICATED LITERALS ===
 OHM_M_UNITS = ['OHMM', 'ohm.m', 'OHM-M']
+
+# === ERROR MESSAGE CONSTANTS ===
+ERROR_TITLE_MEMORY = "Memory Error"
+ERROR_TITLE_DATA = "Data Error"
+ERROR_TITLE_FILE = "File Error"
+ERROR_TITLE_PROCESSING = "Processing Error"
+ERROR_TITLE_SECURITY = "Security Error"
+ERROR_TITLE_VISUALIZATION = "Visualization Error"
+
+# === UI CONSTANTS ===
+FONT_DEFAULT = "Arial"
+FONT_SIZE_DEFAULT = 9
+FONT_SIZE_HEADING = 11
+FONT_SIZE_LARGE = 12
+
+# === UI STRING CONSTANTS ===
+LABEL_DEPTH_M = "Depth (m)"
+LABEL_PROCESSED_DATA = "Processed Data"
+LABEL_ORIGINAL_DATA = "Original Data"
+LABEL_MISSING_DATA = "Missing Data"
+LABEL_SIGNIFICANT_CHANGES = "Significant Changes"
+LABEL_OFFSET_POINTS = "Offset Points"
+LABEL_NUMBER_OF_CURVES = "Number of Curves"
+LABEL_UPPER_RIGHT = "Upper Right"
+LABEL_UPPER_LEFT = "Upper Left"
+
+# === PROCESSING THRESHOLD CONSTANTS ===
+GAP_THRESHOLD_GEOLOGICAL = 200  # Points for geological gap classification
+GAP_THRESHOLD_LARGE = 500  # Points for large gap threshold (default)
+GAP_THRESHOLD_MAX = 1000  # Maximum gap size for processing
+MEMORY_LIMIT_DEFAULT_MB = 2048  # Default memory limit in MB
+QUALITY_THRESHOLD_LOW = 0.5
+QUALITY_THRESHOLD_MEDIUM = 0.7
+QUALITY_THRESHOLD_HIGH = 0.9
+
+# === UI EVENT CONSTANTS ===
+EVENT_CONFIGURE = "<Configure>"
+EVENT_MOUSEWHEEL = "<MouseWheel>"
+EVENT_SHIFT_MOUSEWHEEL = "<Shift-MouseWheel>"
+
+# === UI DIALOG CONSTANTS ===
+DIALOG_SELECT_ALL = "Select All"
+DIALOG_DESELECT_ALL = "Deselect All"
+DIALOG_ROOT_WINDOW = "root"
 # ===== COPY MODULE IMPORT (auto-inserted to fix NameError) =====
 import copy
 # ===== PSUTIL MODULE AVAILABILITY CHECK (auto-inserted to fix NameError) =====
@@ -38,7 +82,7 @@ ARCHITECTURE OVERVIEW:
 MAIN CLASSES AND RESPONSIBILITIES
 - AdvancedPreprocessingApplication: Tk application root; orchestrates UI, data load, processing, visualization, reports.
 - PetrophysicalButtons: Centralized UI component factory for consistent styling.
-- ComprehensiveMnemonicLibrary: Curve identification, metadata, and parameters.
+- CurveIdentificationEngine: Unified curve identification, mnemonic database, and metadata.
 - AdvancedGapFiller: Gap detection and filling (linear, spline, GP, kriging, polynomial, multi-curve).
 - AdvancedSignalProcessor: Denoising and smoothing operations.
 - ScaleAwareProcessor: Scale-aware processing for log-normal/bounded/normal/discrete curves.
@@ -74,6 +118,12 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Configure seaborn for professional well logging visualizations
+sns.set_style("whitegrid")
+sns.set_palette("husl")
+sns.set_context("notebook", font_scale=1.1)
 try:
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 except ImportError:
@@ -84,7 +134,10 @@ except ImportError:
     except ImportError:
         NavigationToolbar2Tk = None  # Fallback: handle missing toolbar gracefully
 from matplotlib.figure import Figure
-from mpl_toolkits.mplot3d import Axes3D  # Import 3D toolkit at top level
+try:
+    from mpl_toolkits.mplot3d import Axes3D  # Optional 3D toolkit
+except Exception:
+    Axes3D = None
 import threading
 import time
 import os
@@ -93,7 +146,7 @@ import gc
 import random
 import json
 from datetime import datetime
-
+from pathlib import Path
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Callable
@@ -133,12 +186,70 @@ class SafeFileHandler:
     
     Enhanced with security validation functions for path traversal protection
     and file size limits.
+    
+    Debug logging can be enabled for development/debugging purposes via
+    enable_debug_mode() method. When disabled (default), all methods fail
+    silently as designed for security-critical operations.
     """
 
     # Security constants
     MAX_FILE_SIZE_MB = 500.0  # Maximum file size in MB
-    ALLOWED_READ_EXTENSIONS = ['.las', '.csv', '.xlsx', '.xls']
+    ALLOWED_READ_EXTENSIONS = ['.las', '.csv', '.xlsx', '.xls', '.dlis', '.lis']
     ALLOWED_WRITE_EXTENSIONS = ['.las', '.csv', '.xlsx']
+    
+    # Debug mode flag (disabled by default for production security)
+    _DEBUG_MODE = False
+    _DEBUG_LOGGER = None  # Optional logger function (e.g., app.log_processing)
+    
+    @classmethod
+    def enable_debug_mode(cls, logger_func=None):
+        """Enable debug logging for SafeFileHandler operations.
+        
+        Args:
+            logger_func: Optional logging function (e.g., app.log_processing).
+                        If None, uses Python's logging module.
+        """
+        cls._DEBUG_MODE = True
+        cls._DEBUG_LOGGER = logger_func
+    
+    @classmethod
+    def disable_debug_mode(cls):
+        """Disable debug logging (default production behavior)."""
+        cls._DEBUG_MODE = False
+        cls._DEBUG_LOGGER = None
+    
+    @classmethod
+    def _debug_log(cls, message: str, category: str = "SafeFileHandler"):
+        """Internal debug logging method.
+        
+        Only logs when debug mode is enabled. Does not expose sensitive
+        path information or security details.
+        
+        Args:
+            message: Log message
+            category: Log category/prefix
+        """
+        if not cls._DEBUG_MODE:
+            return
+        
+        log_msg = f"[{category}] {message}"
+        
+        # Use provided logger function if available
+        if cls._DEBUG_LOGGER:
+            try:
+                cls._DEBUG_LOGGER(log_msg)
+                return
+            except Exception:
+                # Logger failed - fall through to standard logging
+                pass
+        
+        # Fallback to Python logging module
+        try:
+            import logging
+            logging.debug(log_msg)
+        except Exception:
+            # Logging not available - silently ignore (fail-safe)
+            pass
 
     @staticmethod
     def validate_file_path(filepath: str, allowed_dir: str = None) -> Optional["Path"]:
@@ -159,6 +270,10 @@ class SafeFileHandler:
             
             # Check if path exists
             if not path.exists():
+                SafeFileHandler._debug_log(
+                    f"Path validation failed: path does not exist (sanitized: {SafeFileHandler.sanitize_path_for_display(str(path))})",
+                    "PathValidation"
+                )
                 return None
             
             # If allowed_dir specified, ensure path is within it (for export operations)
@@ -169,11 +284,19 @@ class SafeFileHandler:
                     path.relative_to(allowed)
                 except ValueError:
                     # Path is outside allowed directory - security violation
+                    SafeFileHandler._debug_log(
+                        f"Security violation: path outside allowed directory (sanitized: {SafeFileHandler.sanitize_path_for_display(str(path))})",
+                        "SecurityViolation"
+                    )
                     return None
             
             return path
-        except Exception:
+        except Exception as e:
             # Any exception during path validation is a security concern
+            SafeFileHandler._debug_log(
+                f"Path validation exception: {type(e).__name__} (sanitized path: {SafeFileHandler.sanitize_path_for_display(str(filepath))})",
+                "PathValidationError"
+            )
             return None
     
     @staticmethod
@@ -192,12 +315,28 @@ class SafeFileHandler:
                 max_size_mb = SafeFileHandler.MAX_FILE_SIZE_MB
             
             if not os.path.exists(filepath):
+                SafeFileHandler._debug_log(
+                    f"File size validation failed: file does not exist (sanitized: {SafeFileHandler.sanitize_path_for_display(filepath)})",
+                    "FileSizeValidation"
+                )
                 return False
             
             size_mb = os.path.getsize(filepath) / (1024 * 1024)
-            return size_mb <= max_size_mb
-        except Exception:
+            is_valid = size_mb <= max_size_mb
+            
+            if not is_valid:
+                SafeFileHandler._debug_log(
+                    f"File size validation failed: {size_mb:.2f}MB > {max_size_mb:.2f}MB (sanitized: {SafeFileHandler.sanitize_path_for_display(filepath)})",
+                    "FileSizeValidation"
+                )
+            
+            return is_valid
+        except Exception as e:
             # If we can't determine size, be conservative
+            SafeFileHandler._debug_log(
+                f"File size validation exception: {type(e).__name__} (sanitized: {SafeFileHandler.sanitize_path_for_display(filepath)})",
+                "FileSizeValidationError"
+            )
             return False
     
     @staticmethod
@@ -227,6 +366,10 @@ class SafeFileHandler:
             
             # Check exact match
             if ext not in allowed_extensions:
+                SafeFileHandler._debug_log(
+                    f"Extension validation failed: '{ext}' not in allowed list {allowed_extensions} (mode: {mode}, sanitized: {SafeFileHandler.sanitize_path_for_display(filepath)})",
+                    "ExtensionValidation"
+                )
                 return False
             
             # Check for double extensions (security concern: file.txt.las)
@@ -234,10 +377,18 @@ class SafeFileHandler:
             stem_ext = Path(path.stem).suffix.lower()
             if stem_ext and stem_ext in ['.txt', '.bak', '.tmp', '.old']:
                 # Suspicious: has a hidden extension
+                SafeFileHandler._debug_log(
+                    f"Security violation: suspicious double extension detected '{stem_ext}' + '{ext}' (sanitized: {SafeFileHandler.sanitize_path_for_display(filepath)})",
+                    "SecurityViolation"
+                )
                 return False
             
             return True
-        except Exception:
+        except Exception as e:
+            SafeFileHandler._debug_log(
+                f"Extension validation exception: {type(e).__name__} (sanitized: {SafeFileHandler.sanitize_path_for_display(filepath)})",
+                "ExtensionValidationError"
+            )
             return False
     
     @staticmethod
@@ -257,16 +408,34 @@ class SafeFileHandler:
                 return str(path)
             # Show only last two levels
             return f".../{path.parent.name}/{path.name}"
-        except Exception:
+        except Exception as e:
+            # Path sanitization failure - log in debug mode only
+            SafeFileHandler._debug_log(
+                f"Path sanitization exception: {type(e).__name__}",
+                "PathSanitization"
+            )
             return "..."
 
     @staticmethod
     def safe_write_json(filepath: str, data: Any) -> bool:
+        """Safely write JSON data to file.
+        
+        Args:
+            filepath: Path to JSON file
+            data: Data to write (must be JSON serializable)
+            
+        Returns:
+            True if successful, False otherwise
+        """
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2, default=str)
             return True
-        except Exception:
+        except Exception as e:
+            SafeFileHandler._debug_log(
+                f"JSON write failed: {type(e).__name__} - {str(e)} (sanitized: {SafeFileHandler.sanitize_path_for_display(filepath)})",
+                "JSONWriteError"
+            )
             return False
 
     @staticmethod
@@ -339,1432 +508,47 @@ from petrophysics.constants import PetrophysicalConstants, PHYSICAL_CONSTANTS, l
 #=============================================================================
 # ARCHIE'S EQUATION AND PETROPHYSICAL CALCULATIONS
 #=============================================================================
-# NOTE: ArchieEquationCalculator and RelativeRockPropertiesModel have been extracted to core/petrophysical_models.py
-# Import maintained here for backward compatibility during modularization
-from core.petrophysical_models import ArchieEquationCalculator, RelativeRockPropertiesModel, ARCHIE_CALCULATOR
-from core.environmental_corrections import EnvironmentalCorrectionsManager
 
 # Legacy class definitions removed - now imported from core.petrophysical_models
 # Original code preserved in advanced_preprocessing_system10_PRE_PHASE2_BACKUP_*.py
 
+#=============================================================================
+# ARCHIE'S EQUATION AND PETROPHYSICAL CALCULATIONS
+#=============================================================================
+# NOTE: ArchieEquationCalculator and RelativeRockPropertiesModel have been extracted to core/petrophysical_models.py
+# Import maintained here for backward compatibility during modularization
+from core.petrophysical_models import ArchieEquationCalculator, RelativeRockPropertiesModel, ARCHIE_CALCULATOR
+from core.environmental_corrections import EnvironmentalCorrectionsManager
+from core.error_handler import CentralizedErrorHandler, ErrorContext, ErrorSeverity, ErrorCategory
+
+# Legacy class definitions removed - now imported from core.petrophysical_models
+# Original code preserved in advanced_preprocessing_system10_PRE_PHASE2_BACKUP_*.py
 
 #=============================================================================
-# COMPREHENSIVE MNEMONIC LIBRARY - 500+ Industry Standard Curves
+# GAP FILLING AND SIGNAL PROCESSING CLASSES
 #=============================================================================
-
-class ComprehensiveMnemonicLibrary:
-    """
-    Industry-standard mnemonic library with 1000+ curve types and variations
-    
-    SCIENTIFIC FOUNDATION:
-    
-    PRIMARY SOURCES:
-    - Schlumberger Chartbook (2020): Industry standard mnemonics and ranges
-    - Baker Hughes Log Interpretation Charts (2019): Tool-specific mnemonics
-    - Halliburton Logging Services Manual (2020): Service company standards
-    - SPWLA (Society of Petrophysicists and Well Log Analysts) Standards (2020)
-    - API (American Petroleum Institute) Standards (2020)
-    - Weatherford Logging Services Manual (2020): Additional tool mnemonics
-    - CGG Logging Services Documentation (2020): Geophysical tool mnemonics
-    
-    VALIDATION STUDIES:
-    - Compiled from 50+ years of industry practice
-    - Validated against 100,000+ well logs from global basins
-    - Cross-referenced with major service company documentation
-    - Peer-reviewed by SPWLA technical committees
-    - Enhanced with field validation from multiple basins
-    
-    COVERAGE:
-    - 1000+ unique curve types across all major logging tools
-    - Multiple mnemonic variations for each curve type (including punctuation variations)
-    - Industry-standard units and value ranges
-    - Physics-based curve family classification
-    - Typical value ranges for different lithologies
-    - Enhanced matching for non-standard curve naming conventions
-    
-    SCIENTIFIC BASIS:
-    - Curve identification based on statistical pattern recognition
-    - Unit compatibility checking using dimensional analysis
-    - Range validation using physical property constraints
-    - Confidence scoring using Bayesian inference
-    - Enhanced fuzzy matching for industry variations
-    - Punctuation and naming convention normalization
-    """
-    
-    def __init__(self):
-        self.mnemonic_database = self._build_comprehensive_database()
-        
-    def _build_comprehensive_database(self) -> Dict[str, Dict[str, Any]]:
-        """Build comprehensive mnemonic database"""
-        return {
-            # === RESISTIVITY FAMILY ===
-            'RESISTIVITY_DEEP': {
-                'mnemonics': ['ILD', 'LLD', 'RLLD', 'AT90', 'AHT90', 'RT_HRLA', 'RILD', 'RLL3', 'RLLD', 'RLLD_HRLA', 'RLLD_AT90', 'RLLD_AHT90', 'RLLD_HRLA_AT90', 'RLLD_HRLA_AHT90', 'RLLD_AT90_AHT90', 'RLLD_HRLA_AT90_AHT90'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Deep investigation resistivity',
-                'physics': 'electromagnetic_induction',
-                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]}
-            },
-            'RESISTIVITY_MEDIUM': {
-                'mnemonics': ['ILM', 'LLM', 'RLLM', 'AT60', 'AHT60', 'RT_MRLA', 'RILM', 'RLL2', 'RLLM', 'RLLM_HRLA', 'RLLM_AT60', 'RLLM_AHT60', 'RLLM_HRLA_AT60', 'RLLM_HRLA_AHT60', 'RLLM_AT60_AHT60', 'RLLM_HRLA_AT60_AHT60'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Medium investigation resistivity'
-            },
-            'RESISTIVITY_SHALLOW': {
-                'mnemonics': ['ILS', 'LLS', 'RLLS', 'AT30', 'AHT30', 'RT_SRLA', 'SFLU', 'MSFL', 'RILS', 'RLL1', 'RLLS', 'RLLS_HRLA', 'RLLS_AT30', 'RLLS_AHT30', 'RLLS_HRLA_AT30', 'RLLS_HRLA_AHT30', 'RLLS_AT30_AHT30', 'RLLS_HRLA_AT30_AHT30'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 1000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Shallow investigation resistivity'
-            },
-            'RESISTIVITY_MICRO': {
-                'mnemonics': ['MCFL', 'RXO', 'MRIL', 'MCFP'],
-                'units': ['OHMM', 'ohm.m'],
-                'range': [0.1, 1000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Micro-resistivity'
-            },
-            'RESISTIVITY_MICRO_INDUCTION': {
-                'mnemonics': ['MI', 'MIR', 'MIRI'],
-                'units': ['OHMM', 'ohm.m'],
-                'range': [0.1, 1000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Micro-induction resistivity',
-                'physics': 'electromagnetic_induction',
-                'typical_values': {'mud': [0.1, 10], 'invaded': [1, 100], 'virgin': [10, 1000]}
-            },
-            'RESISTIVITY_MICRO_NORMAL': {
-                'mnemonics': ['MN', 'MNR', 'MNOR'],
-                'units': ['OHMM', 'ohm.m'],
-                'range': [0.1, 1000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Micro-normal resistivity',
-                'physics': 'electromagnetic_induction',
-                'typical_values': {'mud': [0.1, 10], 'invaded': [1, 100], 'virgin': [10, 1000]}
-            },
-            'RESISTIVITY_LATEROLOG': {
-                'mnemonics': ['LL3', 'LL7', 'LL8', 'LL9', 'LLD', 'LLM', 'LLS', 'LL3_HRLA', 'LL3_AT90', 'LL3_AHT90', 'LL7_HRLA', 'LL7_AT90', 'LL7_AHT90', 'LL8_HRLA', 'LL8_AT90', 'LL8_AHT90', 'LL9_HRLA', 'LL9_AT90', 'LL9_AHT90'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Laterolog resistivity measurements'
-            },
-            'RESISTIVITY_INDUCTION': {
-                'mnemonics': ['ILD', 'ILM', 'ILS', 'ILD_HRLA', 'ILD_AT90', 'ILD_AHT90', 'ILM_HRLA', 'ILM_AT60', 'ILM_AHT60', 'ILS_HRLA', 'ILS_AT30', 'ILS_AHT30'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Induction resistivity measurements'
-            },
-            'RESISTIVITY_AT90': {
-                'mnemonics': ['AT90', 'AT90_HRLA', 'AT90_AHT90', 'AT90_HRLA_AHT90'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'AT90 resistivity measurement'
-            },
-            'RESISTIVITY_AHT90': {
-                'mnemonics': ['AHT90', 'AHT90_HRLA', 'AHT90_AT90', 'AHT90_HRLA_AT90'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'AHT90 resistivity measurement'
-            },
-            'RESISTIVITY_AT60': {
-                'mnemonics': ['AT60', 'AT60_HRLA', 'AT60_AHT60', 'AT60_HRLA_AHT60'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'AT60 resistivity measurement'
-            },
-            'RESISTIVITY_AHT60': {
-                'mnemonics': ['AHT60', 'AHT60_HRLA', 'AHT60_AT60', 'AHT60_HRLA_AT60'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'AHT60 resistivity measurement'
-            },
-            'RESISTIVITY_AT30': {
-                'mnemonics': ['AT30', 'AT30_HRLA', 'AT30_AHT30', 'AT30_HRLA_AHT30'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 1000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'AT30 resistivity measurement'
-            },
-            'RESISTIVITY_AHT30': {
-                'mnemonics': ['AHT30', 'AHT30_HRLA', 'AHT30_AT30', 'AHT30_HRLA_AT30'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 1000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'AHT30 resistivity measurement'
-            },
-            
-            # === GAMMA RAY FAMILY ===
-            'GAMMA_RAY_TOTAL': {
-                'mnemonics': ['GR', 'GRC', 'GRCX', 'HSGR', 'ECGR', 'SGR', 'TGR', 'GR_TOTAL', 'GR_TOT', 'GR_MAIN', 'GR_PRIMARY', 'GR_1', 'GR_2', 'GR_3', 'GR_4', 'GR_5', 'GR_6', 'GR_7', 'GR_8', 'GR_9', 'GR_10', 'GR_11', 'GR_12', 'GR_13', 'GR_14', 'GR_15', 'GR_16', 'GR_17', 'GR_18', 'GR_19', 'GR_20', 'GR_21', 'GR_22', 'GR_23', 'GR_24', 'GR_25', 'GR_26', 'GR_27', 'GR_28', 'GR_29', 'GR_30', 'GR_31', 'GR_32', 'GR_33', 'GR_34', 'GR_35', 'GR_36', 'GR_37', 'GR_38', 'GR_39', 'GR_40', 'GR_41', 'GR_42', 'GR_43', 'GR_44', 'GR_45', 'GR_46', 'GR_47', 'GR_48', 'GR_49', 'GR_50', 'GR_51', 'GR_52', 'GR_53', 'GR_54', 'GR_55', 'GR_56', 'GR_57', 'GR_58', 'GR_59', 'GR_60', 'GR_61', 'GR_62', 'GR_63', 'GR_64', 'GR_65', 'GR_66', 'GR_67', 'GR_68', 'GR_69', 'GR_70', 'GR_71', 'GR_72', 'GR_73', 'GR_74', 'GR_75', 'GR_76', 'GR_77', 'GR_78', 'GR_79', 'GR_80', 'GR_81', 'GR_82', 'GR_83', 'GR_84', 'GR_85', 'GR_86', 'GR_87', 'GR_88', 'GR_89', 'GR_90', 'GR_91', 'GR_92', 'GR_93', 'GR_94', 'GR_95', 'GR_96', 'GR_97', 'GR_98', 'GR_99', 'GR_100'],
-                'units': ['GAPI', 'API', 'cps', 'CPS'],
-                'range': [0, 500],
-                'log_scale': False,
-                'curve_family': 'gamma_ray',
-                'description': 'Total gamma ray',
-                'physics': 'natural_radioactivity',
-                'typical_values': {'shale': [80, 200], 'sand': [10, 80], 'carbonate': [5, 50]}
-            },
-            'GAMMA_RAY_SPECTRAL': {
-                'mnemonics': ['HSGR', 'HCGR', 'HTHO', 'HURA', 'HPOT', 'SGR'],
-                'units': ['GAPI', 'API', 'PPM'],
-                'range': [0, 300],
-                'curve_family': 'gamma_ray_spectral',
-                'description': 'Spectral gamma ray components'
-            },
-            'THORIUM': {
-                'mnemonics': ['THOR', 'TH', 'HTHO', 'STHO'],
-                'units': ['PPM', 'ppm'],
-                'range': [0, 50],
-                'curve_family': 'gamma_ray_spectral',
-                'description': 'Thorium content'
-            },
-            'URANIUM': {
-                'mnemonics': ['URAN', 'U', 'HURA', 'SURA'],
-                'units': ['PPM', 'ppm'],
-                'range': [0, 20],
-                'curve_family': 'gamma_ray_spectral',
-                'description': 'Uranium content'
-            },
-            'POTASSIUM': {
-                'mnemonics': ['POTA', 'K', 'HPOT', 'SPOT'],
-                'units': ['%', 'PERCENT'],
-                'range': [0, 8],
-                'curve_family': 'gamma_ray_spectral',
-                'description': 'Potassium content'
-            },
-            
-            # === NEUTRON POROSITY FAMILY ===
-            'NEUTRON_POROSITY': {
-                'mnemonics': ['NPHI', 'NPOR', 'NEUT', 'TNPH', 'CNL', 'SNPH', 'APLC', 'NPHI.', 'NPOR.', 'NEUT.', 'TNPH.', 'CNL.', 'SNPH.', 'APLC.', 'NPHI_1', 'NPHI_2', 'NPHI_3', 'NPHI_4', 'NPHI_5', 'NPHI_6', 'NPHI_7', 'NPHI_8', 'NPHI_9', 'NPHI_10', 'NPHI_11', 'NPHI_12', 'NPHI_13', 'NPHI_14', 'NPHI_15', 'NPHI_16', 'NPHI_17', 'NPHI_18', 'NPHI_19', 'NPHI_20', 'NPHI_21', 'NPHI_22', 'NPHI_23', 'NPHI_24', 'NPHI_25', 'NPHI_26', 'NPHI_27', 'NPHI_28', 'NPHI_29', 'NPHI_30', 'NPHI_31', 'NPHI_32', 'NPHI_33', 'NPHI_34', 'NPHI_35', 'NPHI_36', 'NPHI_37', 'NPHI_38', 'NPHI_39', 'NPHI_40', 'NPHI_41', 'NPHI_42', 'NPHI_43', 'NPHI_44', 'NPHI_45', 'NPHI_46', 'NPHI_47', 'NPHI_48', 'NPHI_49', 'NPHI_50', 'NPHI_51', 'NPHI_52', 'NPHI_53', 'NPHI_54', 'NPHI_55', 'NPHI_56', 'NPHI_57', 'NPHI_58', 'NPHI_59', 'NPHI_60', 'NPHI_61', 'NPHI_62', 'NPHI_63', 'NPHI_64', 'NPHI_65', 'NPHI_66', 'NPHI_67', 'NPHI_68', 'NPHI_69', 'NPHI_70', 'NPHI_71', 'NPHI_72', 'NPHI_73', 'NPHI_74', 'NPHI_75', 'NPHI_76', 'NPHI_77', 'NPHI_78', 'NPHI_79', 'NPHI_80', 'NPHI_81', 'NPHI_82', 'NPHI_83', 'NPHI_84', 'NPHI_85', 'NPHI_86', 'NPHI_87', 'NPHI_88', 'NPHI_89', 'NPHI_90', 'NPHI_91', 'NPHI_92', 'NPHI_93', 'NPHI_94', 'NPHI_95', 'NPHI_96', 'NPHI_97', 'NPHI_98', 'NPHI_99', 'NPHI_100'],
-                'units': ['V/V', 'PU', 'FRAC', '%', 'PERCENT'],
-                'range': [-0.15, 0.6],
-                'curve_family': 'neutron',
-                'description': 'Neutron porosity',
-                'physics': 'neutron_hydrogen_interaction',
-                'typical_values': {'tight': [0, 0.1], 'reservoir': [0.1, 0.3], 'vuggy': [0.3, 0.6]}
-            },
-            'NEUTRON_COMPENSATED': {
-                'mnemonics': ['CNPOR', 'NPHI_LS', 'NPHI_SS', 'NPHI_DOL'],
-                'units': ['V/V', 'PU', 'FRAC'],
-                'range': [-0.1, 0.5],
-                'curve_family': 'neutron',
-                'description': 'Compensated neutron porosity'
-            },
-            'NEUTRON_EPITHERMAL': {
-                'mnemonics': ['ENPH', 'ETNP', 'ENN'],
-                'units': ['V/V', 'PU'],
-                'range': [0, 0.6],
-                'curve_family': 'neutron',
-                'description': 'Epithermal neutron porosity'
-            },
-            'NEUTRON_DUAL': {
-                'mnemonics': ['DPOR', 'DNPH', 'DNPHI'],
-                'units': ['V/V', 'PU', 'FRAC', '%'],
-                'range': [-0.15, 0.6],
-                'curve_family': 'neutron',
-                'description': 'Dual neutron porosity',
-                'physics': 'neutron_hydrogen_interaction',
-                'typical_values': {'tight': [0, 0.1], 'reservoir': [0.1, 0.3], 'vuggy': [0.3, 0.6]}
-            },
-            
-            # === DENSITY FAMILY ===
-            'BULK_DENSITY': {
-                'mnemonics': ['RHOB', 'RHOZ', 'DENB', 'DENS', 'ROHB', 'ZDEN', 'BDCN'],
-                'units': ['G/C3', 'g/cm3', 'G/CM3', 'KG/M3'],
-                'range': [1.0, 3.5],
-                'curve_family': 'density',
-                'description': 'Formation bulk density',
-                'physics': 'gamma_ray_compton_scattering',
-                'typical_values': {'gas': [1.8, 2.2], 'oil': [2.0, 2.4], 'water': [2.2, 2.8]}
-            },
-            'PHOTOELECTRIC_FACTOR': {
-                'mnemonics': ['PEF', 'PE', 'PEFZ', 'PEFC', 'ZPE', 'PEFS'],
-                'units': ['B/E', 'b/e', 'BARNS/ELECTRON'],
-                'range': [1.0, 10.0],
-                'curve_family': 'density',
-                'description': 'Photoelectric absorption factor'
-            },
-            'DENSITY_CORRECTION': {
-                'mnemonics': ['DRHO', 'DRHB', 'DCOR', 'RHOC', 'DRHO.', 'DRHB.', 'DCOR.', 'RHOC.', 'DRHO_1', 'DRHO_2', 'DRHO_3', 'DRHO_4', 'DRHO_5', 'DRHO_6', 'DRHO_7', 'DRHO_8', 'DRHO_9', 'DRHO_10', 'DRHO_11', 'DRHO_12', 'DRHO_13', 'DRHO_14', 'DRHO_15', 'DRHO_16', 'DRHO_17', 'DRHO_18', 'DRHO_19', 'DRHO_20', 'DRHO_21', 'DRHO_22', 'DRHO_23', 'DRHO_24', 'DRHO_25', 'DRHO_26', 'DRHO_27', 'DRHO_28', 'DRHO_29', 'DRHO_30', 'DRHO_31', 'DRHO_32', 'DRHO_33', 'DRHO_34', 'DRHO_35', 'DRHO_36', 'DRHO_37', 'DRHO_38', 'DRHO_39', 'DRHO_40', 'DRHO_41', 'DRHO_42', 'DRHO_43', 'DRHO_44', 'DRHO_45', 'DRHO_46', 'DRHO_47', 'DRHO_48', 'DRHO_49', 'DRHO_50', 'DRHO_51', 'DRHO_52', 'DRHO_53', 'DRHO_54', 'DRHO_55', 'DRHO_56', 'DRHO_57', 'DRHO_58', 'DRHO_59', 'DRHO_60', 'DRHO_61', 'DRHO_62', 'DRHO_63', 'DRHO_64', 'DRHO_65', 'DRHO_66', 'DRHO_67', 'DRHO_68', 'DRHO_69', 'DRHO_70', 'DRHO_71', 'DRHO_72', 'DRHO_73', 'DRHO_74', 'DRHO_75', 'DRHO_76', 'DRHO_77', 'DRHO_78', 'DRHO_79', 'DRHO_80', 'DRHO_81', 'DRHO_82', 'DRHO_83', 'DRHO_84', 'DRHO_85', 'DRHO_86', 'DRHO_87', 'DRHO_88', 'DRHO_89', 'DRHO_90', 'DRHO_91', 'DRHO_92', 'DRHO_93', 'DRHO_94', 'DRHO_95', 'DRHO_96', 'DRHO_97', 'DRHO_98', 'DRHO_99', 'DRHO_100'],
-                'units': ['G/C3', 'g/cm3'],
-                'range': [-0.5, 0.5],
-                'curve_family': 'density',
-                'description': 'Density correction'
-            },
-            
-            # === SONIC FAMILY ===
-            'SONIC_COMPRESSIONAL': {
-                'mnemonics': ['DT', 'DTC', 'DTCO', 'AC', 'DTSM', 'DTLN'],
-                'units': ['US/F', 'us/ft', 'USEC/FT'],
-                'range': [40, 200],
-                'curve_family': 'sonic',
-                'description': 'Compressional transit time',
-                'physics': 'acoustic_wave_propagation'
-            },
-            'SONIC_SHEAR': {
-                'mnemonics': ['DTS', 'DTSH', 'DTSM', 'DTST'],
-                'units': ['US/F', 'us/ft', 'USEC/FT'],
-                'range': [80, 400],
-                'curve_family': 'sonic',
-                'description': 'Shear transit time'
-            },
-            'SONIC_STONELEY': {
-                'mnemonics': ['DTST', 'DTSTM', 'DTTU'],
-                'units': ['US/F', 'us/ft'],
-                'range': [100, 500],
-                'curve_family': 'sonic',
-                'description': 'Stoneley wave transit time'
-            },
-            
-            # === SPONTANEOUS POTENTIAL ===
-            'SPONTANEOUS_POTENTIAL': {
-                'mnemonics': ['SP', 'SSP', 'PSP', 'SPONT'],
-                'units': ['MV', 'mV', 'MILLIVOLT'],
-                'range': [-200, 200],
-                'curve_family': 'sp',
-                'description': 'Spontaneous potential',
-                'physics': 'electrochemical_potential'
-            },
-            
-            # === CALIPER FAMILY ===
-            'CALIPER_SINGLE': {
-                'mnemonics': ['CALI', 'CAL', 'HCAL', 'BS', 'C1'],
-                'units': ['IN', 'INCH', 'MM', 'CM'],
-                'range': [6, 24],
-                'curve_family': 'caliper',
-                'description': 'Single arm caliper'
-            },
-            'CALIPER_MULTI': {
-                'mnemonics': ['DCAL', 'C1', 'C2', 'C3', 'C4', 'MCAL', 'DCAL.', 'C1.', 'C2.', 'C3.', 'C4.', 'MCAL.', 'DCAL_1', 'DCAL_2', 'DCAL_3', 'DCAL_4', 'DCAL_5', 'DCAL_6', 'DCAL_7', 'DCAL_8', 'DCAL_9', 'DCAL_10', 'DCAL_11', 'DCAL_12', 'DCAL_13', 'DCAL_14', 'DCAL_15', 'DCAL_16', 'DCAL_17', 'DCAL_18', 'DCAL_19', 'DCAL_20', 'DCAL_21', 'DCAL_22', 'DCAL_23', 'DCAL_24', 'DCAL_25', 'DCAL_26', 'DCAL_27', 'DCAL_28', 'DCAL_29', 'DCAL_30', 'DCAL_31', 'DCAL_32', 'DCAL_33', 'DCAL_34', 'DCAL_35', 'DCAL_36', 'DCAL_37', 'DCAL_38', 'DCAL_39', 'DCAL_40', 'DCAL_41', 'DCAL_42', 'DCAL_43', 'DCAL_44', 'DCAL_45', 'DCAL_46', 'DCAL_47', 'DCAL_48', 'DCAL_49', 'DCAL_50', 'DCAL_51', 'DCAL_52', 'DCAL_53', 'DCAL_54', 'DCAL_55', 'DCAL_56', 'DCAL_57', 'DCAL_58', 'DCAL_59', 'DCAL_60', 'DCAL_61', 'DCAL_62', 'DCAL_63', 'DCAL_64', 'DCAL_65', 'DCAL_66', 'DCAL_67', 'DCAL_68', 'DCAL_69', 'DCAL_70', 'DCAL_71', 'DCAL_72', 'DCAL_73', 'DCAL_74', 'DCAL_75', 'DCAL_76', 'DCAL_77', 'DCAL_78', 'DCAL_79', 'DCAL_80', 'DCAL_81', 'DCAL_82', 'DCAL_83', 'DCAL_84', 'DCAL_85', 'DCAL_86', 'DCAL_87', 'DCAL_88', 'DCAL_89', 'DCAL_90', 'DCAL_91', 'DCAL_92', 'DCAL_93', 'DCAL_94', 'DCAL_95', 'DCAL_96', 'DCAL_97', 'DCAL_98', 'DCAL_99', 'DCAL_100'],
-                'units': ['IN', 'INCH', 'MM'],
-                'range': [6, 24],
-                'curve_family': 'caliper',
-                'description': 'Multi-arm caliper'
-            },
-            'CALIPER_MICRO': {
-                'mnemonics': ['MCAL', 'MCALI', 'MCALIB'],
-                'units': ['IN', 'INCH', 'MM'],
-                'range': [6, 24],
-                'curve_family': 'caliper',
-                'description': 'Micro-caliper measurement',
-                'physics': 'mechanical_contact',
-                'typical_values': {'open_hole': [6, 24], 'cased_hole': [4.5, 7]}
-            },
-            
-            # === DEPTH REFERENCE ===
-            'DEPTH_MEASURED': {
-                'mnemonics': ['DEPT', 'DEPTH', 'MD', 'MDEPTH', 'DEPTH PRIMARY', 'DEPTH_PRIMARY', 'DEPTH_PRIMARY.', 'DEPTH_1', 'DEPTH_2', 'DEPTH_3', 'DEPTH_4', 'DEPTH_5', 'DEPTH_6', 'DEPTH_7', 'DEPTH_8', 'DEPTH_9', 'DEPTH_10', 'DEPTH_11', 'DEPTH_12', 'DEPTH_13', 'DEPTH_14', 'DEPTH_15', 'DEPTH_16', 'DEPTH_17', 'DEPTH_18', 'DEPTH_19', 'DEPTH_20', 'DEPTH_21', 'DEPTH_22', 'DEPTH_23', 'DEPTH_24', 'DEPTH_25', 'DEPTH_26', 'DEPTH_27', 'DEPTH_28', 'DEPTH_29', 'DEPTH_30', 'DEPTH_31', 'DEPTH_32', 'DEPTH_33', 'DEPTH_34', 'DEPTH_35', 'DEPTH_36', 'DEPTH_37', 'DEPTH_38', 'DEPTH_39', 'DEPTH_40', 'DEPTH_41', 'DEPTH_42', 'DEPTH_43', 'DEPTH_44', 'DEPTH_45', 'DEPTH_46', 'DEPTH_47', 'DEPTH_48', 'DEPTH_49', 'DEPTH_50', 'DEPTH_51', 'DEPTH_52', 'DEPTH_53', 'DEPTH_54', 'DEPTH_55', 'DEPTH_56', 'DEPTH_57', 'DEPTH_58', 'DEPTH_59', 'DEPTH_60', 'DEPTH_61', 'DEPTH_62', 'DEPTH_63', 'DEPTH_64', 'DEPTH_65', 'DEPTH_66', 'DEPTH_67', 'DEPTH_68', 'DEPTH_69', 'DEPTH_70', 'DEPTH_71', 'DEPTH_72', 'DEPTH_73', 'DEPTH_74', 'DEPTH_75', 'DEPTH_76', 'DEPTH_77', 'DEPTH_78', 'DEPTH_79', 'DEPTH_80', 'DEPTH_81', 'DEPTH_82', 'DEPTH_83', 'DEPTH_84', 'DEPTH_85', 'DEPTH_86', 'DEPTH_87', 'DEPTH_88', 'DEPTH_89', 'DEPTH_90', 'DEPTH_91', 'DEPTH_92', 'DEPTH_93', 'DEPTH_94', 'DEPTH_95', 'DEPTH_96', 'DEPTH_97', 'DEPTH_98', 'DEPTH_99', 'DEPTH_100'],
-                'units': ['M', 'FT', 'FEET', 'METER'],
-                'range': [0, 10000],
-                'curve_family': 'depth',
-                'description': 'Measured depth'
-            },
-            'DEPTH_TRUE_VERTICAL': {
-                'mnemonics': ['TVD', 'TVDEPTH', 'TVDSS'],
-                'units': ['M', 'FT', 'FEET'],
-                'range': [0, 8000],
-                'curve_family': 'depth',
-                'description': 'True vertical depth'
-            },
-            
-            # === ADVANCED LOGGING TOOLS ===
-            'NMR_POROSITY': {
-                'mnemonics': ['MPHI', 'TCMR', 'CMRP', 'NMR_POR'],
-                'units': ['V/V', 'PU', '%'],
-                'range': [0, 0.4],
-                'curve_family': 'nmr',
-                'description': 'NMR total porosity'
-            },
-            'NMR_PERMEABILITY': {
-                'mnemonics': ['MPERM', 'KPERM', 'KINT'],
-                'units': ['MD', 'mD', 'MILLIDARCY'],
-                'range': [0.001, 10000],
-                'log_scale': True,
-                'curve_family': 'nmr',
-                'description': 'NMR permeability'
-            },
-            'FORMATION_PRESSURE': {
-                'mnemonics': ['PRES', 'FP', 'FPRES', 'PFOR'],
-                'units': ['PSI', 'PA', 'BAR', 'KPA'],
-                'range': [0, 20000],
-                'curve_family': 'pressure',
-                'description': 'Formation pressure'
-            },
-            'FORMATION_TEMPERATURE': {
-                'mnemonics': ['TEMP', 'FTEMP', 'TEMF'],
-                'units': ['DEGC', 'DEGF', 'F', 'C'],
-                'range': [20, 200],
-                'curve_family': 'temperature',
-                'description': 'Formation temperature'
-            },
-            
-            # === BOREHOLE GEOMETRY ===
-            'BOREHOLE_AZIMUTH': {
-                'mnemonics': ['AZIM', 'AZI', 'HAZI'],
-                'units': ['DEG', 'DEGREE'],
-                'range': [0, 360],
-                'curve_family': 'geometry',
-                'description': 'Borehole azimuth'
-            },
-            'BOREHOLE_DEVIATION': {
-                'mnemonics': ['DEVI', 'DEV', 'HDEV'],
-                'units': ['DEG', 'DEGREE'],
-                'range': [0, 90],
-                'curve_family': 'geometry',
-                'description': 'Borehole deviation'
-            },
-            
-            # === IMAGING AND ADVANCED ===
-            'FORMATION_RESISTIVITY_IMAGING': {
-                'mnemonics': ['FMI', 'HRLA', 'OBMI', 'STAR'],
-                'units': ['OHMM', 'ohm.m'],
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'imaging',
-                'description': 'Formation micro-resistivity imaging'
-            },
-            'ACOUSTIC_IMAGING': {
-                'mnemonics': ['BHTV', 'UBI', 'CBIL'],
-                'units': ['DB', 'AMP'],
-                'range': [0, 100],
-                'curve_family': 'imaging',
-                'description': 'Acoustic borehole imaging'
-            },
-            
-            # === GEOCHEMICAL ===
-            'CARBON_OXYGEN_RATIO': {
-                'mnemonics': ['COR', 'C/O', 'CARB'],
-                'units': ['RATIO', 'V/V'],
-                'range': [0, 2],
-                'curve_family': 'geochemical',
-                'description': 'Carbon/Oxygen ratio'
-            },
-            'SILICON_CALCIUM_RATIO': {
-                'mnemonics': ['SICA', 'SI/CA', 'SILI'],
-                'units': ['RATIO'],
-                'range': [0, 10],
-                'curve_family': 'geochemical',
-                'description': 'Silicon/Calcium ratio'
-            },
-            
-            # === ADDITIONAL RESISTIVITY VARIATIONS ===
-            'RESISTIVITY_RLL3': {
-                'mnemonics': ['RLL3', 'RLL3.', 'RLL3_1', 'RLL3_2', 'RLL3_3', 'RLL3_4', 'RLL3_5', 'RLL3_6', 'RLL3_7', 'RLL3_8', 'RLL3_9', 'RLL3_10'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'RLL3 resistivity measurement'
-            },
-            'RESISTIVITY_RLL2': {
-                'mnemonics': ['RLL2', 'RLL2.', 'RLL2_1', 'RLL2_2', 'RLL2_3', 'RLL2_4', 'RLL2_5', 'RLL2_6', 'RLL2_7', 'RLL2_8', 'RLL2_9', 'RLL2_10'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'RLL2 resistivity measurement'
-            },
-            'RESISTIVITY_RLL1': {
-                'mnemonics': ['RLL1', 'RLL1.', 'RLL1_1', 'RLL1_2', 'RLL1_3', 'RLL1_4', 'RLL1_5', 'RLL1_6', 'RLL1_7', 'RLL1_8', 'RLL1_9', 'RLL1_10'],
-                'units': OHM_M_UNITS,
-                'range': [0.1, 1000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'RLL1 resistivity measurement'
-            },
-            
-            # === ADDITIONAL NEUTRON VARIATIONS ===
-            'NEUTRON_DUAL_POROSITY': {
-                'mnemonics': ['DPOR', 'DPOR.', 'DPOR_1', 'DPOR_2', 'DPOR_3', 'DPOR_4', 'DPOR_5', 'DPOR_6', 'DPOR_7', 'DPOR_8', 'DPOR_9', 'DPOR_10'],
-                'units': ['V/V', 'PU', 'FRAC', '%'],
-                'range': [-0.15, 0.6],
-                'curve_family': 'neutron',
-                'description': 'Dual neutron porosity'
-            },
-            
-            # === ADDITIONAL DENSITY VARIATIONS ===
-            'DENSITY_BULK': {
-                'mnemonics': ['RHOB', 'RHOB.', 'RHOB_1', 'RHOB_2', 'RHOB_3', 'RHOB_4', 'RHOB_5', 'RHOB_6', 'RHOB_7', 'RHOB_8', 'RHOB_9', 'RHOB_10'],
-                'units': ['G/C3', 'g/cm3', 'G/CM3', 'KG/M3'],
-                'range': [1.0, 3.5],
-                'curve_family': 'density',
-                'description': 'Bulk density'
-            },
-            
-            # === ADDITIONAL CALIPER VARIATIONS ===
-            'CALIPER_SINGLE_ARM': {
-                'mnemonics': ['CALI', 'CALI.', 'CALI_1', 'CALI_2', 'CALI_3', 'CALI_4', 'CALI_5', 'CALI_6', 'CALI_7', 'CALI_8', 'CALI_9', 'CALI_10'],
-                'units': ['IN', 'INCH', 'MM', 'CM'],
-                'range': [6, 24],
-                'curve_family': 'caliper',
-                'description': 'Single arm caliper'
-            },
-            
-            # === ADDITIONAL DEPTH VARIATIONS ===
-            'DEPTH_REFERENCE': {
-                'mnemonics': ['DEPT', 'DEPT.', 'DEPT_1', 'DEPT_2', 'DEPT_3', 'DEPT_4', 'DEPT_5', 'DEPT_6', 'DEPT_7', 'DEPT_8', 'DEPT_9', 'DEPT_10'],
-                'units': ['M', 'FT', 'FEET', 'METER'],
-                'range': [0, 10000],
-                'curve_family': 'depth',
-                'description': 'Depth reference'
-            },
-            
-            # === ADDITIONAL GAMMA RAY VARIATIONS ===
-            'GAMMA_RAY_REFERENCE': {
-                'mnemonics': ['GR', 'GR.', 'GR_REF', 'GR_REFERENCE', 'GR_MAIN', 'GR_PRIMARY', 'GR_1', 'GR_2', 'GR_3', 'GR_4', 'GR_5'],
-                'units': ['GAPI', 'API', 'cps', 'CPS'],
-                'range': [0, 500],
-                'log_scale': False,
-                'curve_family': 'gamma_ray',
-                'description': 'Gamma ray reference'
-            },
-            
-            # === ADDITIONAL SPONTANEOUS POTENTIAL VARIATIONS ===
-            'SPONTANEOUS_POTENTIAL_REFERENCE': {
-                'mnemonics': ['SP', 'SP.', 'SP_REF', 'SP_REFERENCE', 'SP_MAIN', 'SP_PRIMARY', 'SP_1', 'SP_2', 'SP_3', 'SP_4', 'SP_5'],
-                'units': ['MV', 'mV', 'MILLIVOLT'],
-                'range': [-200, 200],
-                'curve_family': 'sp',
-                'description': 'Spontaneous potential reference'
-            },
-            
-            # === ADDITIONAL BOREHOLE GEOMETRY VARIATIONS ===
-            'BOREHOLE_DEVIATION_REFERENCE': {
-                'mnemonics': ['DEVI', 'DEVI.', 'DEVI_REF', 'DEVI_REFERENCE', 'DEVI_MAIN', 'DEVI_PRIMARY', 'DEVI_1', 'DEVI_2', 'DEVI_3', 'DEVI_4', 'DEVI_5'],
-                'units': ['DEG', 'DEGREE'],
-                'range': [0, 90],
-                'curve_family': 'geometry',
-                'description': 'Borehole deviation reference'
-            },
-            
-            # === ADDITIONAL SONIC VARIATIONS ===
-            'SONIC_COMPRESSIONAL_REFERENCE': {
-                'mnemonics': ['DT', 'DT.', 'DT_REF', 'DT_REFERENCE', 'DT_MAIN', 'DT_PRIMARY', 'DT_1', 'DT_2', 'DT_3', 'DT_4', 'DT_5'],
-                'units': ['US/F', 'us/ft', 'USEC/FT'],
-                'range': [40, 200],
-                'curve_family': 'sonic',
-                'description': 'Compressional transit time reference'
-            },
-            
-            # === ADDITIONAL PHOTOELECTRIC FACTOR VARIATIONS ===
-            'PHOTOELECTRIC_FACTOR_REFERENCE': {
-                'mnemonics': ['PEF', 'PEF.', 'PEF_REF', 'PEF_REFERENCE', 'PEF_MAIN', 'PEF_PRIMARY', 'PEF_1', 'PEF_2', 'PEF_3', 'PEF_4', 'PEF_5'],
-                'units': ['B/E', 'b/e', 'BARNS/ELECTRON'],
-                'range': [1.0, 10.0],
-                'curve_family': 'density',
-                'description': 'Photoelectric absorption factor reference'
-            }
-        }
-    
-    def _levenshtein_distance(self, s1: str, s2: str) -> int:
-        """Calculate Levenshtein distance for fuzzy matching"""
-        if len(s1) < len(s2):
-            return self._levenshtein_distance(s2, s1)
-        if len(s2) == 0:
-            return len(s1)
-        
-        previous_row = range(len(s2) + 1)
-        for i, c1 in enumerate(s1):
-            current_row = [i + 1]
-            for j, c2 in enumerate(s2):
-                insertions = previous_row[j + 1] + 1
-                deletions = current_row[j] + 1
-                substitutions = previous_row[j] + (c1 != c2)
-                current_row.append(min(insertions, deletions, substitutions))
-            previous_row = current_row
-        return previous_row[-1]
-    
-    def _fuzzy_match_mnemonic(self, mnemonic: str, known_mnemonic: str, threshold: float = 0.7) -> Tuple[bool, float]:
-        """Fuzzy match mnemonic using Levenshtein distance"""
-        mnemonic_clean = mnemonic.upper().strip()
-        known_clean = known_mnemonic.upper().strip()
-        
-        if mnemonic_clean == known_clean:
-            return True, 1.0
-        
-        max_len = max(len(mnemonic_clean), len(known_clean))
-        if max_len == 0:
-            return False, 0.0
-        
-        distance = self._levenshtein_distance(mnemonic_clean, known_clean)
-        similarity = 1.0 - (distance / max_len)
-        
-        return similarity >= threshold, similarity
-    
-    def _context_aware_recognition(self, unit: str, value_range: Optional[Tuple[float, float]], 
-                                   curve_data: Dict[str, Any]) -> float:
-        """Context-aware recognition based on units and value ranges"""
-        confidence_boost = 0.0
-        unit_clean = unit.upper().strip() if unit else ''
-        
-        # Unit compatibility check
-        if unit_clean:
-            curve_units = [u.upper() for u in curve_data.get('units', [])]
-            if unit_clean in curve_units:
-                confidence_boost += 0.15  # Strong unit match
-            else:
-                # Partial unit matching (e.g., "G/C3" vs "G/CM3")
-                for cu in curve_units:
-                    if unit_clean.replace('CM3', 'C3').replace('CM', 'C') in cu or \
-                       cu.replace('CM3', 'C3').replace('CM', 'C') in unit_clean:
-                        confidence_boost += 0.1
-                        break
-        
-        # Value range compatibility check
-        if value_range:
-            curve_range = curve_data.get('range', [])
-            if len(curve_range) == 2:
-                min_val, max_val = value_range
-                curve_min, curve_max = curve_range
-                
-                # Check if value range overlaps significantly with expected range
-                overlap_min = max(min_val, curve_min)
-                overlap_max = min(max_val, curve_max)
-                if overlap_max > overlap_min:
-                    overlap_ratio = (overlap_max - overlap_min) / (max(max_val, curve_max) - min(min_val, curve_min))
-                    confidence_boost += overlap_ratio * 0.2
-        
-        return confidence_boost
-    
-    def _pattern_based_identification(self, data: Optional[np.ndarray], 
-                                      curve_data: Dict[str, Any]) -> float:
-        """Pattern-based identification using statistical fingerprints"""
-        if data is None or len(data) < 20:
-            return 0.0
-        
-        valid_data = data[~np.isnan(data)]
-        if len(valid_data) < 10:
-            return 0.0
-        
-        confidence_boost = 0.0
-        curve_range = curve_data.get('range', [])
-        
-        if len(curve_range) == 2:
-            curve_min, curve_max = curve_range
-            data_min, data_max = float(np.min(valid_data)), float(np.max(valid_data))
-            
-            # Range compatibility
-            if curve_min <= data_min <= curve_max and curve_min <= data_max <= curve_max:
-                confidence_boost += 0.15
-            elif curve_min * 0.5 <= data_min <= curve_max * 2.0:
-                confidence_boost += 0.05
-        
-        # Check for log scale patterns (resistivity-like curves)
-        if curve_data.get('log_scale', False):
-            if data_min > 0 and data_max > 0:
-                ratio = data_max / data_min
-                if ratio > 10:  # Typical for log-scale curves
-                    confidence_boost += 0.1
-        
-        return confidence_boost
-    
-    def identify_curve(self, mnemonic: str, unit: str = '', description: str = '', 
-                       data: Optional[np.ndarray] = None, 
-                       value_range: Optional[Tuple[float, float]] = None,
-                       auxiliary_curves: Optional[Dict[str, np.ndarray]] = None) -> Tuple[str, float, Dict]:
-        """
-        Enhanced curve identification with fuzzy matching, context-aware recognition, 
-        and pattern-based identification.
-        
-        Args:
-            mnemonic: Curve mnemonic/name
-            unit: Curve unit
-            description: Curve description
-            data: Optional curve data array for pattern-based identification
-            value_range: Optional (min, max) value range for context-aware recognition
-            auxiliary_curves: Optional dict of other curves for correlation analysis
-        
-        Returns:
-            Tuple of (curve_type, confidence, curve_data_dict)
-        """
-        # Clean and normalize mnemonic
-        mnemonic_clean = mnemonic.upper().strip()
-        mnemonic_normalized = mnemonic_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
-        
-        unit_clean = unit.upper().strip() if unit else ''
-        desc_clean = description.upper().strip() if description else ''
-        
-        candidates = []  # Store all candidates with confidence scores
-        
-        # Phase 1: Exact and normalized matching
-        for curve_type, curve_data in self.mnemonic_database.items():
-            confidence = 0.0
-            match_method = 'none'
-            
-            # Exact mnemonic match
-            curve_mnemonics = [m.upper() for m in curve_data.get('mnemonics', [])]
-            if mnemonic_clean in curve_mnemonics:
-                confidence = 0.95
-                match_method = 'exact'
-            else:
-                # Normalized matching
-                curve_normalized = [m.upper().replace('.', '').replace('_', '').replace('-', '').replace(' ', '') 
-                                   for m in curve_data.get('mnemonics', [])]
-                if mnemonic_normalized in curve_normalized:
-                    confidence = 0.9
-                    match_method = 'normalized'
-                else:
-                    # Fuzzy matching for typos and variations
-                    for known_mnemonic in curve_data.get('mnemonics', []):
-                        matched, similarity = self._fuzzy_match_mnemonic(mnemonic_clean, known_mnemonic, threshold=0.7)
-                        if matched:
-                            confidence = max(confidence, 0.75 * similarity)  # Scale fuzzy match
-                            match_method = 'fuzzy'
-                            break
-            
-            # Context-aware recognition boost
-            context_boost = self._context_aware_recognition(unit_clean, value_range, curve_data)
-            confidence += context_boost
-            
-            # Pattern-based identification boost
-            if data is not None:
-                pattern_boost = self._pattern_based_identification(data, curve_data)
-                confidence += pattern_boost
-            
-            # Description keyword matching
-            if desc_clean:
-                curve_desc = curve_data.get('description', '').upper()
-                desc_words = curve_desc.split()
-                matches = sum(1 for word in desc_words if word in desc_clean)
-                confidence += min(0.05, matches * 0.01)
-            
-            # Correlation with auxiliary curves (if available)
-            if auxiliary_curves and len(auxiliary_curves) > 0:
-                correlation_boost = self._correlation_analysis(mnemonic_clean, curve_data, auxiliary_curves)
-                confidence += correlation_boost
-            
-            # Cap confidence at 1.0
-            confidence = min(1.0, confidence)
-            
-            if confidence > 0.3:  # Only consider reasonable candidates
-                candidates.append({
-                    'curve_type': curve_type,
-                    'confidence': confidence,
-                    'method': match_method,
-                    'curve_data': curve_data.copy()
-                })
-        
-        # Enhanced partial matching for low-confidence cases
-        if not candidates or max(c['confidence'] for c in candidates) < 0.5:
-            for curve_type, curve_data in self.mnemonic_database.items():
-                for known_mnemonic in curve_data.get('mnemonics', []):
-                    known_clean = known_mnemonic.upper().strip()
-                    known_normalized = known_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
-                    
-                    confidence = 0.0
-                    match_method = 'partial'
-                    
-                    if mnemonic_clean == known_clean:
-                        confidence = 0.85
-                    elif mnemonic_normalized == known_normalized:
-                        confidence = 0.8
-                    elif mnemonic_clean in known_clean and len(mnemonic_clean) >= 3:
-                        confidence = 0.7
-                    elif known_clean in mnemonic_clean and len(known_clean) >= 3:
-                        confidence = 0.7
-                    elif mnemonic_normalized in known_normalized and len(mnemonic_normalized) >= 3:
-                        confidence = 0.65
-                    elif known_normalized in mnemonic_normalized and len(known_normalized) >= 3:
-                        confidence = 0.65
-                    else:
-                        continue
-                    
-                    # Add context boosts
-                    context_boost = self._context_aware_recognition(unit_clean, value_range, curve_data)
-                    confidence += context_boost
-                    confidence = min(1.0, confidence)
-                    
-                    candidates.append({
-                        'curve_type': curve_type,
-                        'confidence': confidence,
-                        'method': match_method,
-                        'curve_data': curve_data.copy()
-                    })
-                    break  # Only add once per curve_type
-        
-        # Sort candidates by confidence
-        candidates.sort(key=lambda x: x['confidence'], reverse=True)
-        
-        # Conflict resolution: if multiple high-confidence candidates, use resolution strategy
-        if len(candidates) > 1 and candidates[0]['confidence'] > 0.7:
-            top_confidence = candidates[0]['confidence']
-            alternatives = [c for c in candidates[1:] if c['confidence'] >= top_confidence * 0.9]
-            
-            if alternatives:
-                # Get list of all curve names for suite consistency check
-                all_curve_names = list(auxiliary_curves.keys()) if auxiliary_curves else []
-                
-                # Resolve conflict by preferring exact matches, then better context matches
-                resolved = self._resolve_conflict(
-                    candidates[0], 
-                    alternatives, 
-                    unit_clean, 
-                    value_range,
-                    all_curve_names=all_curve_names
-                )
-                return resolved['curve_type'], resolved['confidence'], resolved['curve_data']
-        
-        # Return best match or UNKNOWN
-        if candidates:
-            best = candidates[0]
-            return best['curve_type'], best['confidence'], best['curve_data']
-        
-        return 'UNKNOWN', 0.0, {}
-    
-    def _correlation_analysis(self, mnemonic: str, curve_data: Dict[str, Any], 
-                              auxiliary_curves: Dict[str, np.ndarray]) -> float:
-        """Analyze correlation with auxiliary curves for context-aware identification"""
-        # Simple correlation-based boost (can be enhanced)
-        curve_family = curve_data.get('curve_family', '')
-        confidence_boost = 0.0
-        
-        # Known curve family correlations
-        family_correlations = {
-            'resistivity': ['GR', 'SP', 'RHOB'],
-            'density': ['NPHI', 'GR', 'DT'],
-            'neutron': ['RHOB', 'GR', 'DT'],
-            'gamma_ray': ['SP', 'RHOB'],
-            'sonic': ['RHOB', 'NPHI']
-        }
-        
-        expected_curves = family_correlations.get(curve_family, [])
-        for aux_name, aux_data in auxiliary_curves.items():
-            if any(exp in aux_name.upper() for exp in expected_curves):
-                confidence_boost += 0.05
-        
-        return min(0.15, confidence_boost)  # Cap at 0.15
-    
-    def _resolve_conflict(self, primary: Dict, alternatives: List[Dict], 
-                          unit: str, value_range: Optional[Tuple[float, float]],
-                          all_curve_names: Optional[List[str]] = None) -> Dict:
-        """
-        Enhanced conflict resolution using multiple strategies
-        
-        Priority order:
-        1. Service company context (if available)
-        2. Curve suite consistency (check what other curves exist)
-        3. Unit match quality
-        4. Value range overlap
-        5. Confidence score
-        """
-        all_candidates = [primary] + alternatives
-        
-        # Strategy 1: Prefer exact method matches
-        exact_matches = [c for c in all_candidates if c['method'] == 'exact']
-        if len(exact_matches) == 1:
-            return exact_matches[0]
-        
-        # Strategy 2: Curve suite consistency
-        if all_curve_names:
-            # Check for related curves
-            suite_scores = {}
-            for candidate in all_candidates:
-                score = 0
-                curve_type = candidate['curve_type']
-                
-                # Known curve families
-                families = {
-                    'RESISTIVITY_DEEP': ['RESISTIVITY_MEDIUM', 'RESISTIVITY_SHALLOW'],
-                    'RESISTIVITY_MEDIUM': ['RESISTIVITY_DEEP', 'RESISTIVITY_SHALLOW'],
-                    'RESISTIVITY_SHALLOW': ['RESISTIVITY_DEEP', 'RESISTIVITY_MEDIUM'],
-                    'NEUTRON_POROSITY': ['BULK_DENSITY', 'PHOTOELECTRIC_FACTOR'],
-                    'BULK_DENSITY': ['NEUTRON_POROSITY', 'PHOTOELECTRIC_FACTOR'],
-                    'GAMMA_RAY_TOTAL': ['SPONTANEOUS_POTENTIAL'],
-                    'GAMMA_RAY_SPECTRAL': ['THORIUM', 'URANIUM', 'POTASSIUM']
-                }
-                
-                related_types = families.get(curve_type, [])
-                
-                # Check if related curves exist in dataset
-                for curve_name in all_curve_names:
-                    name_upper = curve_name.upper()
-                    for related_type in related_types:
-                        # Simple check if curve name contains related type keywords
-                        keywords = related_type.lower().split('_')
-                        if any(kw in name_upper.lower() for kw in keywords):
-                            score += 1
-                
-                suite_scores[candidate['curve_type']] = score
-            
-            # If one candidate has significantly more related curves, prefer it
-            if suite_scores:
-                max_score = max(suite_scores.values())
-                if max_score > 0:
-                    best_types = [t for t, s in suite_scores.items() if s == max_score]
-                    if len(best_types) == 1:
-                        return next(c for c in all_candidates if c['curve_type'] == best_types[0])
-        
-        # Strategy 3: Unit match quality
-        unit_clean = unit.upper().strip() if unit else ''
-        if unit_clean:
-            unit_matches = []
-            for candidate in all_candidates:
-                curve_units = [u.upper() for u in candidate['curve_data'].get('units', [])]
-                if unit_clean in curve_units:
-                    unit_matches.append(candidate)
-            
-            if len(unit_matches) == 1:
-                return unit_matches[0]
-            elif unit_matches:
-                all_candidates = unit_matches  # Narrow down to unit matches
-        
-        # Strategy 4: Value range overlap
-        if value_range:
-            best_overlap = 0.0
-            best_candidate = primary
-            
-            for candidate in all_candidates:
-                curve_range = candidate['curve_data'].get('range', [])
-                if len(curve_range) == 2:
-                    min_val, max_val = value_range
-                    curve_min, curve_max = curve_range
-                    
-                    overlap_min = max(min_val, curve_min)
-                    overlap_max = min(max_val, curve_max)
-                    
-                    if overlap_max > overlap_min:
-                        range_span = max(max_val, curve_max) - min(min_val, curve_min)
-                        overlap = (overlap_max - overlap_min) / range_span if range_span > 0 else 0
-                        
-                        if overlap > best_overlap:
-                            best_overlap = overlap
-                            best_candidate = candidate
-            
-            if best_overlap > 0.5:
-                return best_candidate
-        
-        # Strategy 5: Highest confidence
-        return max(all_candidates, key=lambda x: x['confidence'])
-    
-    def validate_curve_identification(self, curve_name: str, identified_type: str, confidence: float) -> Dict[str, Any]:
-        """Simple curve validation"""
-        if identified_type in self.mnemonic_database:
-            return {'valid': True, 'confidence_level': 'GOOD'}
-        return {'valid': False, 'confidence_level': 'LOW'}
-    
-    def get_curve_processing_parameters(self, curve_type: str) -> Dict[str, Any]:
-        """Simple processing parameters"""
-        return {'gap_filling_threshold': 100, 'denoising_method': 'auto'}
-
+# NOTE: RelativeRockPropertiesModel has been extracted to core/petrophysical_models.py
+# Import maintained here for backward compatibility during modularization
 
 #=============================================================================
-# STANDARDIZATION REPORTING SYSTEM - Critical for Professional Operations
+# CURVE IDENTIFICATION ENGINE (merged mnemonic library + curve manager)
 #=============================================================================
+# Single source of truth lives in core/curve_identification.py.
+# Backward-compatible aliases keep existing attribute names working until
+# call sites are migrated to self.curve_identifier.
+
+from core.curve_identification import (
+    CurveIdentificationEngine,
+    CurveInfo,
+    # Backward-compatible aliases for external imports/tests
+    ComprehensiveMnemonicLibrary,
+    ComprehensiveCurveManager,
+    build_mnemonic_database,
+)
 
 from core.reporting import StandardizationReporter
 
 
-# ============================================================================
-# ENHANCED SECURE CURVE MANAGEMENT SYSTEM
-# ============================================================================
-
-import threading
-from typing import Dict, Any, Optional, Tuple
-import numpy as np
-
-@dataclass
-class CurveInfo:
-    """Immutable curve information with full recognition data"""
-    curve_name: str
-    curve_type: str = 'UNKNOWN'
-    unit: str = ''
-    description: str = ''
-    type_confidence: float = 0.0
-    statistics: Dict[str, Any] = field(default_factory=dict)
-    validated: bool = False
-    
-    # Enhanced fields for comprehensive curve recognition
-    curve_family: str = 'unknown'
-    physics_type: str = ''
-    typical_range: Tuple[float, float] = (0.0, 1.0)
-    log_scale: bool = False
-    industry_color: str = '#000000'
-    track_scale: Tuple[float, float] = (0.0, 1.0)
-    processing_params: Dict[str, Any] = field(default_factory=dict)
-    
-    def __post_init__(self):
-        if not self.curve_name or not isinstance(self.curve_name, str):
-            raise ValueError("Invalid curve name")
-        if not 0.0 <= self.type_confidence <= 1.0:
-            raise ValueError("Invalid confidence value")
-        
-        # Ensure required statistics keys exist
-        required_stats = ['count', 'missing', 'missing_percent', 'min', 'max', 'mean', 'std']
-        for key in required_stats:
-            if key not in self.statistics:
-                self.statistics[key] = 0.0
-
-class ComprehensiveCurveManager:
-    """Secure management with full curve recognition capabilities"""
-    
-    def __init__(self):
-        self._curve_info: Dict[str, CurveInfo] = {}
-        self._lock = threading.RLock()
-        
-        # Keep the comprehensive mnemonic database - this is the crown jewel
-        self.mnemonic_database = self._build_comprehensive_database()
-        
-        # Keep industry constants
-        self.physical_constants = PetrophysicalConstants()
-    
-    def _build_comprehensive_database(self) -> Dict[str, Dict[str, Any]]:
-        """Keep the full comprehensive database - this is what makes the software great"""
-        return {
-            # === RESISTIVITY FAMILY ===
-            'RESISTIVITY_DEEP': {
-                'mnemonics': ['ILD', 'LLD', 'RLLD', 'AT90', 'AHT90', 'RT_HRLA'],
-                'units': ['OHMM', 'ohm.m', 'OHM-M'],
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Deep investigation resistivity',
-                'physics': 'electromagnetic_induction',
-                'typical_values': {'shale': [1, 20], 'sand': [10, 1000], 'carbonate': [100, 10000]},
-                'industry_color': '#FF0000',
-                'track_scale': (0.2, 2000),
-                'wavelet_type': 'db8',
-                'filter_params': {'bilateral_sigma_s': 10.0, 'bilateral_sigma_r': 0.1}
-            },
-            'RESISTIVITY_MEDIUM': {
-                'mnemonics': ['ILM', 'LLM', 'RLLM', 'AT60', 'AHT60', 'RT_MRLA'],
-                'units': ['OHMM', 'ohm.m', 'OHM-M'],
-                'range': [0.1, 10000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Medium investigation resistivity',
-                'industry_color': '#FF4444',
-                'track_scale': (0.2, 2000),
-                'wavelet_type': 'db8'
-            },
-            'RESISTIVITY_SHALLOW': {
-                'mnemonics': ['ILS', 'LLS', 'RLLS', 'AT30', 'AHT30', 'RT_SRLA', 'SFLU', 'MSFL'],
-                'units': ['OHMM', 'ohm.m', 'OHM-M'],
-                'range': [0.1, 1000],
-                'log_scale': True,
-                'curve_family': 'resistivity',
-                'description': 'Shallow investigation resistivity',
-                'industry_color': '#FF8888',
-                'track_scale': (0.2, 1000),
-                'wavelet_type': 'db8'
-            },
-            
-            # === GAMMA RAY FAMILY ===
-            'GAMMA_RAY_TOTAL': {
-                'mnemonics': ['GR', 'GRC', 'GRCX', 'HSGR', 'ECGR', 'SGR', 'TGR'],
-                'units': ['GAPI', 'API', 'cps', 'CPS'],
-                'range': [0, 500],
-                'log_scale': False,
-                'curve_family': 'gamma_ray',
-                'description': 'Total gamma ray',
-                'physics': 'natural_radioactivity',
-                'typical_values': {'shale': [80, 200], 'sand': [10, 80], 'carbonate': [5, 50]},
-                'industry_color': '#008000',
-                'track_scale': (0, 150),
-                'wavelet_type': 'db6',
-                'filter_params': {'savgol_window': 11, 'savgol_poly': 3}
-            },
-            
-            # === NEUTRON POROSITY FAMILY ===
-            'NEUTRON_POROSITY': {
-                'mnemonics': ['NPHI', 'NPOR', 'NEUT', 'TNPH', 'CNL', 'SNPH', 'APLC'],
-                'units': ['V/V', 'PU', 'FRAC', '%', 'PERCENT'],
-                'range': [-0.15, 0.6],
-                'curve_family': 'neutron',
-                'description': 'Neutron porosity',
-                'physics': 'neutron_hydrogen_interaction',
-                'typical_values': {'tight': [0, 0.1], 'reservoir': [0.1, 0.3], 'vuggy': [0.3, 0.6]},
-                'industry_color': '#0000FF',
-                'track_scale': (0.45, -0.15),  # Reversed scale
-                'wavelet_type': 'coif4',
-                'filter_params': {'bilateral_sigma_s': 8.0, 'bilateral_sigma_r': 0.05}
-            },
-            
-            # === DENSITY FAMILY ===
-            'BULK_DENSITY': {
-                'mnemonics': ['RHOB', 'RHOZ', 'DENB', 'DENS', 'ROHB', 'ZDEN', 'BDCN'],
-                'units': ['G/C3', 'g/cm3', 'G/CM3', 'KG/M3'],
-                'range': [1.0, 3.5],
-                'curve_family': 'density',
-                'description': 'Formation bulk density',
-                'physics': 'gamma_ray_compton_scattering',
-                'typical_values': {'gas': [1.8, 2.2], 'oil': [2.0, 2.4], 'water': [2.2, 2.8]},
-                'industry_color': '#FF0000',
-                'track_scale': (1.95, 2.95),
-                'wavelet_type': 'db4',
-                'filter_params': {'median_kernel': 5}
-            },
-            
-            # === SONIC FAMILY ===
-            'SONIC_COMPRESSIONAL': {
-                'mnemonics': ['DT', 'DTC', 'DTCO', 'AC', 'DTSM', 'DTLN'],
-                'units': ['US/F', 'us/ft', 'USEC/FT'],
-                'range': [40, 200],
-                'curve_family': 'sonic',
-                'description': 'Compressional transit time',
-                'physics': 'acoustic_wave_propagation',
-                'industry_color': '#800080',
-                'track_scale': (140, 40),  # Reversed scale
-                'wavelet_type': 'bior4.4',
-                'filter_params': {'bilateral_sigma_s': 12.0, 'bilateral_sigma_r': 0.2}
-            },
-            
-            # === PHOTOELECTRIC FACTOR ===
-            'PHOTOELECTRIC_FACTOR': {
-                'mnemonics': ['PEF', 'PE', 'PEFZ', 'PEFE', 'PEFR'],
-                'units': ['B/E', 'b/e', 'BARN/E'],
-                'range': [0, 20],
-                'curve_family': 'photoelectric',
-                'description': 'Photoelectric factor',
-                'physics': 'photoelectric_absorption',
-                'typical_values': {'sandstone': [1.6, 1.8], 'limestone': [5.0, 5.1], 'dolomite': [3.1, 3.2]},
-                'industry_color': '#FF00FF',
-                'track_scale': (0, 20),
-                'wavelet_type': 'sym5'
-            },
-            
-            # === CALIPER ===
-            'CALIPER': {
-                'mnemonics': ['CALI', 'CAL', 'CALS', 'CALX', 'CALL', 'CALM'],
-                'units': ['IN', 'in', 'INCH', 'MM'],
-                'range': [4, 20],
-                'curve_family': 'caliper',
-                'description': 'Borehole caliper',
-                'physics': 'mechanical_measurement',
-                'typical_values': {'in_gauge': [6, 8.5], 'out_of_gauge': [8.5, 16]},
-                'industry_color': '#000000',
-                'track_scale': (6, 16),
-                'wavelet_type': 'db4'
-            },
-            
-            # === SPONTANEOUS POTENTIAL ===
-            'SPONTANEOUS_POTENTIAL': {
-                'mnemonics': ['SP', 'SPC', 'SPCX', 'SPLG'],
-                'units': ['MV', 'mv', 'MILLIVOLT'],
-                'range': [-200, 100],
-                'curve_family': 'spontaneous_potential',
-                'description': 'Spontaneous potential',
-                'physics': 'electrochemical_potential',
-                'typical_values': {'shale': [-20, 0], 'sand': [-100, -20], 'carbonate': [-50, 0]},
-                'industry_color': '#FFA500',
-                'track_scale': (-200, 100),
-                'wavelet_type': 'db6'
-            },
-            
-            # === DEPTH ===
-            'DEPTH': {
-                'mnemonics': ['DEPTH', 'DEPT', 'MD', 'TVD', 'TVDSS', 'KB', 'DF'],
-                'units': ['FT', 'ft', 'M', 'm', 'FEET', 'METERS'],
-                'range': [0, 50000],
-                'curve_family': 'depth',
-                'description': 'Depth measurement',
-                'physics': 'depth_reference',
-                'industry_color': '#000000',
-                'track_scale': (0, 10000),
-                'wavelet_type': 'db2'
-            }
-        }
-    
-    def identify_curve(self, mnemonic: str, unit: str = '', description: str = '') -> Tuple[str, float, Dict[str, Any]]:
-        """Identify curve type with confidence and detailed info using mnemonic database"""
-        # Clean and normalize mnemonic (remove punctuation, extra spaces)
-        mnemonic_clean = mnemonic.upper().strip()
-        mnemonic_normalized = mnemonic_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
-        
-        unit_clean = unit.upper().strip() if unit else ''
-        desc_clean = description.upper().strip() if description else ''
-        
-        best_match = None
-        best_confidence = 0.0
-        best_info: Dict[str, Any] = {}
-        
-        for curve_type, curve_data in self.mnemonic_database.items():
-            confidence = 0.0
-            
-            # Exact mnemonic match (original and normalized)
-            curve_mnemonics = [m.upper() for m in curve_data.get('mnemonics', [])]
-            if mnemonic_clean in curve_mnemonics:
-                confidence = 0.95
-            else:
-                curve_normalized = [m.upper().replace('.', '').replace('_', '').replace('-', '').replace(' ', '') 
-                                   for m in curve_data.get('mnemonics', [])]
-                if mnemonic_normalized in curve_normalized:
-                    confidence = 0.9
-            
-            # Unit compatibility bonus
-            if unit_clean:
-                curve_units = [u.upper() for u in curve_data.get('units', [])]
-                if unit_clean in curve_units:
-                    confidence += 0.1
-            
-            # Description keyword matching
-            if desc_clean:
-                curve_desc = curve_data.get('description', '').upper()
-                desc_words = curve_desc.split()
-                matches = sum(1 for word in desc_words if word in desc_clean)
-                confidence += min(0.05, matches * 0.01)
-            
-            if confidence > best_confidence:
-                best_confidence = confidence
-                best_match = curve_type
-                best_info = curve_data.copy()
-        
-        # Enhanced partial matching for unknown mnemonics
-        if best_confidence < 0.5:
-            for curve_type, curve_data in self.mnemonic_database.items():
-                for known_mnemonic in curve_data.get('mnemonics', []):
-                    known_clean = known_mnemonic.upper().strip()
-                    known_normalized = known_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
-                    
-                    # Multiple matching strategies
-                    if mnemonic_clean == known_clean:
-                        confidence = 0.9
-                    elif mnemonic_normalized == known_normalized:
-                        confidence = 0.85
-                    elif mnemonic_clean in known_clean and len(mnemonic_clean) >= 3:
-                        confidence = 0.7
-                    elif known_clean in mnemonic_clean and len(known_clean) >= 3:
-                        confidence = 0.7
-                    elif mnemonic_normalized in known_normalized and len(mnemonic_normalized) >= 3:
-                        confidence = 0.65
-                    elif known_normalized in mnemonic_normalized and len(known_normalized) >= 3:
-                        confidence = 0.65
-                    else:
-                        continue
-                    
-                    if confidence > best_confidence:
-                        best_confidence = confidence
-                        best_match = curve_type
-                        best_info = curve_data.copy()
-        
-        # Cap confidence at 1.0 (unit and description bonuses can push it slightly over)
-        best_confidence = min(1.0, best_confidence)
-        
-        return best_match or 'UNKNOWN', best_confidence, best_info
-    
-    def detect_and_resolve_duplicates(self, identified_curves: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Detect multiple curves mapped to same type and resolve duplicates
-        
-        Args:
-            identified_curves: Dict of {curve_name: CurveInfo} or {curve_name: dict with curve_type, type_confidence, statistics}
-        
-        Returns:
-            Dict with:
-                - 'duplicates_found': Dict[curve_type, List[curve_names]]
-                - 'resolution_needed': List[curve_type] requiring user input
-                - 'auto_resolved': Dict[curve_type, selected_curve_name]
-        """
-        # Group curves by their identified type
-        type_mapping = {}
-        for curve_name, curve_info in identified_curves.items():
-            # Handle both CurveInfo objects and dicts
-            if hasattr(curve_info, 'curve_type'):
-                curve_type = curve_info.curve_type
-                confidence = curve_info.type_confidence
-                stats = curve_info.statistics if hasattr(curve_info, 'statistics') else {}
-                unit = curve_info.unit if hasattr(curve_info, 'unit') else ''
-            else:
-                curve_type = curve_info.get('curve_type', 'UNKNOWN')
-                confidence = curve_info.get('type_confidence', 0.0)
-                stats = curve_info.get('statistics', {})
-                unit = curve_info.get('unit', '')
-            
-            if curve_type == 'UNKNOWN':
-                continue
-            
-            if curve_type not in type_mapping:
-                type_mapping[curve_type] = []
-            type_mapping[curve_type].append({
-                'name': curve_name,
-                'confidence': confidence,
-                'missing_pct': stats.get('missing_percent', 100) if isinstance(stats, dict) else 100,
-                'unit': unit
-            })
-        
-        # Find duplicates (more than one curve per type)
-        duplicates = {
-            curve_type: curves 
-            for curve_type, curves in type_mapping.items() 
-            if len(curves) > 1
-        }
-        
-        if not duplicates:
-            return {
-                'duplicates_found': {},
-                'resolution_needed': [],
-                'auto_resolved': {}
-            }
-        
-        # Attempt automatic resolution based on data quality
-        auto_resolved = {}
-        needs_user_input = []
-        
-        for curve_type, candidates in duplicates.items():
-            if len(candidates) == 2:
-                # Auto-resolve if one curve is significantly better quality
-                sorted_candidates = sorted(
-                    candidates, 
-                    key=lambda x: (x['confidence'], -x['missing_pct']),
-                    reverse=True
-                )
-                
-                best = sorted_candidates[0]
-                second = sorted_candidates[1]
-                
-                # Auto-select if:
-                # 1. Confidence difference > 0.15, OR
-                # 2. Missing data difference > 30%, OR
-                # 3. One has < 10% missing, other has > 40% missing
-                if (best['confidence'] - second['confidence'] > 0.15 or
-                    second['missing_pct'] - best['missing_pct'] > 30 or
-                    (best['missing_pct'] < 10 and second['missing_pct'] > 40)):
-                    auto_resolved[curve_type] = best['name']
-                else:
-                    needs_user_input.append(curve_type)
-            else:
-                # 3+ candidates always need user input
-                needs_user_input.append(curve_type)
-        
-        return {
-            'duplicates_found': duplicates,
-            'resolution_needed': needs_user_input,
-            'auto_resolved': auto_resolved
-        }
-    
-    def create_comprehensive_curve_info(self, curve_name: str, unit: str = '', description: str = '') -> CurveInfo:
-        """Create curve info with full recognition capabilities"""
-        with self._lock:
-            # Use the enhanced identification method
-            curve_type, confidence, curve_data = self.identify_curve(curve_name, unit, description)
-            
-            # Extract comprehensive information
-            curve_family = curve_data.get('curve_family', 'unknown')
-            physics_type = curve_data.get('physics', '')
-            typical_range = tuple(curve_data.get('range', [0.0, 1.0]))
-            log_scale = curve_data.get('log_scale', False)
-            industry_color = curve_data.get('industry_color', '#000000')
-            track_scale = tuple(curve_data.get('track_scale', typical_range))
-            
-            # Processing parameters
-            processing_params = {
-                'wavelet_type': curve_data.get('wavelet_type', 'db4'),
-                'filter_params': curve_data.get('filter_params', {}),
-                'typical_values': curve_data.get('typical_values', {}),
-                'gap_fill_params': {
-                    'max_gap_size': 100 if curve_family in ['resistivity', 'gamma_ray'] else 50,
-                    'confidence_threshold': 0.8,
-                    'method_priority': ['gaussian_process', 'cubic_spline', 'linear']
-                }
-            }
-            
-            # Create comprehensive curve info
-            curve_info = CurveInfo(
-                curve_name=curve_name,
-                curve_type=curve_type,
-                unit=unit or curve_data.get('units', [''])[0],
-                description=description or curve_data.get('description', f'Curve {curve_name}'),
-                type_confidence=confidence,
-                curve_family=curve_family,
-                physics_type=physics_type,
-                typical_range=typical_range,
-                log_scale=log_scale,
-                industry_color=industry_color,
-                track_scale=track_scale,
-                processing_params=processing_params
-            )
-            
-            self._curve_info[curve_name] = curve_info
-            return curve_info
-    
-    def get_curve_info(self, curve_name: str) -> CurveInfo:
-        """Get curve info with automatic comprehensive identification"""
-        with self._lock:
-            if curve_name not in self._curve_info:
-                # Auto-create with full recognition
-                return self.create_comprehensive_curve_info(curve_name)
-            return self._curve_info[curve_name]
-    
-    def get_processing_params_for_curve(self, curve_name: str) -> Dict[str, Any]:
-        """Get curve-specific processing parameters"""
-        curve_info = self.get_curve_info(curve_name)
-        return curve_info.processing_params
-    
-    def get_optimal_wavelet_for_curve(self, curve_name: str) -> str:
-        """Get optimal wavelet type for specific curve"""
-        curve_info = self.get_curve_info(curve_name)
-        return curve_info.processing_params.get('wavelet_type', 'db4')
-    
-    def get_industry_color_for_curve(self, curve_name: str) -> str:
-        """Get standard industry color for curve"""
-        curve_info = self.get_curve_info(curve_name)
-        return curve_info.industry_color
-    
-    def get_track_scale_for_curve(self, curve_name: str) -> Tuple[float, float]:
-        """Get standard track scale for curve"""
-        curve_info = self.get_curve_info(curve_name)
-        return curve_info.track_scale
-    
-    def is_log_scale_curve(self, curve_name: str) -> bool:
-        """Check if curve should use logarithmic scale"""
-        curve_info = self.get_curve_info(curve_name)
-        return curve_info.log_scale
-    
-    def get_curves_by_family(self, family: str) -> Dict[str, CurveInfo]:
-        """Get all curves of a specific family"""
-        with self._lock:
-            return {name: info for name, info in self._curve_info.items() 
-                    if info.curve_family == family}
-    
-    def validate_curve_range(self, curve_name: str, data: np.ndarray) -> Dict[str, Any]:
-        """Validate curve data against expected ranges"""
-        curve_info = self.get_curve_info(curve_name)
-        min_expected, max_expected = curve_info.typical_range
-        
-        valid_data = data[~np.isnan(data)]
-        if len(valid_data) == 0:
-            return {'valid': False, 'reason': 'no_valid_data'}
-        
-        min_actual = np.min(valid_data)
-        max_actual = np.max(valid_data)
-        
-        # Allow some tolerance for real-world data
-        tolerance_factor = 2.0
-        min_allowed = min_expected / tolerance_factor
-        max_allowed = max_expected * tolerance_factor
-        
-        range_valid = min_allowed <= min_actual and max_actual <= max_allowed
-        
-        return {
-            'valid': range_valid,
-            'expected_range': (min_expected, max_expected),
-            'actual_range': (min_actual, max_actual),
-            'confidence': curve_info.type_confidence,
-            'curve_type': curve_info.curve_type
-        }
 # ============================================================================
 # ENHANCED SECURE VISUALIZATION AND STATUS MANAGEMENT SYSTEM
 # ============================================================================
@@ -1778,7 +562,10 @@ import tkinter as tk
 from datetime import datetime
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
-from mpl_toolkits.mplot3d import Axes3D
+try:
+    from mpl_toolkits.mplot3d import Axes3D
+except Exception:
+    Axes3D = None
 import matplotlib.pyplot as plt
 
 from ui.visualization import SecureVisualizationManager
@@ -1870,7 +657,7 @@ class GapFillingParameters:
     time_series_order: Tuple[int, int, int] = (2, 1, 2)
     geological_context_aware: bool = True
     min_formation_penetration: float = 10.0  # meters
-    geological_gap_threshold: int = 200  # NEW: Threshold to distinguish geological gaps from data errors
+    geological_gap_threshold: int = GAP_THRESHOLD_GEOLOGICAL  # Threshold to distinguish geological gaps from data errors
 class AdvancedGapFiller:
     """
     Sophisticated gap filling engine with multiple advanced algorithms
@@ -1902,11 +689,10 @@ class AdvancedGapFiller:
        - Runge, C. (1901): "Über empirische Funktionen"
        - Classical interpolation method with optimal degree selection
     
-    VALIDATION STUDIES:
-    - Tested on 10,000+ synthetic gaps with known solutions
-    - Validated against field data from 200+ wells
-    - Industry benchmark: 90-98% accuracy for small gaps, 75-90% for large gaps
-    - Peer-reviewed in Mathematical Geosciences (2018)
+    ALGORITHM SELECTION:
+    - Decision tree based on gap size and data characteristics
+    - Automatic method selection using statistical criteria
+    - Fallback mechanisms ensure robustness
     
     ALGORITHM SELECTION:
     - Decision tree based on gap size and data characteristics
@@ -1914,30 +700,263 @@ class AdvancedGapFiller:
     - Fallback mechanisms ensure robustness
     """
     
-    def __init__(self, params: GapFillingParameters):
+    def __init__(self, params: GapFillingParameters, error_callback: Optional[Any] = None, error_handler: Optional[Any] = None, log_processing: Optional[Callable[[str], None]] = None):
         self.params = params
+        self._error_callback = error_callback
+        self.error_handler = error_handler  # Centralized error handler
+        self.log_processing = log_processing if log_processing is not None else (lambda msg: None)  # No-op if not provided
         # Debug flag for verbose gap decision logging
         self.debug = False
 
-    def _notify_error(self, title: str, message: str) -> None:
-        """UI-safe error notification hook.
-        If the host application injects a UI scheduler via `ui_notify`, use it; otherwise fallback.
-        """
-        try:
-            if hasattr(self, 'ui_notify') and callable(getattr(self, 'ui_notify')):
-                self.ui_notify(title, message)
+    def _report_error(self, title: str, message: str) -> None:
+        """Dispatch errors through centralized error handler or callback, falling back to messagebox."""
+        # Use centralized error handler if available
+        if self.error_handler:
+            try:
+                context = self.error_handler.create_context(
+                    operation="Gap Filling",
+                    component="AdvancedGapFiller",
+                    user_action="Processing data",
+                    remediation_hint="Please check the error message and data quality."
+                )
+                # Determine severity from title
+                severity = ErrorSeverity.ERROR
+                if "Critical" in title or "Fatal" in title:
+                    severity = ErrorSeverity.CRITICAL
+                elif "Warning" in title:
+                    severity = ErrorSeverity.WARNING
+                
+                error = Exception(message)
+                self.error_handler.handle_error(error, context, severity=severity, show_dialog=True, log_error=True)
                 return
-        except Exception:
-            pass
+            except Exception as handler_error:
+                # Centralized handler failed - fall through to callback
+                if hasattr(self, 'log_processing'):
+                    try:
+                        self.log_processing(f"Warning: Centralized error handler failed: {type(handler_error).__name__}: {str(handler_error)}")
+                    except Exception:
+                        pass
+        
+        # Fallback to callback if available
+        if callable(self._error_callback):
+            try:
+                self._error_callback(title, message)
+                return
+            except Exception as callback_error:
+                # Error callback failed - log but continue to fallback
+                if hasattr(self, 'log_processing'):
+                    self.log_processing(f"Warning: Error callback failed: {type(callback_error).__name__}: {str(callback_error)}")
+        
+        # Final fallback: direct dialog (may be unsafe off main thread but last resort)
         try:
-            # Fallback (may still be called off-thread in rare cases)
-            from tkinter import messagebox
             messagebox.showerror(title, message)
-        except Exception:
-            # Last-resort: no UI available
-            print(f"[ERROR] {title}: {message}")
+        except Exception as dialog_error:
+            # Even fallback dialog failed - log for debugging
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"Warning: Error dialog display failed: {type(dialog_error).__name__}: {str(dialog_error)}")
+            # Last resort: print to console
+            print(f"ERROR: {title}: {message}")
 
         
+    def _filter_fillable_gaps(self, gaps: List[Dict], curve_name: str, curve_type: str, 
+                             max_gap_allowed: int, allowed_methods: List[str], 
+                             data: np.ndarray) -> Tuple[List[Dict], List[Dict]]:
+        """Filter gaps based on curve-specific thresholds and geological context.
+        
+        Returns:
+            Tuple of (fillable_gaps, skipped_gaps)
+        """
+        fillable_gaps = []
+        skipped_gaps = []
+        
+        for gap in gaps:
+            gap_size = gap.get('size', gap.get('end', 0) - gap.get('start', 0))
+            
+            # Classify gap type (geological feature vs data error)
+            geological_threshold = self.params.geological_gap_threshold if hasattr(self.params, 'geological_gap_threshold') else GAP_THRESHOLD_GEOLOGICAL
+            if gap_size >= geological_threshold:
+                gap['gap_type'] = 'geological'
+                gap['gap_classification'] = f"Geological/logging feature (>={geological_threshold} pts)"
+            else:
+                gap['gap_type'] = 'data_error'
+                gap['gap_classification'] = f"Data error (<{geological_threshold} pts)"
+            
+            # Apply curve-specific gap size threshold
+            if gap_size <= max_gap_allowed:
+                # Log decision for debugging
+                if self.debug:
+                    print(f"[GAP DECISION] {curve_name} ({curve_type}): Gap size {gap_size} <= threshold {max_gap_allowed} - FILLING [{gap['gap_type']}]")
+                
+                # Validate data quality before filling
+                data_quality = PHYSICAL_CONSTANTS.validate_curve_data_enhanced(data, curve_type)
+                completeness_grade = PHYSICAL_CONSTANTS.assess_data_completeness(data)
+                
+                gap['should_fill'] = True
+                gap['allowed_methods'] = allowed_methods
+                gap['data_quality'] = data_quality
+                gap['completeness_grade'] = completeness_grade
+                fillable_gaps.append(gap)
+            else:
+                # Log decision for debugging  
+                if self.debug:
+                    print(f"[GAP DECISION] {curve_name} ({curve_type}): Gap size {gap_size} > threshold {max_gap_allowed} - SKIPPING [{gap['gap_type']}]")
+                gap['should_fill'] = False
+                gap['skip_reason'] = f"Gap size ({gap_size}) exceeds curve-specific threshold ({max_gap_allowed})"
+                skipped_gaps.append(gap)
+        
+        # Log gap processing summary
+        if self.debug:
+            try:
+                print(f"  - {curve_name}: Found {len(gaps)} gaps, filling {len(fillable_gaps)}, skipping {len(skipped_gaps)}")
+                if skipped_gaps:
+                    for gap in skipped_gaps:
+                        print(f"    - Skipped gap: {gap.get('size', 0)} points (exceeds threshold)")
+            except Exception as print_error:
+                # Debug print failed - log but don't fail gap filling
+                if hasattr(self, 'log_processing'):
+                    self.log_processing(f"Warning: Debug print failed: {type(print_error).__name__}: {str(print_error)}")
+        
+        # Continue with geological context filtering (if any)
+        final_gaps = []
+        for gap in fillable_gaps:
+            if gap.get('geological_classification'):
+                classification = gap['geological_classification']
+                if classification.should_fill:
+                    final_gaps.append(gap)
+                else:
+                    # Skip based on geological analysis
+                    skipped_gaps.append(gap)
+            else:
+                # No geological context - use the curve-specific decision
+                final_gaps.append(gap)
+        
+        return final_gaps, skipped_gaps
+    
+    def _process_large_gap(self, gap: Dict, large_gap_treatment: str, rrp_model: Optional[Any],
+                           current_curve_name: str, data: np.ndarray, auxiliary_curves: Optional[Dict],
+                           filled_data: np.ndarray, uncertainty: np.ndarray, confidence: np.ndarray) -> Dict[str, Any]:
+        """Process large gaps using specialized methods.
+        
+        Returns:
+            Dict with 'filled' (bool) and 'result' (gap result dict if filled)
+        """
+        if large_gap_treatment == 'skip':
+            return {'filled': False}
+        
+        if large_gap_treatment == 'formation_based' and rrp_model:
+            # Use Relative Rock Properties approach
+            try:
+                result = rrp_model.fill_large_gap(
+                    current_curve_name, gap['start'], gap['end'], data, auxiliary_curves
+                )
+                
+                if result:
+                    # Update arrays
+                    gap_slice = slice(gap['start'], gap['end'])
+                    filled_data[gap_slice] = result['values']
+                    uncertainty[gap_slice] = result['uncertainty']
+                    confidence[gap_slice] = result['confidence']
+                    
+                    return {
+                        'filled': True,
+                        'result': {
+                            'gap': gap,
+                            'method': 'relative_rock_properties',
+                            'quality': result['quality'],
+                            'uncertainty_mean': np.mean(result['uncertainty'])
+                        }
+                    }
+            except Exception as e:
+                # Log algorithm fallback with scientific transparency
+                if hasattr(self, 'log_processing'):
+                    self.log_processing(f"[ALGORITHM FALLBACK] Relative Rock Properties → Standard Methods")
+                    self.log_processing(f"   Reason: {str(e)}")
+                    self.log_processing(f"   Fallback Chain: Kriging → Cubic Spline → Linear Interpolation")
+                
+                if hasattr(self, '_notify_error'):
+                    self._notify_error("Gap Filling Error", f"Advanced method unavailable: {e}")
+                elif hasattr(self, '_report_error'):
+                    self._report_error("Gap Filling Error", f"Failed to fill large gap: {e}")
+        
+        return {'filled': False}
+    
+    def _process_standard_gap(self, gap: Dict, curve_type: str, auxiliary_curves: Optional[Dict],
+                              physics_constraints: Optional[Dict], data: np.ndarray,
+                              filled_data: np.ndarray, uncertainty: np.ndarray, 
+                              confidence: np.ndarray) -> Optional[Dict]:
+        """Process standard gaps using optimal method selection.
+        
+        Returns:
+            Gap result dict if successful, None otherwise
+        """
+        # Select optimal method for this gap with transparency
+        method = self._select_optimal_method(gap, curve_type, auxiliary_curves)
+        
+        # Log method selection rationale for scientific audit
+        if hasattr(self, 'log_processing'):
+            self.log_processing(f"[METHOD SELECTION] Gap {gap['start']}-{gap['end']}: {method}")
+            self.log_processing(f"   Size: {gap['size']} points | Curve: {curve_type}")
+            if auxiliary_curves:
+                self.log_processing(f"   Auxiliary curves available: {len(auxiliary_curves)}")
+            self.log_processing(f"   Selection criteria: Gap size, curve type, data availability")
+        
+        try:
+            result = self._fill_single_gap(
+                data, gap, method, curve_type, 
+                auxiliary_curves, physics_constraints
+            )
+            
+            # Update arrays
+            gap_slice = slice(gap['start'], gap['end'])
+            filled_data[gap_slice] = result['values']
+            uncertainty[gap_slice] = result['uncertainty']
+            confidence[gap_slice] = result['confidence']
+            
+            # Log successful gap filling with method transparency
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"[GAP FILLED] Method: {method} | Quality: {result['quality']:.3f} | Size: {gap['size']} points")
+                if result.get('method_details'):
+                    self.log_processing(f"   Details: {result['method_details']}")
+            
+            return {
+                'gap': gap,
+                'method': method,
+                'quality': result['quality'],
+                'uncertainty_mean': np.mean(result['uncertainty']),
+                'method_transparency': f"{method} (Q={result['quality']:.3f})"
+            }
+        except Exception as e:
+            # Log final fallback with scientific rationale
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"[FINAL FALLBACK] All primary methods failed → Linear Interpolation")
+                self.log_processing(f"   Gap: {gap['start']}-{gap['end']} ({gap['size']} points)")
+                self.log_processing(f"   Reason: {str(e)}")
+                self.log_processing(f"   Scientific Validity: Linear interpolation maintains continuity")
+            
+            if hasattr(self, '_notify_error'):
+                self._notify_error("Gap Filling Error", f"Primary methods failed, using linear fallback: {e}")
+            elif hasattr(self, '_report_error'):
+                self._report_error("Gap Filling Error", f"Failed to fill gap {gap['start']}-{gap['end']}: {e}")
+            
+            # Use simple linear interpolation as fallback
+            try:
+                gap_slice = slice(gap['start'], gap['end'])
+                fallback_result = self._linear_interpolation_fallback(data, gap)
+                filled_data[gap_slice] = fallback_result
+                confidence[gap_slice] = 0.5  # Lower confidence for fallback
+                uncertainty[gap_slice] = np.abs(fallback_result) * 0.1  # Estimate uncertainty
+                
+                return {
+                    'gap': gap,
+                    'method': 'linear_fallback',
+                    'quality': 0.5,
+                    'uncertainty_mean': np.mean(uncertainty[gap_slice])
+                }
+            except Exception as fallback_error:
+                if hasattr(self, 'log_processing'):
+                    self.log_processing(f"Fallback interpolation also failed: {fallback_error}")
+                return None
+    
     def fill_gaps(self, data: np.ndarray, curve_type: str, 
                   auxiliary_curves: Optional[Dict[str, np.ndarray]] = None,
                   physics_constraints: Optional[Dict] = None,
@@ -1968,70 +987,10 @@ class AdvancedGapFiller:
         # Identify gaps with geological context awareness
         gaps = self._identify_gaps(data, depth, geological_context, curve_type)
         
-        # ENHANCED: Filter gaps based on curve-specific thresholds
-        fillable_gaps = []
-        skipped_gaps = []
-        
-        for gap in gaps:
-            gap_size = gap.get('size', gap.get('end', 0) - gap.get('start', 0))
-            
-            # NEW: Classify gap type (geological feature vs data error)
-            geological_threshold = self.params.geological_gap_threshold if hasattr(self.params, 'geological_gap_threshold') else 200
-            if gap_size >= geological_threshold:
-                gap['gap_type'] = 'geological'
-                gap['gap_classification'] = f"Geological/logging feature (>={geological_threshold} pts)"
-            else:
-                gap['gap_type'] = 'data_error'
-                gap['gap_classification'] = f"Data error (<{geological_threshold} pts)"
-            
-            # Apply curve-specific gap size threshold
-            if gap_size <= max_gap_allowed:
-                # Log decision for debugging
-                if self.debug:
-                    print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} <= threshold {max_gap_allowed} - FILLING [{gap['gap_type']}]")
-                
-                # Validate data quality before filling
-                data_quality = PHYSICAL_CONSTANTS.validate_curve_data_enhanced(data, curve_type)
-                completeness_grade = PHYSICAL_CONSTANTS.assess_data_completeness(data)
-                
-                gap['should_fill'] = True
-                gap['allowed_methods'] = allowed_methods
-                gap['data_quality'] = data_quality
-                gap['completeness_grade'] = completeness_grade
-                fillable_gaps.append(gap)
-            else:
-                # Log decision for debugging  
-                if self.debug:
-                    print(f"[GAP DECISION] {curve_name_for_lookup} ({curve_type}): Gap size {gap_size} > threshold {max_gap_allowed} - SKIPPING [{gap['gap_type']}]")
-                gap['should_fill'] = False
-                gap['skip_reason'] = f"Gap size ({gap_size}) exceeds curve-specific threshold ({max_gap_allowed})"
-                skipped_gaps.append(gap)
-        
-        # Log gap processing summary
-        if self.debug:
-            try:
-                print(f"  - {curve_name_for_lookup}: Found {len(gaps)} gaps, filling {len(fillable_gaps)}, skipping {len(skipped_gaps)}")
-                if skipped_gaps:
-                    for gap in skipped_gaps:
-                        print(f"    - Skipped gap: {gap.get('size', 0)} points (exceeds threshold)")
-            except Exception:
-                pass
-        
-        # Continue with geological context filtering (if any)
-        final_gaps = []
-        for gap in fillable_gaps:
-            if gap.get('geological_classification'):
-                classification = gap['geological_classification']
-                if classification.should_fill:
-                    final_gaps.append(gap)
-                else:
-                    # Skip based on geological analysis
-                    skipped_gaps.append(gap)
-            else:
-                # No geological context - use the curve-specific decision
-                final_gaps.append(gap)
-        
-        fillable_gaps = final_gaps
+        # Filter fillable gaps using extracted method
+        fillable_gaps, skipped_gaps = self._filter_fillable_gaps(
+            gaps, curve_name_for_lookup, curve_type, max_gap_allowed, allowed_methods, data
+        )
         
         if not fillable_gaps:
             return {
@@ -2061,13 +1020,12 @@ class AdvancedGapFiller:
         if hasattr(self, 'large_gap_var'):
             large_gap_treatment = self.large_gap_var.get()
         
+        # Canonical name for the curve under analysis (used by RRP when available)
+        current_curve_name = f"curve_{curve_type}"
+
         # Initialize RRP model if needed for large gaps
         if large_gap_treatment == 'formation_based' and any(gap['size'] > large_gap_threshold for gap in gaps):
-            rrp_model = RelativeRockPropertiesModel()
-            
-            # Pass logging capability if available (Phase 1C enhancement integration)
-            if hasattr(self, 'log_processing'):
-                rrp_model.log_processing = self.log_processing
+            rrp_model = RelativeRockPropertiesModel(log_processing=self.log_processing)
             
             # Create a dictionary of all available curves
             all_curves = {}
@@ -2076,125 +1034,46 @@ class AdvancedGapFiller:
                     all_curves[curve_name] = curve_data
             
             # Add the current curve with a proper name
-            current_curve_name = curve_name if curve_name else f"curve_{curve_type}"
             all_curves[current_curve_name] = data
             
             # Train the model
             try:
                 rrp_model.train(all_curves)
             except Exception as e:
-                self._notify_error("Gap Filling Error", f"Failed to train Rock Properties model: {e}")
+                if hasattr(self, '_notify_error'):
+                    self._notify_error("Gap Filling Error", f"Failed to train Rock Properties model: {e}")
+                elif hasattr(self, '_report_error'):
+                    self._report_error("Gap Filling Error", f"Failed to train Rock Properties model: {e}")
                 rrp_model = None
         
-        for gap in gaps:
+        for gap in fillable_gaps:
             if gap['size'] > self.params.max_gap_size:
                 # Log to report instead of showing popup
-                self.status_manager.update_status(f"⚠ Gap size {gap['size']} exceeds maximum {self.params.max_gap_size} - skipping")
+                if hasattr(self, 'status_manager') and self.status_manager:
+                    self.status_manager.update_status(f"⚠ Gap size {gap['size']} exceeds maximum {self.params.max_gap_size} - skipping")
                 continue
-                
+            
             # Check if this is a large gap needing special treatment
             is_large_gap = gap['size'] > large_gap_threshold
             
             if is_large_gap:
-
-                
-                if large_gap_treatment == 'skip':
-
-                    continue
-                elif large_gap_treatment == 'formation_based' and rrp_model:
-                    # Use Relative Rock Properties approach
-                    try:
-                        result = rrp_model.fill_large_gap(
-                            current_curve_name, gap['start'], gap['end'], data, auxiliary_curves
-                        )
-                        
-                        if result:
-                            # Update arrays
-                            gap_slice = slice(gap['start'], gap['end'])
-                            filled_data[gap_slice] = result['values']
-                            uncertainty[gap_slice] = result['uncertainty']
-                            confidence[gap_slice] = result['confidence']
-                            
-                            gaps_filled.append({
-                                'gap': gap,
-                                'method': 'relative_rock_properties',
-                                'quality': result['quality'],
-                                'uncertainty_mean': np.mean(result['uncertainty'])
-                            })
-                            
-
-                            continue
-                    except Exception as e:
-                        # Log algorithm fallback with scientific transparency
-                        if hasattr(self, 'log_processing'):
-                            self.log_processing(f"[ALGORITHM FALLBACK] Relative Rock Properties → Standard Methods")
-                            self.log_processing(f"   Reason: {str(e)}")
-                            self.log_processing(f"   Fallback Chain: Kriging → Cubic Spline → Linear Interpolation")
-                        
-                        self._notify_error("Gap Filling Error", f"Advanced method unavailable: {e}")
-                        # Fall through to standard methods - now with transparency
-            
-            # If not a large gap or formation-based filling failed, use standard methods
-            # Select optimal method for this gap with transparency
-            method = self._select_optimal_method(gap, curve_type, auxiliary_curves)
-            
-            # Log method selection rationale for scientific audit
-            if hasattr(self, 'log_processing'):
-                self.log_processing(f"[METHOD SELECTION] Gap {gap['start']}-{gap['end']}: {method}")
-                self.log_processing(f"   Size: {gap['size']} points | Curve: {curve_type}")
-                if auxiliary_curves:
-                    self.log_processing(f"   Auxiliary curves available: {len(auxiliary_curves)}")
-                self.log_processing(f"   Selection criteria: Gap size, curve type, data availability")
-            
-            try:
-                result = self._fill_single_gap(
-                    data, gap, method, curve_type, 
-                    auxiliary_curves, physics_constraints
+                # Process large gap using extracted method
+                large_gap_result = self._process_large_gap(
+                    gap, large_gap_treatment, rrp_model, current_curve_name,
+                    data, auxiliary_curves, filled_data, uncertainty, confidence
                 )
-                
-                # Update arrays
-                gap_slice = slice(gap['start'], gap['end'])
-                filled_data[gap_slice] = result['values']
-                uncertainty[gap_slice] = result['uncertainty']
-                confidence[gap_slice] = result['confidence']
-                
-                # Log successful gap filling with method transparency
-                if hasattr(self, 'log_processing'):
-                    self.log_processing(f"[GAP FILLED] Method: {method} | Quality: {result['quality']:.3f} | Size: {gap['size']} points")
-                    if result.get('method_details'):
-                        self.log_processing(f"   Details: {result['method_details']}")
-                
-                gaps_filled.append({
-                    'gap': gap,
-                    'method': method,
-                    'quality': result['quality'],
-                    'uncertainty_mean': np.mean(result['uncertainty']),
-                    'method_transparency': f"{method} (Q={result['quality']:.3f})"
-                })
-                
-
-                
-            except Exception as e:
-                # Log final fallback with scientific rationale
-                if hasattr(self, 'log_processing'):
-                    self.log_processing(f"[FINAL FALLBACK] All primary methods failed → Linear Interpolation")
-                    self.log_processing(f"   Gap: {gap['start']}-{gap['end']} ({gap['size']} points)")
-                    self.log_processing(f"   Reason: {str(e)}")
-                    self.log_processing(f"   Scientific Validity: Linear interpolation maintains continuity")
-                
-                self._notify_error("Gap Filling Error", f"Primary methods failed, using linear fallback: {e}")
-                # Define gap_slice within this exception block
-                gap_slice = slice(gap['start'], gap['end'])
-                # Use simple linear interpolation as fallback - now with transparency
-                try:
-                    fallback_result = self._linear_interpolation_fallback(data, gap)
-                    filled_data[gap_slice] = fallback_result
-                    confidence[gap_slice] = 0.5  # Lower confidence for fallback
-                    uncertainty[gap_slice] = np.std(fallback_result) if len(fallback_result) > 1 else 0.1
-                    
-
-                except Exception as fe:
-                    self._notify_error("Gap Filling Error", f"All gap filling methods failed: {fe}")
+                if large_gap_result['filled']:
+                    gaps_filled.append(large_gap_result['result'])
+                    continue  # Large gap filled successfully, move to next gap
+                # If large gap processing failed, fall through to standard methods
+            
+            # Process standard gap using extracted method
+            standard_result = self._process_standard_gap(
+                gap, curve_type, auxiliary_curves, physics_constraints,
+                data, filled_data, uncertainty, confidence
+            )
+            if standard_result:
+                gaps_filled.append(standard_result)
         
         # Calculate quality metrics
         quality_metrics = self._calculate_gap_filling_quality(
@@ -2229,12 +1108,14 @@ class AdvancedGapFiller:
                     in_gap = True
             else:
                 if in_gap:
+                    if gap_start is None:
+                        gap_start = i  # Fallback if gap_start wasn't set
                     gap_size = i - gap_start
                     
                     # Perform geological gap classification
                     gap_classification = self._classify_gap_geological_context(
                         gap_start, i, depth, geological_context, curve_name
-                    ) if depth is not None and geological_context is not None else None
+                    ) if (gap_start is not None and depth is not None and geological_context is not None) else None
                     
                     gaps.append({
                         'start': gap_start,
@@ -2248,9 +1129,11 @@ class AdvancedGapFiller:
         
         # Handle gap at end
         if in_gap:
+            if gap_start is None:
+                gap_start = len(data) - 1  # Fallback if gap_start wasn't set
             gap_classification = self._classify_gap_geological_context(
                 gap_start, len(data), depth, geological_context, curve_name
-            ) if depth is not None and geological_context is not None else None
+            ) if (gap_start is not None and depth is not None and geological_context is not None) else None
             
             gaps.append({
                 'start': gap_start,
@@ -2853,7 +1736,15 @@ class AdvancedGapFiller:
             total_points = max(1, len(original))
             # Final completeness calculation - this already accounts for original + filled correctly
             data_completeness = total_valid_after_filling / total_points * 100
-        except Exception:
+        except (ZeroDivisionError, ValueError, TypeError) as calc_error:
+            # Calculation failed - log and use safe default
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"Warning: Data completeness calculation failed: {type(calc_error).__name__}: {str(calc_error)}")
+            data_completeness = 0
+        except Exception as calc_error:
+            # Unexpected error in completeness calculation
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"Warning: Unexpected error in completeness calculation: {type(calc_error).__name__}: {str(calc_error)}")
             data_completeness = 0
         
         return {
@@ -2879,7 +1770,7 @@ class AdvancedSignalProcessor:
        - Donoho, D.L. & Johnstone, I.M. (1994): "Ideal spatial adaptation by wavelet shrinkage"
        - Mallat, S. (1989): "A theory for multiresolution signal decomposition"
        - Gaci, S. (2014): "Petrophysical logs denoising using wavelet transform"
-       - Validated on 5,000+ well logs across different geological settings
+       - Based on published wavelet denoising literature
     
     2. BILATERAL FILTERING:
        - Tomasi, C. & Manduchi, R. (1998): "Bilateral filtering for gray and color images"
@@ -2901,11 +1792,10 @@ class AdvancedSignalProcessor:
        - Weickert, J. (1998): "Anisotropic Diffusion in Image Processing"
        - Locally adaptive smoothing based on signal characteristics
     
-    VALIDATION STUDIES:
-    - Tested on 3,000+ well logs with known noise characteristics
-    - Validated against laboratory measurements and core data
-    - Industry benchmark: 80-95% noise reduction with signal preservation
-    - Peer-reviewed in IEEE Transactions on Signal Processing (2016)
+    METHOD SELECTION:
+    - Automatic selection based on signal-to-noise ratio estimation
+    - Spectral analysis for complexity assessment
+    - Curve-type specific optimization using industry standards
     
     METHOD SELECTION:
     - Automatic selection based on signal-to-noise ratio estimation
@@ -2913,8 +1803,9 @@ class AdvancedSignalProcessor:
     - Curve-type specific optimization using industry standards
     """
     
-    def __init__(self):
-        pass
+    def __init__(self, error_handler: Optional[Any] = None, log_processing: Optional[Callable[[str], None]] = None):
+        self.error_handler = error_handler  # Centralized error handler
+        self.log_processing = log_processing if log_processing is not None else (lambda msg: None)  # No-op if not provided
     
     def denoise_signal(self, data: np.ndarray, curve_type: str, 
                       method: str = 'auto') -> Dict[str, Any]:
@@ -3699,7 +2590,7 @@ class AdvancedSignalProcessor:
 class DepthValidationManager:
     """Industry-standard depth validation and management"""
     
-    def __init__(self):
+    def __init__(self, log_processing: Optional[Callable[[str], None]] = None):
         self.required_depth_keywords = ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']
         self.depth_validation_rules = {
             'min_interval': 10.0,      # Minimum 10m interval for reservoir work
@@ -3707,6 +2598,8 @@ class DepthValidationManager:
             'monotonic': True,         # Must be monotonically increasing
             'reasonable_range': (0, 10000)  # 0-10km reasonable depth range
         }
+        self.log_processing = log_processing if log_processing is not None else (lambda msg: None)  # No-op if not provided
+        self.app = None  # Will be set if app reference is needed
 
     
     def validate_and_identify_depth(self, data_columns, curve_info, data):
@@ -3748,11 +2641,28 @@ class DepthValidationManager:
                                         f"DEPTH FIX: Added depth from DataFrame index as '{depth_col_name}' "
                                         f"(range {clean_index.min():.2f}-{clean_index.max():.2f})"
                                     )
-                                except Exception:
-                                    pass
-            except Exception:
-                # If any issue occurs, fall through to original error handling
-                pass
+                                except Exception as log_error:
+                                    # Logging failed - continue without logging this message
+                                    if hasattr(self, 'log_processing'):
+                                        try:
+                                            self.log_processing(f"Warning: Failed to log depth fix message: {type(log_error).__name__}")
+                                        except Exception:
+                                            pass  # Can't log logging failure
+            except Exception as depth_error:
+                # If any issue occurs, use centralized error handler if available
+                if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                    self.app.handle_processing_error(
+                        depth_error,
+                        "Depth validation from index",
+                        "Attempting to extract depth from DataFrame index",
+                        show_dialog=False
+                    )
+                elif hasattr(self, 'log_processing'):
+                    try:
+                        self.log_processing(f"Warning: Depth validation from index failed: {type(depth_error).__name__}: {str(depth_error)}")
+                    except Exception:
+                        pass  # Can't log logging failure
+                # Fall through to original error handling below
 
         if not depth_candidates:
             raise ValueError(
@@ -4022,8 +2932,13 @@ class GeologicalZoneManager:
             depth_clean = depth_clean.iloc[:min_len]
         
         # Smooth GR to reduce noise before boundary detection
-        from scipy.signal import savgol_filter
-        gr_smoothed = savgol_filter(gr_clean, window_length=5, polyorder=2)
+        gr_values = gr_clean.values if hasattr(gr_clean, 'values') else np.asarray(gr_clean)
+        if SCIPY_AVAILABLE:
+            from scipy.signal import savgol_filter
+            gr_smoothed = savgol_filter(gr_values, window_length=5, polyorder=2)
+        else:
+            kernel = np.ones(5) / 5.0
+            gr_smoothed = np.convolve(gr_values, kernel, mode='same')
         
         # Calculate gradient
         gr_gradient = np.gradient(gr_smoothed)
@@ -4102,8 +3017,8 @@ class GeologicalZoneManager:
 class ZoneAwareGapFiller(AdvancedGapFiller):
     """Gap filling that respects geological boundaries"""
     
-    def __init__(self, params, zone_manager):
-        super().__init__(params)
+    def __init__(self, params, zone_manager, error_callback=None):
+        super().__init__(params, error_callback=error_callback)
         self.zone_manager = zone_manager
         
     def fill_gaps_with_zone_awareness(self, data, curve_type, depth, gamma_ray=None, auxiliary_curves=None):
@@ -4185,9 +3100,10 @@ class CrossWellPriorManager:
     minimize sensitivity to outliers and tool mismatches.
     """
 
-    def __init__(self):
+    def __init__(self, log_processing: Optional[Callable[[str], None]] = None):
         self.app = None
         self.priors: Dict[str, Any] = {}
+        self.log_processing = log_processing if log_processing is not None else (lambda msg: None)  # No-op if not provided
 
     def set_application_reference(self, app):
         self.app = app
@@ -4275,7 +3191,22 @@ class CrossWellPriorManager:
                             # Use quantiles for equal-count binning
                             try:
                                 depth_edges = np.quantile(all_depths[~np.isnan(all_depths)], [0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
-                            except Exception:
+                            except (ValueError, IndexError) as quantile_error:
+                                # Quantile calculation failed - use linear spacing as fallback
+                                depth_edges = np.linspace(np.nanmin(all_depths), np.nanmax(all_depths), 6)
+                            except Exception as quantile_error:
+                                # Unexpected error in quantile calculation - use centralized handler
+                                if hasattr(self, 'app') and hasattr(self.app, 'handle_graceful_degradation'):
+                                    self.app.handle_graceful_degradation(
+                                        quantile_error,
+                                        "Quantile calculation for depth binning",
+                                        "Using linear spacing fallback - depth binning may be less accurate"
+                                    )
+                                elif hasattr(self, 'log_processing'):
+                                    try:
+                                        self.log_processing(f"Warning: Quantile calculation failed, using linear spacing: {type(quantile_error).__name__}")
+                                    except Exception:
+                                        pass  # Can't log logging failure
                                 depth_edges = np.linspace(np.nanmin(all_depths), np.nanmax(all_depths), 6)
                             for b in range(len(depth_edges)-1):
                                 dmin, dmax = depth_edges[b], depth_edges[b+1]
@@ -4304,7 +3235,34 @@ class CrossWellPriorManager:
                                             'count': int(bin_stat.size)
                                         })
                     return entry
-                except Exception:
+                except (ValueError, TypeError, IndexError) as stats_error:
+                    # Statistical computation failed - use centralized handler
+                    if hasattr(self, 'app') and hasattr(self.app, 'handle_graceful_degradation'):
+                        self.app.handle_graceful_degradation(
+                            stats_error,
+                            "Statistical computation for prior entry",
+                            "Skipping this entry - prior computation continues with remaining entries"
+                        )
+                    elif hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Stats computation failed for entry: {type(stats_error).__name__}")
+                        except Exception:
+                            pass  # Can't log logging failure
+                    return None
+                except Exception as stats_error:
+                    # Unexpected error in statistics computation - use centralized handler
+                    if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                        self.app.handle_processing_error(
+                            stats_error,
+                            "Statistical computation for prior entry",
+                            "Computing statistics for cross-well priors",
+                            show_dialog=False
+                        )
+                    elif hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Unexpected error in stats computation: {type(stats_error).__name__}: {str(stats_error)}")
+                        except Exception:
+                            pass  # Can't log logging failure
                     return None
 
             # Curves
@@ -4318,7 +3276,35 @@ class CrossWellPriorManager:
                 entry = _compute_stats_from_arrays(arrays, family_depth_series.get(family, []), family)
                 if entry:
                     priors['families'][family] = entry
-        except Exception:
+        except (ValueError, TypeError, AttributeError, KeyError) as prior_error:
+            # Prior computation failed - use centralized handler
+            if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                self.app.handle_processing_error(
+                    prior_error,
+                    "Cross-well prior computation",
+                    "Computing cross-well statistical priors",
+                    show_dialog=False
+                )
+            elif hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Prior computation failed: {type(prior_error).__name__}: {str(prior_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
+            return {}
+        except Exception as prior_error:
+            # Unexpected error in prior computation - use centralized handler
+            if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                self.app.handle_processing_error(
+                    prior_error,
+                    "Cross-well prior computation",
+                    "Computing cross-well statistical priors",
+                    show_dialog=False
+                )
+            elif hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Unexpected error in prior computation: {type(prior_error).__name__}: {str(prior_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
             return {}
         self.priors = priors
         return priors
@@ -4837,11 +3823,14 @@ class LASStandardsCompliance:
 class ThreadSafeVisualizationManager:
     """Thread-safe matplotlib management for professional applications"""
     
-    def __init__(self):
+    def __init__(self, log_processing: Optional[Callable[[str], None]] = None, app: Optional[Any] = None):
         self._lock = threading.RLock()
         self._main_thread_id = threading.current_thread().ident
         self._visualization_queue = queue.Queue()
         self._cleanup_scheduled = False
+        self.log_processing = log_processing if log_processing is not None else (lambda msg: None)  # No-op if not provided
+        self.app = app  # App reference for UI operations
+        self.root = None  # Will be set if root window reference is needed
         # Do not set the backend here. Backend is configured once at top of file
         plt.ioff()  # Turn off interactive mode for thread-safety
         
@@ -4921,8 +3910,23 @@ class ThreadSafeVisualizationManager:
                 if fig is not None:
                     try:
                         plt.close(fig)
-                    except Exception:
-                        pass
+                    except (RuntimeError, OSError) as fig_error:
+                        # Figure may already be closed - graceful degradation
+                        if hasattr(self, 'app') and hasattr(self.app, 'handle_graceful_degradation'):
+                            self.app.handle_graceful_degradation(
+                                fig_error,
+                                "Figure cleanup in thread-safe context",
+                                "Figure may already be closed - continuing cleanup"
+                            )
+                    except Exception as fig_error:
+                        # Unexpected error closing figure
+                        if hasattr(self, 'app') and hasattr(self.app, 'handle_ui_error'):
+                            self.app.handle_ui_error(
+                                fig_error,
+                                "Figure cleanup in thread-safe context",
+                                "matplotlib figure",
+                                graceful_degradation=True
+                            )
     
     def safe_cleanup_all_figures(self):
         """Safely cleanup all matplotlib figures"""
@@ -4942,135 +3946,6 @@ class ThreadSafeVisualizationManager:
                     self.root.after_idle(cleanup)
                 else:
                     cleanup()
-
-#=============================================================================
-# ENVIRONMENTAL CORRECTIONS MANAGER
-#=============================================================================
-
-class EnvironmentalCorrectionsManager:
-    """Apply standard environmental corrections for reservoir characterization"""
-    
-    def __init__(self):
-        self.correction_parameters = {
-            'temperature_gradient': 0.025,  # °C/m typical geothermal gradient
-            'mud_resistivity_std': 1.0,     # ohm-m standard mud
-            'borehole_size_std': 8.5,       # inches standard hole size
-            'standoff_correction': True     # Apply standoff corrections
-        }
-        
-        self.correction_curves = {
-            'resistivity': ['RT', 'RM', 'RS', 'RXO'],
-            'neutron': ['NPHI', 'TNPH'],
-            'density': ['RHOB', 'RHOZ'],
-            'sonic': ['DT', 'DTCO']
-        }
-    
-    def apply_environmental_corrections(self, data, curve_info, well_parameters):
-        """Apply environmental corrections to raw log data"""
-        
-        corrected_data = data.copy()
-        corrections_applied = {}
-        
-        # Extract environmental parameters
-        borehole_size = well_parameters.get('HOLE_SIZE', self.correction_parameters['borehole_size_std'])
-        mud_resistivity = well_parameters.get('MUD_RESISTIVITY', self.correction_parameters['mud_resistivity_std'])
-        bottom_hole_temp = well_parameters.get('BHT', 150)  # °F default
-        
-        # Apply corrections by curve type
-        for curve_type, curve_names in self.correction_curves.items():
-            for curve_name in curve_names:
-                if curve_name in data.columns:
-                    
-                    if curve_type == 'resistivity':
-                        corrected_data[curve_name] = self._apply_resistivity_corrections(
-                            data[curve_name], borehole_size, mud_resistivity, bottom_hole_temp
-                        )
-                        corrections_applied[curve_name] = 'borehole_temperature_mud'
-                        
-                    elif curve_type == 'neutron':
-                        corrected_data[curve_name] = self._apply_neutron_corrections(
-                            data[curve_name], borehole_size, curve_info.get(curve_name, {})
-                        )
-                        corrections_applied[curve_name] = 'borehole_standoff'
-                        
-                    elif curve_type == 'density':
-                        corrected_data[curve_name] = self._apply_density_corrections(
-                            data[curve_name], borehole_size, mud_resistivity
-                        )
-                        corrections_applied[curve_name] = 'borehole_mudcake'
-                        
-                    elif curve_type == 'sonic':
-                        corrected_data[curve_name] = self._apply_sonic_corrections(
-                            data[curve_name], borehole_size, bottom_hole_temp
-                        )
-                        corrections_applied[curve_name] = 'borehole_temperature'
-        
-        return corrected_data, corrections_applied
-    
-    def _apply_resistivity_corrections(self, resistivity_data, hole_size, mud_resistivity, temperature):
-        """Apply borehole and temperature corrections to resistivity"""
-        
-        corrected = resistivity_data.copy()
-        
-        # Temperature correction (resistivity decreases with temperature)
-        temp_celsius = (temperature - 32) * 5/9
-        temp_factor = 1 + 0.025 * (temp_celsius - 25) / 100  # Approximate correction
-        corrected = corrected * temp_factor
-        
-        # Borehole correction (simplified)
-        if hole_size > 10:  # Large hole correction
-            borehole_factor = 1 + 0.1 * (hole_size - 8.5) / 8.5
-            corrected = corrected * borehole_factor
-        
-        return corrected
-    
-    def _apply_neutron_corrections(self, neutron_data, hole_size, curve_info):
-        """Apply neutron environmental corrections"""
-        
-        corrected = neutron_data.copy()
-        
-        # Borehole size correction
-        if hole_size > 10:
-            # Large hole causes artificially high neutron reading
-            correction = -0.02 * (hole_size - 8.5)  # Subtract 2 p.u. per inch oversized
-            corrected = corrected + correction
-        
-        # Tool type correction if available
-        tool_type = curve_info.get('tool_type', 'CNL')
-        if tool_type == 'SNP':
-            # Sidewall neutron reads higher
-            corrected = corrected - 0.04
-        
-        return corrected
-    
-    def _apply_density_corrections(self, density_data, hole_size, mud_weight):
-        """Apply density environmental corrections"""
-        
-        corrected = density_data.copy()
-        
-        # Hole size correction (washouts reduce apparent density)
-        if hole_size > 10:
-            washout_correction = 0.05 * (hole_size - 8.5)  # Add density for washout
-            corrected = corrected + washout_correction
-        
-        return corrected
-    
-    def _apply_sonic_corrections(self, sonic_data, hole_size, temperature):
-        """Apply sonic environmental corrections"""
-        
-        corrected = sonic_data.copy()
-        
-        # Temperature correction (sonic velocity increases with temperature)
-        temp_celsius = (temperature - 32) * 5/9
-        temp_correction = 0.5 * (temp_celsius - 25) / 100  # Approximate correction
-        corrected = corrected - temp_correction  # Reduce transit time
-        
-        # Borehole size correction (large holes can affect sonic readings)
-        if hole_size > 12:
-            borehole_correction = 2.0 * (hole_size - 8.5) / 8.5  # Increase transit time
-            corrected = corrected + borehole_correction
-        
-        return corrected
 
 #=============================================================================
 # SCALE AWARE PROCESSOR
@@ -5135,7 +4010,12 @@ class ScaleAwareProcessor:
         
         # Check if log-normal (positive skew, multiplicative nature)
         if np.all(clean_data > 0):
-            skewness = stats.skew(clean_data)
+            if SCIPY_AVAILABLE:
+                skewness = stats.skew(clean_data)
+            else:
+                d = clean_data - np.mean(clean_data)
+                std = np.std(clean_data)
+                skewness = np.mean(d ** 3) / (std ** 3) if std > 0 else 0.0
             if skewness > 1.5:  # Highly skewed suggests log-normal
                 return 'log_normal'
         
@@ -5256,10 +4136,12 @@ class ScaleAwareProcessor:
 class ProcessingHistoryManager:
     """Manage processing history with undo/redo capabilities"""
     
-    def __init__(self, max_history=50):
+    def __init__(self, max_history=50, log_processing: Optional[Callable[[str], None]] = None, app: Optional[Any] = None):
         self.history = []
         self.current_position = -1
         self.max_history = max_history
+        self.log_processing = log_processing if log_processing is not None else (lambda msg: None)  # No-op if not provided
+        self.app = app  # App reference for error handling
         
     def save_state(self, data, curve_info, operation_name, parameters=None):
         """Save current state before operation"""
@@ -5324,8 +4206,24 @@ class ProcessingHistoryManager:
         try:
             # Use pandas hash for efficiency
             return hash(data.to_string())
-        except Exception:
-            # Fallback to simple hash
+        except (ValueError, AttributeError, MemoryError) as hash_error:
+            # Fallback to simple hash - log for debugging
+            if hasattr(self, 'app') and hasattr(self.app, 'handle_graceful_degradation'):
+                self.app.handle_graceful_degradation(
+                    hash_error,
+                    "Data hash calculation",
+                    "Using fallback hash method - may affect change detection accuracy"
+                )
+            return hash(str(data.shape) + str(data.dtypes.tolist()))
+        except Exception as hash_error:
+            # Unexpected error in hash calculation - use fallback and log
+            if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                self.app.handle_processing_error(
+                    hash_error,
+                    "Data hash calculation",
+                    "Calculating hash for change detection",
+                    show_dialog=False
+                )
             return hash(str(data.shape) + str(data.dtypes.tolist()))
     
     def get_current_state(self):
@@ -5415,22 +4313,22 @@ class PetrophysicalButtons:
         # Use a more compatible approach for cross-platform styling
         # Primary Button Style (Blue) - for main actions
         self.style.configure('Primary.TButton',
-                            font=('Segoe UI', 10, 'bold'),
+                            font=(FONT_DEFAULT, 10, 'bold'),
                             padding=(12, 7))
         
         # Success Button Style (Green) - for completion actions
         self.style.configure('Success.TButton',
-                            font=('Segoe UI', 10, 'bold'),
+                            font=(FONT_DEFAULT, 10, 'bold'),
                             padding=(12, 7))
         
         # Warning Button Style (Amber) - for caution actions
         self.style.configure('Warning.TButton',
-                            font=('Segoe UI', 10, 'bold'),
+                            font=(FONT_DEFAULT, 10, 'bold'),
                             padding=(12, 7))
         
         # Secondary Button Style (Light Gray) - for secondary actions
         self.style.configure('Secondary.TButton',
-                            font=('Segoe UI', 10),
+                            font=(FONT_DEFAULT, 10),
                             padding=(12, 7))
         
         # Modern frame styles for cards
@@ -5440,13 +4338,13 @@ class PetrophysicalButtons:
         
         # Modern label styles
         self.style.configure('Title.TLabel',
-                           font=('Segoe UI', 24, 'bold'))
+                           font=(FONT_DEFAULT, 24, 'bold'))
         
         self.style.configure('Subtitle.TLabel',
-                           font=('Segoe UI', 14))
+                           font=(FONT_DEFAULT, 14))
         
         self.style.configure('Card.TLabel',
-                           font=('Segoe UI', 11))
+                           font=(FONT_DEFAULT, 11))
         
     def create_button(self, parent, text, command=None, button_type='primary', 
                     tooltip=None, width=None, **kwargs):
@@ -5474,7 +4372,7 @@ class PetrophysicalButtons:
         # Create button with proper styling
         button = tk.Button(parent, text=text, command=command,
                           bg=bg_color, fg=fg_color,
-                          font=('Segoe UI', 10, 'bold') if button_type != 'secondary' else ('Segoe UI', 10),
+                          font=(FONT_DEFAULT, 10, 'bold') if button_type != 'secondary' else (FONT_DEFAULT, 10),
                           relief='flat', borderwidth=0,
                           padx=12, pady=7,
                           cursor='hand2',
@@ -5516,7 +4414,7 @@ class PetrophysicalButtons:
         """
         toggle = tk.Checkbutton(parent, text=text, variable=variable,
                                bg=self.colors['secondary'], fg=self.colors['text_dark'],
-                               font=('Segoe UI', 10),
+                               font=(FONT_DEFAULT, 10),
                                relief='flat', borderwidth=1,
                                padx=12, pady=7,
                                selectcolor=self.colors['primary'],
@@ -5588,8 +4486,22 @@ class PetrophysicalButtons:
                     x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
                     y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
                     dialog.geometry(f"+{x}+{y}")
-                except Exception:
-                    pass
+                except (tk.TclError, AttributeError) as dialog_error:
+                    # Dialog positioning failed - continue without centering
+                    self.handle_ui_error(
+                        dialog_error,
+                        "Dialog positioning",
+                        "dialog window",
+                        graceful_degradation=True
+                    )
+                except Exception as dialog_error:
+                    # Unexpected error positioning dialog
+                    self.handle_ui_error(
+                        dialog_error,
+                        "Dialog positioning",
+                        "dialog window",
+                        graceful_degradation=True
+                    )
             info_btn = ttk.Button(header, text='i', width=2, command=_show_card_help)
             self._create_tooltip(info_btn, f"Help: {title}")
             info_btn.pack(side='right')
@@ -6299,8 +5211,17 @@ class IndustryUnitStandardizer:
             # Density units fallback
             if unit_upper in ['G/CC', 'G/CM3', 'KG/M3', 'LB/FT3']:
                 return 'density'
-        except Exception:
+        except (AttributeError, TypeError) as unit_error:
+            # Unit string may not be valid - expected for some data types
+            # Log only if this indicates a real problem
             pass
+        except Exception as unit_error:
+            # Unexpected error in unit detection - should log for debugging
+            import warnings
+            warnings.warn(
+                f"Unexpected error in unit detection: {type(unit_error).__name__}: {str(unit_error)}",
+                UserWarning
+            )
 
         return None
 
@@ -6310,8 +5231,16 @@ class IndustryUnitStandardizer:
             for category, units in self.unit_conversions.items():
                 if unit_upper in units:
                     return category
-        except Exception:
+        except (AttributeError, TypeError) as unit_error:
+            # Unit string may not be valid - expected for some data types
             pass
+        except Exception as unit_error:
+            # Unexpected error in unit category detection - should log for debugging
+            import warnings
+            warnings.warn(
+                f"Unexpected error in unit category detection: {type(unit_error).__name__}: {str(unit_error)}",
+                UserWarning
+            )
         return None
 
     def _validate_conversion(self, original, converted, factor):
@@ -6339,7 +5268,25 @@ class IndustryUnitStandardizer:
             
             return True
             
-        except Exception:
+        except (ValueError, TypeError, IndexError, KeyError) as validation_error:
+            # Validation failed due to data issues - log for debugging
+            if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                self.app.handle_processing_error(
+                    validation_error,
+                    "Unit conversion validation",
+                    "Validating unit conversion factor",
+                    show_dialog=False
+                )
+            return False
+        except Exception as validation_error:
+            # Unexpected error in validation - log for debugging
+            if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                self.app.handle_processing_error(
+                    validation_error,
+                    "Unit conversion validation",
+                    "Validating unit conversion factor",
+                    show_dialog=False
+                )
             return False
 
     def _validate_conversion_function(self, original, converted, apply_fn, inverse_fn):
@@ -6363,7 +5310,25 @@ class IndustryUnitStandardizer:
             if not np.isfinite(valid_conv).all():
                 return False
             return True
-        except Exception:
+        except (ValueError, TypeError, IndexError, KeyError) as validation_error:
+            # Validation failed due to data issues - log for debugging
+            if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                self.app.handle_processing_error(
+                    validation_error,
+                    "Unit conversion round-trip validation",
+                    "Validating unit conversion function",
+                    show_dialog=False
+                )
+            return False
+        except Exception as validation_error:
+            # Unexpected error in validation - log for debugging
+            if hasattr(self, 'app') and hasattr(self.app, 'handle_processing_error'):
+                self.app.handle_processing_error(
+                    validation_error,
+                    "Unit conversion round-trip validation",
+                    "Validating unit conversion function",
+                    show_dialog=False
+                )
             return False
 
     def _update_depth_validation_rules(self):
@@ -6418,11 +5383,6 @@ class IndustryUnitStandardizer:
 class AdvancedPreprocessingApplication:
     """Main application class with advanced preprocessing capabilities"""
     
-    # Performance and memory management constants
-    MAX_ACTIVE_WELLS = 20  # Maximum number of wells that can be loaded simultaneously
-    LARGE_FILE_WARNING_MB = 100  # Warn user for files larger than this
-    MEMORY_WARNING_THRESHOLD = 70  # Warn when system memory usage exceeds this percentage
-    
     def __init__(self):
         # Initialize feature flags first
         if BETA_SYSTEM_AVAILABLE:
@@ -6441,32 +5401,38 @@ class AdvancedPreprocessingApplication:
         self.root.geometry("1400x900")
         
         # Bind window resize event
-        self.root.bind('<Configure>', self.on_window_resize)
+        self.root.bind(EVENT_CONFIGURE, self.on_window_resize)
+        
+        # Initialize centralized error handler
+        # Note: Will be initialized after setup_ui() when log_processing is available
+        self.error_handler = None  # Will be initialized after UI setup
         
         # Initialize components
-        self.mnemonic_library = ComprehensiveMnemonicLibrary()
-        self.standardization_reporter = StandardizationReporter()  # Critical: Track all standardization operations
-        self.gap_filler = AdvancedGapFiller(GapFillingParameters())
-        # Inject UI-safe notifier so background operations can surface errors safely
-        try:
-            def ui_notify(title: str, message: str):
-                self.root.after(0, lambda: messagebox.showerror(title, message))
-            setattr(self.gap_filler, 'ui_notify', ui_notify)
-        except Exception:
-            pass
-        self.signal_processor = AdvancedSignalProcessor()
+        self.curve_identifier = CurveIdentificationEngine()
+        if hasattr(self, 'standardization_reporter'):
+            pass  # Already initialized
+        else:
+            try:
+                from core.reporting import StandardizationReporter
+                self.standardization_reporter = StandardizationReporter()
+            except ImportError:
+                self.standardization_reporter = None
+        # Gap filler will be initialized after error handler is available
+        self.gap_filler = None  # Will be initialized after error handler
+        # Signal processor will be initialized after error handler is available
+        self.signal_processor = None  # Will be initialized after error handler
         self.ui = PetrophysicalButtons(self.root)
         self.rrp_model = None  # Will be initialized when needed
         
-        # Enhanced managers maintaining full capabilities
-        self.curve_manager = ComprehensiveCurveManager()
+        # Visualization manager
         self.viz_manager = SecureVisualizationManager()
         
         # Initialize new advanced processing components
-        self.depth_validator = DepthValidationManager()
+        self.depth_validator = DepthValidationManager(log_processing=self.log_processing)
+        self.depth_validator.app = self  # Provide app reference for error handling
         self.reservoir_depth_manager = ReservoirDepthManager()
         self.geological_zone_manager = GeologicalZoneManager()
-        self.zone_aware_gap_filler = ZoneAwareGapFiller(GapFillingParameters(), self.geological_zone_manager)
+        self.zone_aware_gap_filler = ZoneAwareGapFiller(GapFillingParameters(), self.geological_zone_manager, error_callback=self.show_error_dialog)
         self.petrophysical_validator = PetrophysicalRelationshipValidator()
         self.las_compliance = LASStandardsCompliance()
         # Initialize thread-safe viz manager and inject scheduler callback
@@ -6476,20 +5442,37 @@ class AdvancedPreprocessingApplication:
             def _schedule_on_main(func: Callable):
                 self.root.after_idle(func)
             setattr(self.thread_safe_viz, '_schedule_on_main', _schedule_on_main)
-        except Exception:
-            pass
+        except (AttributeError, RuntimeError) as callback_error:
+            # UI callback setup failed - continue without callback
+            self.handle_ui_error(
+                callback_error,
+                "Thread-safe visualization callback setup",
+                "thread_safe_viz._schedule_on_main",
+                graceful_degradation=True
+            )
+        except Exception as callback_error:
+            # Unexpected error setting up UI callback
+            self.handle_ui_error(
+                callback_error,
+                "Thread-safe visualization callback setup",
+                "thread_safe_viz._schedule_on_main",
+                graceful_degradation=True
+            )
         self.environmental_corrections = EnvironmentalCorrectionsManager()
         self.scale_aware_processor = ScaleAwareProcessor()
         self.processing_history = ProcessingHistoryManager()
+        self.processing_history.app = self  # Provide app reference for error handling
         
         # Geological context for intelligent gap classification
         self.geological_context = GeologicalContext()
+        self._gamma_ray_curves = []
         
         # Cross-well priors manager (multiwell intelligence)
         self.crosswell_prior_manager = None  # Will be initialized after class definition
         
         # Initialize unit standardizer
         self.unit_standardizer = IndustryUnitStandardizer()
+        self.unit_standardizer.app = self  # Provide app reference for error handling
         
         # Status manager for user feedback (no file logging)
         # Will be initialized after UI creation in setup_ui()
@@ -6557,10 +5540,22 @@ class AdvancedPreprocessingApplication:
         # Sync depth spacing default based on detected depth unit (m or ft)
         try:
             self._sync_depth_spacing_default()
-        except Exception:
-            pass
+        except (AttributeError, ValueError) as sync_error:
+            # Depth spacing sync failed - log but don't prevent startup
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Depth spacing sync failed: {type(sync_error).__name__}: {str(sync_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
+        except Exception as sync_error:
+            # Unexpected error in depth spacing sync
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Unexpected error in depth spacing sync: {type(sync_error).__name__}: {str(sync_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
         # Use instance created during __init__
-        self.geological_gap_threshold_var = tk.IntVar(value=200)  # NEW: Geological gap threshold
+        self.geological_gap_threshold_var = tk.IntVar(value=GAP_THRESHOLD_GEOLOGICAL)  # Geological gap threshold
         self.qc_enabled_var = tk.BooleanVar(value=True)
         self.outlier_detection_var = tk.BooleanVar(value=True)
         self.range_validation_var = tk.BooleanVar(value=True)
@@ -6572,7 +5567,13 @@ class AdvancedPreprocessingApplication:
         self.plot_in_new_window_var = tk.BooleanVar(value=True)  # Default to popup windows for professional workflow
         
         # Session preference: standardize units on upload (percent → v/v for fractional families)
-        self.standardize_on_upload_var = tk.BooleanVar(value=True)
+        # Allow selection of which curve families to standardize
+        self.standardize_porosity_var = tk.BooleanVar(value=True)
+        self.standardize_saturation_var = tk.BooleanVar(value=True)
+        self.standardize_volume_var = tk.BooleanVar(value=True)
+        self.standardize_probability_var = tk.BooleanVar(value=True)
+        # Legacy support: if all families are enabled, standardization is "on"
+        self.standardize_on_upload_var = tk.BooleanVar(value=True)  # Kept for backward compatibility checks
         self._upload_standardization_note = ""
         
         # Cohort & cross-well priors preferences
@@ -6587,7 +5588,27 @@ class AdvancedPreprocessingApplication:
         plt.rcParams['figure.max_open_warning'] = 10
         
         self.setup_ui()
-
+        
+        # Initialize centralized error handler after UI setup (log_processing is now available)
+        try:
+            self.error_handler = CentralizedErrorHandler(
+                root=self.root,
+                log_callback=self.log_processing
+            )
+        except Exception as init_error:
+            # Fallback if error handler initialization fails - log but continue
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Error handler initialization failed: {type(init_error).__name__}: {str(init_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
+            self.error_handler = None  # Will use fallback error handling
+        
+        # Initialize gap filler and signal processor with error handler
+        if self.gap_filler is None:
+            self.gap_filler = AdvancedGapFiller(GapFillingParameters(), error_handler=self.error_handler, log_processing=self.log_processing)
+        if self.signal_processor is None:
+            self.signal_processor = AdvancedSignalProcessor(error_handler=self.error_handler, log_processing=self.log_processing)
         
         # Setup beta features if in beta mode
         if BETA_SYSTEM_AVAILABLE and self.feature_flags.is_beta_mode():
@@ -6602,8 +5623,20 @@ class AdvancedPreprocessingApplication:
         # Prompt user once at startup for standardization preference
         try:
             self.root.after(200, self.show_startup_standardization_dialog)
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as startup_error:
+            # Startup dialog scheduling failed - optional feature, don't fail initialization
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Startup dialog scheduling failed: {type(startup_error).__name__}")
+                except Exception:
+                    pass  # Can't log logging failure
+        except Exception as startup_error:
+            # Unexpected error scheduling startup dialog
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Unexpected error scheduling startup dialog: {type(startup_error).__name__}: {str(startup_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
 
         # Ergonomic enhancement: clarify long-missing-run warnings
         try:
@@ -6615,70 +5648,212 @@ class AdvancedPreprocessingApplication:
                     if ((('100' in text or 'hundred' in text_l) and 'missing' in text_l) or
                        ('consecutive' in text_l or 'in a row' in text_l)):
                         message = text + "\n\nPress OK or Enter to continue. The program did not crash."
-                except Exception:
+                except (AttributeError, TypeError) as msg_error:
+                    # Message formatting failed - continue with original message
                     pass
+                except Exception as msg_error:
+                    # Unexpected error in message formatting - log for debugging
+                    if hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Message formatting failed: {type(msg_error).__name__}: {str(msg_error)}")
+                        except Exception:
+                            pass  # Can't log logging failure
                 return self._orig_showwarning(title, message, *args, **kwargs)
             messagebox.showwarning = _ap_showwarning
-        except Exception:
-            pass
+        except Exception as wrap_error:
+            # Warning messagebox wrapping failed - optional enhancement, don't fail startup
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Messagebox wrapping failed: {type(wrap_error).__name__}: {str(wrap_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
 
     def show_startup_standardization_dialog(self):
-        """Show a simple modal to choose whether to standardize units on upload."""
+        """Show a modal to choose which curve families to standardize on upload."""
         try:
             dialog = tk.Toplevel(self.root)
-            dialog.title("Upload Standardization")
+            dialog.title("Upload Standardization Settings")
             dialog.transient(self.root)
             dialog.grab_set()
             dialog.resizable(False, False)
-            frame = ttk.Frame(dialog, padding=15)
-            frame.pack(fill='both', expand=True)
-            msg = ("Standardize on upload: convert percent-style fractional curves to decimals (v/v).\n"
-                   "Applies to porosity, saturations, volume fractions, and probabilities.")
-            ttk.Label(frame, text=msg, wraplength=480, justify='left').pack(anchor='w', pady=(0, 10))
-            chk = ttk.Checkbutton(frame, text="Standardize units on upload (% → v/v)",
-                                   variable=self.standardize_on_upload_var)
-            chk.pack(anchor='w', pady=(0, 10))
-            btn = ttk.Button(frame, text="OK", command=dialog.destroy)
+            
+            main_frame = ttk.Frame(dialog, padding=20)
+            main_frame.pack(fill='both', expand=True)
+            
+            # Header
+            header_msg = ("Select which curve families to standardize on upload:\n"
+                         "Convert percent-style fractional curves to decimals (v/v)")
+            ttk.Label(main_frame, text=header_msg, wraplength=500, justify='left', 
+                     font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 15))
+            
+            # Options frame
+            options_frame = ttk.LabelFrame(main_frame, text="Curve Families", padding=15)
+            options_frame.pack(fill='x', pady=(0, 15))
+            
+            # Individual checkboxes for each curve family
+            porosity_chk = ttk.Checkbutton(
+                options_frame, 
+                text="Porosity curves (NPHI, PHI, PHIT, DPOR, TNPH, MPHI, etc.)",
+                variable=self.standardize_porosity_var
+            )
+            porosity_chk.pack(anchor='w', pady=5)
+            
+            saturation_chk = ttk.Checkbutton(
+                options_frame,
+                text="Saturation curves (SW, SO, SG, SAT, etc.)",
+                variable=self.standardize_saturation_var
+            )
+            saturation_chk.pack(anchor='w', pady=5)
+            
+            volume_chk = ttk.Checkbutton(
+                options_frame,
+                text="Volume fraction curves (VSH, VCL, VCARB, VMIN, VOL, etc.)",
+                variable=self.standardize_volume_var
+            )
+            volume_chk.pack(anchor='w', pady=5)
+            
+            probability_chk = ttk.Checkbutton(
+                options_frame,
+                text="Probability curves (PROB, FACIES_PROB, etc.)",
+                variable=self.standardize_probability_var
+            )
+            probability_chk.pack(anchor='w', pady=5)
+            
+            # Helper buttons
+            helper_frame = ttk.Frame(main_frame)
+            helper_frame.pack(fill='x', pady=(0, 15))
+            
+            def select_all():
+                self.standardize_porosity_var.set(True)
+                self.standardize_saturation_var.set(True)
+                self.standardize_volume_var.set(True)
+                self.standardize_probability_var.set(True)
+            
+            def deselect_all():
+                self.standardize_porosity_var.set(False)
+                self.standardize_saturation_var.set(False)
+                self.standardize_volume_var.set(False)
+                self.standardize_probability_var.set(False)
+            
+            ttk.Button(helper_frame, text=DIALOG_SELECT_ALL, command=select_all, width=12).pack(side='left', padx=(0, 5))
+            ttk.Button(helper_frame, text=DIALOG_DESELECT_ALL, command=deselect_all, width=12).pack(side='left')
+            
+            # Info note
+            info_text = ("Note: Only curves in selected families will be considered for standardization.\n"
+                        "You can still review and approve each conversion when loading a file.")
+            ttk.Label(main_frame, text=info_text, wraplength=500, justify='left', 
+                     font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(0, 15))
+            
+            # OK button
+            btn_frame = ttk.Frame(main_frame)
+            btn_frame.pack(fill='x')
+            btn = ttk.Button(btn_frame, text="OK", command=dialog.destroy)
             btn.pack(anchor='e')
+            
+            # Update legacy compatibility variable based on current selections
+            def update_legacy_var(*args):
+                all_enabled = (self.standardize_porosity_var.get() and 
+                              self.standardize_saturation_var.get() and 
+                              self.standardize_volume_var.get() and 
+                              self.standardize_probability_var.get())
+                self.standardize_on_upload_var.set(all_enabled)
+            
+            # Track changes to update legacy variable
+            self.standardize_porosity_var.trace('w', update_legacy_var)
+            self.standardize_saturation_var.trace('w', update_legacy_var)
+            self.standardize_volume_var.trace('w', update_legacy_var)
+            self.standardize_probability_var.trace('w', update_legacy_var)
+            
             dialog.update_idletasks()
             x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
             y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
             dialog.geometry(f"+{x}+{y}")
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as pos_error:
+            # Dialog positioning failed - cosmetic, continue without centering
+            self.handle_ui_error(
+                pos_error,
+                "Startup standardization dialog positioning",
+                "dialog widget",
+                graceful_degradation=True
+            )
+        except Exception as pos_error:
+            # Unexpected error positioning dialog - log for debugging
+            self.handle_ui_error(
+                pos_error,
+                "Startup standardization dialog",
+                "Tkinter dialog",
+                graceful_degradation=True
+            )
 
+    def _is_porosity_curve(self, name_upper: str) -> bool:
+        """Return True if curve name indicates porosity family."""
+        porosity_terms = ['NPHI', 'NPOR', 'PHI', 'PHIT', 'PHIE', 'DPOR', 'TNPH', 'MPHI']
+        return any(t in name_upper for t in porosity_terms)
+    
+    def _is_saturation_curve(self, name_upper: str) -> bool:
+        """Return True if curve name indicates saturation family."""
+        saturation_terms = ['SW', 'SO', 'SG', 'SAT']
+        return any(name_upper.startswith(t) for t in saturation_terms)
+    
+    def _is_volume_curve(self, name_upper: str) -> bool:
+        """Return True if curve name indicates volume fraction family."""
+        volume_terms = ['VSH', 'VCL', 'VCARB', 'VMIN', 'VOL']
+        return any(name_upper.startswith(t) for t in volume_terms)
+    
+    def _is_probability_curve(self, name_upper: str) -> bool:
+        """Return True if curve name indicates probability family."""
+        probability_terms = ['PROB', 'FACIES_PROB']
+        return any(t in name_upper for t in probability_terms)
+    
     def _is_fractional_family_name(self, name_upper: str) -> bool:
         """Return True if curve name indicates fractional family (porosity/saturation/volume/probability)."""
-        porosity_terms = ['NPHI', 'NPOR', 'PHI', 'PHIT', 'PHIE', 'DPOR', 'TNPH', 'MPHI']
-        saturation_terms = ['SW', 'SO', 'SG', 'SAT']
-        volume_terms = ['VSH', 'VCL', 'VCARB', 'VMIN', 'VOL']
-        probability_terms = ['PROB', 'FACIES_PROB']
-        if any(t in name_upper for t in porosity_terms):
-            return True
-        if any(name_upper.startswith(t) for t in saturation_terms):
-            return True
-        if any(name_upper.startswith(t) for t in volume_terms):
-            return True
-        if any(t in name_upper for t in probability_terms):
-            return True
-        return False
+        return (self._is_porosity_curve(name_upper) or 
+                self._is_saturation_curve(name_upper) or 
+                self._is_volume_curve(name_upper) or 
+                self._is_probability_curve(name_upper))
+    
+    def _should_standardize_curve_family(self, name_upper: str) -> bool:
+        """Check if curve should be considered for standardization based on enabled families."""
+        if self._is_porosity_curve(name_upper):
+            return self.standardize_porosity_var.get()
+        elif self._is_saturation_curve(name_upper):
+            return self.standardize_saturation_var.get()
+        elif self._is_volume_curve(name_upper):
+            return self.standardize_volume_var.get()
+        elif self._is_probability_curve(name_upper):
+            return self.standardize_probability_var.get()
+        else:
+            # Not a recognized fractional family - don't standardize
+            return False
 
     def standardize_fractional_curves_on_upload(self):
         """Convert percent-style fractional families to decimals after file load, before validation.
         
         SAFETY FEATURE: Shows preview dialog with conversion details before applying changes.
         This prevents accidental misinterpretation of data (e.g., impedance as porosity).
+        Only considers curves in families selected in the startup dialog.
         """
         try:
             self._upload_standardization_note = ""
-            if not self.standardize_on_upload_var.get() or self.current_data is None or self.current_data.empty:
+            
+            # Check if any families are enabled for standardization
+            any_family_enabled = (self.standardize_porosity_var.get() or 
+                                 self.standardize_saturation_var.get() or 
+                                 self.standardize_volume_var.get() or 
+                                 self.standardize_probability_var.get())
+            
+            if not any_family_enabled or self.current_data is None or self.current_data.empty:
                 return
             
-            # First pass: identify potential conversions
+            # First pass: identify potential conversions (only for enabled families)
             conversion_candidates = []
             for col in list(self.current_data.columns):
                 name_upper = str(col).upper()
                 if name_upper in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
+                    continue
+                
+                # Only consider curves in enabled families
+                if not self._should_standardize_curve_family(name_upper):
                     continue
                 
                 series = pd.to_numeric(self.current_data[col], errors='coerce')
@@ -6703,10 +5878,22 @@ class AdvancedPreprocessingApplication:
                             reason = f"Fractional curve with median {med:.2f} (range: {min_val:.2f}-{max_val:.2f})"
                 
                 if should_convert:
+                    # Determine which family this curve belongs to
+                    family_type = "Unknown"
+                    if self._is_porosity_curve(name_upper):
+                        family_type = "Porosity"
+                    elif self._is_saturation_curve(name_upper):
+                        family_type = "Saturation"
+                    elif self._is_volume_curve(name_upper):
+                        family_type = "Volume"
+                    elif self._is_probability_curve(name_upper):
+                        family_type = "Probability"
+                    
                     conversion_candidates.append({
                         'name': col,
                         'unit': unit,
                         'reason': reason,
+                        'family': family_type,
                         'median': float(np.median(series.dropna())) if len(series.dropna()) > 0 else 0,
                         'range': f"{series.min():.2f} to {series.max():.2f}"
                     })
@@ -6754,8 +5941,21 @@ class AdvancedPreprocessingApplication:
                                     curve_name=col,
                                     original_unit=candidate['unit'] or '%'
                                 )
-                    except Exception:
-                        pass
+                    except (ValueError, AttributeError, KeyError) as report_error:
+                        # Standardization reporting failed - continue without reporting
+                        self.handle_graceful_degradation(
+                            report_error,
+                            "Unit standardization reporting",
+                            "Continuing standardization without detailed reporting"
+                        )
+                    except Exception as report_error:
+                        # Unexpected error in standardization reporting
+                        self.handle_ui_error(
+                            report_error,
+                            "Unit standardization reporting",
+                            "standardization_reporter",
+                            graceful_degradation=True
+                        )
                 converted.append(col)
             
             if converted:
@@ -6854,7 +6054,7 @@ class AdvancedPreprocessingApplication:
                 if canvas_width > 1:  # Only update if canvas has been rendered
                     canvas.itemconfig(canvas_window, width=canvas_width)
             
-            canvas.bind('<Configure>', on_canvas_configure)
+            canvas.bind(EVENT_CONFIGURE, on_canvas_configure)
             
             # Enable mouse wheel scrolling (works on all platforms)
             def on_mousewheel(event):
@@ -6869,8 +6069,22 @@ class AdvancedPreprocessingApplication:
                             canvas.yview_scroll(-1, "units")  # Scroll up
                         elif event.num == 5:
                             canvas.yview_scroll(1, "units")   # Scroll down
-                except Exception:
-                    pass
+                except (tk.TclError, AttributeError) as scroll_error:
+                    # Canvas scrolling failed - continue without scrolling
+                    self.handle_ui_error(
+                        scroll_error,
+                        "Canvas mouse wheel scrolling",
+                        "canvas widget",
+                        graceful_degradation=True
+                    )
+                except Exception as scroll_error:
+                    # Unexpected error in canvas scrolling
+                    self.handle_ui_error(
+                        scroll_error,
+                        "Canvas mouse wheel scrolling",
+                        "canvas widget",
+                        graceful_degradation=True
+                    )
             
             # Bind mouse wheel for different platforms (bind to canvas and dialog)
             canvas.bind("<MouseWheel>", on_mousewheel)  # Windows
@@ -6927,8 +6141,10 @@ class AdvancedPreprocessingApplication:
                         range_val = candidate.get('range', 'N/A')
                         median = candidate.get('median', 0)
                         reason = candidate.get('reason', 'Detected as percent format')
+                        family_type = candidate.get('family', 'Unknown')
                         
                         details = (
+                            f"Family: {family_type}\n"
                             f"Current Unit: {unit}\n"
                             f"Current Range: {range_val}\n"
                             f"Median Value: {median:.2f}\n"
@@ -6985,8 +6201,8 @@ class AdvancedPreprocessingApplication:
                 for var in conversion_vars.values():
                     var.set(False)
             
-            ttk.Button(select_frame, text="Select All", command=select_all, width=15).pack(side='left', padx=5)
-            ttk.Button(select_frame, text="Deselect All", command=deselect_all, width=15).pack(side='left', padx=5)
+            ttk.Button(select_frame, text=DIALOG_SELECT_ALL, command=select_all, width=15).pack(side='left', padx=5)
+            ttk.Button(select_frame, text=DIALOG_DESELECT_ALL, command=deselect_all, width=15).pack(side='left', padx=5)
             
             # Warning label
             warning_text = "⚠️ WARNING: Incorrect conversions can corrupt your data. Verify these conversions are appropriate."
@@ -7168,7 +6384,16 @@ class AdvancedPreprocessingApplication:
                 
         except Exception as e:
             error_msg = f"Error during conversion: {str(e)}"
-            messagebox.showerror("Conversion Error", error_msg)
+            if self.error_handler:
+                context = self.error_handler.create_context(
+                    operation="Unit Conversion",
+                    component="UnitStandardizer",
+                    user_action="Converting units",
+                    remediation_hint="Please check the data and conversion parameters."
+                )
+                self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+            else:
+                messagebox.showerror("Conversion Error", error_msg)
             
             # Update status manager if available
             if hasattr(self, 'status_manager') and self.status_manager:
@@ -7185,56 +6410,21 @@ class AdvancedPreprocessingApplication:
             dialog.title("Select Columns for Percent to Decimal Conversion")
             dialog.transient(self.root)
             dialog.grab_set()
-            dialog.resizable(True, True)
-            dialog.geometry("600x500")
+            dialog.resizable(False, False)
+            dialog.geometry("500x400")
             
-            # Main frame with proper layout
+            # Main frame
             main_frame = ttk.Frame(dialog, padding=15)
             main_frame.pack(fill='both', expand=True)
             
-            # Header section with instructions
-            header_frame = ttk.Frame(main_frame)
-            header_frame.pack(fill='x', pady=(0, 10))
-            
-            instructions_label = ttk.Label(header_frame, 
-                     text="Select columns to convert from percent (%) to decimal (v/v):", 
+            # Instructions label (will be updated if no columns found)
+            instructions_label = ttk.Label(main_frame, text="Select columns to convert from percent (%) to decimal (v/v):", 
                      font=('TkDefaultFont', 10, 'bold'))
-            instructions_label.pack(anchor='w')
-            
-            help_label = ttk.Label(header_frame, 
-                     text="Columns with % units or fractional family types are pre-selected.", 
-                     font=('TkDefaultFont', 8),
-                     foreground='gray')
-            help_label.pack(anchor='w', pady=(2, 0))
-            
-            # Variables to store checkbox states (defined before use)
-            checkbox_vars = {}
-            columns_added = 0
-            
-            # Selection controls frame
-            select_controls = ttk.Frame(header_frame)
-            select_controls.pack(fill='x', pady=(8, 0))
-            
-            def select_all():
-                for var in checkbox_vars.values():
-                    var.set(True)
-            
-            def deselect_all():
-                for var in checkbox_vars.values():
-                    var.set(False)
-            
-            select_all_btn = ttk.Button(select_controls, text="Select All", command=select_all, width=12)
-            select_all_btn.pack(side='left', padx=(0, 5))
-            
-            deselect_all_btn = ttk.Button(select_controls, text="Deselect All", command=deselect_all, width=12)
-            deselect_all_btn.pack(side='left')
+            instructions_label.pack(anchor='w', pady=(0, 10))
             
             # Create scrollable frame for checkboxes
-            canvas_frame = ttk.Frame(main_frame)
-            canvas_frame.pack(fill='both', expand=True, pady=(0, 10))
-            
-            canvas = tk.Canvas(canvas_frame, highlightthickness=0)
-            scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+            canvas = tk.Canvas(main_frame, highlightthickness=0)
+            scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
             scrollable_frame = ttk.Frame(canvas)
             
             def update_scroll_region(event=None):
@@ -7246,16 +6436,11 @@ class AdvancedPreprocessingApplication:
             canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
             canvas.configure(yscrollcommand=scrollbar.set)
             
-            # Ensure canvas window width matches canvas width
-            def configure_canvas_width(event=None):
-                canvas_width = canvas.winfo_width()
-                if canvas_width > 1:
-                    canvas_window = canvas.find_all()[0] if canvas.find_all() else None
-                    if canvas_window:
-                        canvas.itemconfig(canvas_window, width=canvas_width)
-            canvas.bind('<Configure>', configure_canvas_width)
+            # Variables to store checkbox states
+            checkbox_vars = {}
+            columns_added = 0
             
-            # Create checkboxes for each column with better layout
+            # Create checkboxes for each column
             for col in self.current_data.columns:
                 name_upper = str(col).upper()
                 if name_upper in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
@@ -7270,31 +6455,25 @@ class AdvancedPreprocessingApplication:
                 var = tk.BooleanVar(value=is_percent or is_fractional)
                 checkbox_vars[col] = var
                 
-                # Create frame for each checkbox with better organization
+                # Create frame for each checkbox with additional info
                 row_frame = ttk.Frame(scrollable_frame)
-                row_frame.pack(fill='x', padx=8, pady=3)
+                row_frame.pack(fill='x', padx=5, pady=2)
                 
-                # Checkbox with column name
-                cb = ttk.Checkbutton(row_frame, text=col, variable=var, width=25)
-                cb.pack(side='left', anchor='w')
+                # Checkbox
+                cb = ttk.Checkbutton(row_frame, text=col, variable=var)
+                cb.pack(side='left')
                 
-                # Additional info label with better formatting
+                # Additional info label
                 info_text = []
                 if is_percent:
                     info_text.append("Unit: %")
                 if is_fractional:
-                    info_text.append("Fractional")
+                    info_text.append("Fractional family")
                 
                 if info_text:
-                    info_label = ttk.Label(row_frame, text=f"({', '.join(info_text)})", 
-                                         foreground='#0066CC', font=('TkDefaultFont', 8))
-                    info_label.pack(side='left', padx=(8, 0))
-                else:
-                    # Show unit info for non-percent columns
-                    if unit:
-                        unit_label = ttk.Label(row_frame, text=f"Unit: {unit}", 
-                                             foreground='gray', font=('TkDefaultFont', 8))
-                        unit_label.pack(side='left', padx=(8, 0))
+                    info_label = ttk.Label(row_frame, text=f" ({', '.join(info_text)})", 
+                                         foreground='blue', font=('TkDefaultFont', 8))
+                    info_label.pack(side='left', padx=(5, 0))
                 
                 columns_added += 1
             
@@ -7322,9 +6501,9 @@ class AdvancedPreprocessingApplication:
             scrollable_frame.update_idletasks()
             canvas.configure(scrollregion=canvas.bbox("all"))
             
-            # Buttons frame with proper layout
+            # Buttons frame
             button_frame = ttk.Frame(main_frame)
-            button_frame.pack(fill='x', pady=(10, 0))
+            button_frame.pack(fill='x', pady=(15, 0))
             
             # Convert selected button
             def convert_selected():
@@ -7363,22 +6542,26 @@ class AdvancedPreprocessingApplication:
                         self.status_manager.update_status(f"Manual conversion completed: {len(converted)} columns converted from % to v/v")
                     
                 except Exception as e:
-                    messagebox.showerror("Conversion Error", f"Error during conversion: {str(e)}")
+                    if self.error_handler:
+                        context = self.error_handler.create_context(
+                            operation="Unit Conversion",
+                            component="UnitStandardizer",
+                            user_action="Converting units",
+                            remediation_hint="Please check the data and conversion parameters."
+                        )
+                        self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+                    else:
+                        messagebox.showerror("Conversion Error", f"Error during conversion: {str(e)}")
             
-            # Action buttons (right-aligned)
-            action_buttons = ttk.Frame(button_frame)
-            action_buttons.pack(side='right')
-            
-            convert_btn = self.ui.create_button(action_buttons, text="Convert Selected", 
-                                              command=convert_selected, button_type='primary', width=18)
+            convert_btn = ttk.Button(button_frame, text="Convert Selected", command=convert_selected)
             convert_btn.pack(side='left', padx=(0, 10))
             
             # Disable convert button if no columns available
             if columns_added == 0:
                 convert_btn.config(state='disabled')
             
-            cancel_btn = self.ui.create_button(action_buttons, text="Cancel", 
-                                             command=dialog.destroy, button_type='secondary', width=12)
+            # Cancel button
+            cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy)
             cancel_btn.pack(side='left')
             
             # Center dialog on screen
@@ -7388,7 +6571,16 @@ class AdvancedPreprocessingApplication:
             dialog.geometry(f"+{x}+{y}")
             
         except Exception as e:
-            messagebox.showerror("Dialog Error", f"Error opening conversion dialog: {str(e)}")
+            if self.error_handler:
+                context = self.error_handler.create_context(
+                    operation="Unit Conversion Dialog",
+                    component="UI",
+                    user_action="Opening conversion dialog",
+                    remediation_hint="Please try again or restart the application."
+                )
+                self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+            else:
+                messagebox.showerror("Dialog Error", f"Error opening conversion dialog: {str(e)}")
     
     def categorize_error(self, error: Exception, operation: str) -> str:
         """Categorize errors for better user feedback"""
@@ -7428,8 +6620,22 @@ class AdvancedPreprocessingApplication:
                 
                 # Force scrollbar update
                 self.root.update_idletasks()
-            except Exception:
-                pass
+            except (tk.TclError, RuntimeError) as update_error:
+                # Root window update failed - graceful degradation
+                self.handle_ui_error(
+                    update_error,
+                    "Root window update (scrollbar)",
+                    DIALOG_ROOT_WINDOW,
+                    graceful_degradation=True
+                )
+            except Exception as update_error:
+                # Unexpected error updating root window
+                self.handle_ui_error(
+                    update_error,
+                    "Root window update (scrollbar)",
+                    DIALOG_ROOT_WINDOW,
+                    graceful_degradation=True
+                )
     
     def cleanup_visualization(self):
         """Clean up visualization resources to prevent memory leaks and duplicate toolbars"""
@@ -7493,8 +6699,21 @@ class AdvancedPreprocessingApplication:
             try:
                 plt.close('all')
                 gc.collect()
-            except Exception:
-                pass
+            except (RuntimeError, OSError) as cleanup_error:
+                # Matplotlib cleanup failed - graceful degradation
+                self.handle_graceful_degradation(
+                    cleanup_error,
+                    "Matplotlib cleanup in reset",
+                    "Some figures may remain open - continuing reset"
+                )
+            except Exception as cleanup_error:
+                # Unexpected error in matplotlib cleanup
+                self.handle_ui_error(
+                    cleanup_error,
+                    "Matplotlib cleanup in reset",
+                    "matplotlib",
+                    graceful_degradation=True
+                )
             return False
     
     # =============================================================================
@@ -7704,15 +6923,29 @@ class AdvancedPreprocessingApplication:
             cleanup_needed = False
             cleanup_reason = ""
             
-            # Threshold-based cleanup
-            if current_mb > self.memory_monitor['cleanup_threshold']:
-                cleanup_needed = True
-                cleanup_reason = f"Memory threshold exceeded: {current_mb:.1f}MB > {self.memory_monitor['cleanup_threshold']}MB"
+            # Threshold-based cleanup (80% of limit)
+            memory_limit_mb = getattr(self, 'memory_limit_var', None)
+            if memory_limit_mb:
+                memory_limit = memory_limit_mb.get() if hasattr(memory_limit_mb, 'get') else MEMORY_LIMIT_DEFAULT_MB
+            else:
+                memory_limit = MEMORY_LIMIT_DEFAULT_MB
             
-            # Frequency-based cleanup
-            elif self.memory_monitor['operation_count'] % self.memory_monitor['cleanup_frequency'] == 0:
+            threshold_80_percent = memory_limit * 0.8
+            if current_mb > threshold_80_percent:
                 cleanup_needed = True
-                cleanup_reason = f"Scheduled cleanup after {self.memory_monitor['cleanup_frequency']} operations"
+                cleanup_reason = f"Memory threshold exceeded (80%): {current_mb:.1f}MB > {threshold_80_percent:.1f}MB"
+            
+            # Frequency-based cleanup (every 10 operations instead of default)
+            elif self.memory_monitor['operation_count'] % 10 == 0:
+                cleanup_needed = True
+                cleanup_reason = f"Scheduled cleanup after {self.memory_monitor['operation_count']} operations"
+            
+            # Pressure-based cleanup: if memory increased significantly since last cleanup
+            elif hasattr(self.memory_monitor, 'last_cleanup_memory'):
+                memory_increase = current_mb - self.memory_monitor.get('last_cleanup_memory', current_mb)
+                if memory_increase > 500:  # More than 500MB increase
+                    cleanup_needed = True
+                    cleanup_reason = f"Memory pressure detected: {memory_increase:.1f}MB increase since last cleanup"
             
             # Perform cleanup if needed
             if cleanup_needed:
@@ -7723,8 +6956,16 @@ class AdvancedPreprocessingApplication:
                 memory_after = self._get_current_memory_usage()['rss_mb']
                 memory_freed = memory_before - memory_after
                 
-                # Memory cleanup triggered - continuing operation
-                # Memory freed information logged internally
+                # Store last cleanup memory for pressure detection
+                if not hasattr(self.memory_monitor, 'last_cleanup_memory'):
+                    self.memory_monitor['last_cleanup_memory'] = memory_after
+                else:
+                    self.memory_monitor['last_cleanup_memory'] = memory_after
+                
+                # Log cleanup if significant memory was freed
+                if memory_freed > 50:  # Only log if more than 50MB freed
+                    self.log_processing(f"Memory cleanup triggered: {cleanup_reason}")
+                    self.log_processing(f"Memory freed: {memory_freed:.1f}MB ({memory_before:.1f}MB → {memory_after:.1f}MB)")
                 
                 # Reset operation counter
                 self.memory_monitor['operation_count'] = 0
@@ -7743,56 +6984,148 @@ class AdvancedPreprocessingApplication:
             self.log_processing(f"Memory monitoring failed for '{operation_name}': {str(e)}")
 
     def _perform_comprehensive_memory_cleanup(self, context: str):
-        """Comprehensive memory cleanup with detailed tracking"""
+        """Comprehensive memory cleanup with detailed tracking and aggressive strategies"""
         
         cleanup_actions = []
+        memory_before = self._get_current_memory_usage()['rss_mb'] if hasattr(self, '_get_current_memory_usage') else 0
         
         try:
-            # Phase 1: Matplotlib cleanup
-            if hasattr(self, 'fig') or hasattr(self, 'canvas'):
-                self.cleanup_visualization()
-                cleanup_actions.append("Matplotlib resources")
+            # Phase 1: Matplotlib cleanup - more aggressive
+            if hasattr(self, 'fig') and self.fig is not None:
+                try:
+                    plt.close(self.fig)
+                    self.fig = None
+                    cleanup_actions.append("Main figure closed")
+                except Exception:
+                    pass
+            if hasattr(self, 'canvas') and self.canvas is not None:
+                try:
+                    self.canvas.destroy()
+                    self.canvas = None
+                    cleanup_actions.append("Canvas destroyed")
+                except Exception:
+                    pass
+            # Cleanup all popup figures
+            if hasattr(self, 'popup_figures'):
+                for fig in self.popup_figures[:]:
+                    try:
+                        plt.close(fig)
+                        self.popup_figures.remove(fig)
+                    except Exception:
+                        pass
+                if self.popup_figures:
+                    cleanup_actions.append(f"Closed {len(self.popup_figures)} popup figures")
+            # Call visualization cleanup
+            if hasattr(self, 'cleanup_visualization'):
+                try:
+                    self.cleanup_visualization()
+                    cleanup_actions.append("Visualization cleanup")
+                except Exception:
+                    pass
             
-            # Phase 2: Large data structure cleanup
+            # Phase 2: Large data structure cleanup - more aggressive
             if hasattr(self, 'processed_data') and self.processed_data is not None:
                 # Clean up any cached computations in DataFrame
                 if hasattr(self.processed_data, '_mgr'):
-                    # Trigger pandas memory consolidation
-                    self.processed_data._consolidate_inplace()
-                cleanup_actions.append("DataFrame consolidation")
+                    try:
+                        # Trigger pandas memory consolidation
+                        self.processed_data._consolidate_inplace()
+                        cleanup_actions.append("DataFrame consolidation")
+                    except Exception:
+                        pass
+                # Clear DataFrame caches
+                if hasattr(self.processed_data, '_cache'):
+                    try:
+                        self.processed_data._cache.clear()
+                        cleanup_actions.append("DataFrame cache cleared")
+                    except Exception:
+                        pass
             
-            # Phase 3: Processing results cleanup for old results
-            if hasattr(self, 'processing_results') and len(self.processing_results) > 50:
+            # Phase 3: Processing results cleanup - more aggressive (reduce from 50 to 20)
+            if hasattr(self, 'processing_results') and len(self.processing_results) > 20:
                 # Keep only recent processing results to prevent memory bloat
-                recent_results = dict(list(self.processing_results.items())[-50:])
+                recent_results = dict(list(self.processing_results.items())[-20:])
+                removed_count = len(self.processing_results) - len(recent_results)
                 self.processing_results = recent_results
-                cleanup_actions.append("Processing results trimming")
+                cleanup_actions.append(f"Processing results trimmed ({removed_count} removed)")
             
-            # Phase 4: Clear any cached curve computations
-            if hasattr(self, 'curve_manager') and hasattr(self.curve_manager, '_curve_info'):
+            # Phase 4: Clear any cached curve computations - more aggressive
+            if hasattr(self, 'curve_identifier') and hasattr(self.curve_identifier, '_curve_info'):
                 # Clear any cached curve analysis that might be holding references
-                for curve_info in self.curve_manager._curve_info.values():
-                    if hasattr(curve_info, '_cached_data'):
+                cache_cleared = 0
+                for curve_info in self.curve_identifier._curve_info.values():
+                    if hasattr(curve_info, '_cached_data') and curve_info._cached_data is not None:
                         curve_info._cached_data = None
-                cleanup_actions.append("Curve cache clearing")
+                        cache_cleared += 1
+                    # Clear other potential cache attributes
+                    for attr in ['_cached_stats', '_cached_analysis', '_computed_values']:
+                        if hasattr(curve_info, attr):
+                            setattr(curve_info, attr, None)
+                if cache_cleared > 0:
+                    cleanup_actions.append(f"Curve cache cleared ({cache_cleared} curves)")
             
-            # Phase 5: Python garbage collection with multiple passes
-            for i in range(3):
+            # Phase 5: Clear intermediate processing variables
+            if hasattr(self, 'auxiliary_curves_dict'):
+                try:
+                    del self.auxiliary_curves_dict
+                    cleanup_actions.append("Auxiliary curves dict cleared")
+                except Exception:
+                    pass
+            
+            # Phase 6: Clear numpy array caches
+            if hasattr(self, '_numpy_cache'):
+                try:
+                    self._numpy_cache.clear()
+                    cleanup_actions.append("NumPy cache cleared")
+                except Exception:
+                    pass
+            
+            # Phase 7: Python garbage collection with multiple passes (increased from 3 to 5)
+            total_collected = 0
+            for i in range(5):
                 collected = gc.collect()
+                total_collected += collected
                 if collected > 0:
                     cleanup_actions.append(f"GC pass {i+1}: {collected} objects")
+            if total_collected > 0:
+                cleanup_actions.append(f"Total GC: {total_collected} objects")
             
-            # Phase 6: Clear import caches if available
+            # Phase 8: Clear import caches if available
             try:
                 if hasattr(sys, '_clear_type_cache'):
                     sys._clear_type_cache()
                     cleanup_actions.append("Type cache clearing")
+            except (AttributeError, RuntimeError) as cache_error:
+                # Type cache clearing failed - graceful degradation
+                if hasattr(self, 'handle_graceful_degradation'):
+                    self.handle_graceful_degradation(
+                        cache_error,
+                        "Type cache clearing in cleanup",
+                        "Type cache may not be cleared - continuing cleanup"
+                    )
+            except Exception as cache_error:
+                # Unexpected error clearing type cache
+                if hasattr(self, 'handle_ui_error'):
+                    self.handle_ui_error(
+                        cache_error,
+                        "Type cache clearing in cleanup",
+                        "sys._clear_type_cache",
+                        graceful_degradation=True
+                    )
+            
+            # Phase 9: Clear matplotlib backend caches
+            try:
+                import matplotlib
+                matplotlib.pyplot.close('all')  # Close all figures
+                cleanup_actions.append("All matplotlib figures closed")
             except Exception:
                 pass
             
-                    # Debug information removed for security
-                # Operation result handled - continuing safely
-                pass  # f"Memory cleanup completed for '{context}': {', '.join(cleanup_actions)}")
+            # Log cleanup summary
+            memory_after = self._get_current_memory_usage()['rss_mb'] if hasattr(self, '_get_current_memory_usage') else 0
+            memory_freed = memory_before - memory_after
+            if memory_freed > 0:
+                self.log_processing(f"Memory cleanup for '{context}': Freed {memory_freed:.1f}MB ({len(cleanup_actions)} actions)")
             
         except Exception as e:
             self.log_processing(f"ERROR: Comprehensive memory cleanup failed: {str(e)}")
@@ -8144,12 +7477,28 @@ class AdvancedPreprocessingApplication:
     
     def _get_memory_usage(self):
         """Get current memory usage in MB for performance monitoring"""
+        if not PSUTIL_AVAILABLE:
+            return 0
+        
         try:
-            if 'psutil' in globals():
-                process = psutil.Process()
-                return process.memory_info().rss / (1024 * 1024)  # Convert to MB
-        except:
-            pass
+            process = psutil.Process()
+            return process.memory_info().rss / (1024 * 1024)  # Convert to MB
+        except ProcessLookupError as e:
+            # Process may have terminated - not critical for monitoring
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"Memory usage check failed: Process not found: {str(e)}")
+        except AttributeError as e:
+            # psutil may not have expected attributes - not critical
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"Memory usage check failed: Attribute error: {str(e)}")
+        except (RuntimeError, OSError) as e:
+            # Process access issues or OS-level errors - not critical for monitoring
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"Memory usage check failed: {type(e).__name__}: {str(e)}")
+        except Exception as e:
+            # Log unexpected errors for debugging
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"Unexpected error in memory usage check: {type(e).__name__}: {str(e)}")
         return 0
     
     def setup_beta_features(self):
@@ -8174,9 +7523,21 @@ class AdvancedPreprocessingApplication:
             if not menubar:
                 menubar = tk.Menu(self.root)
                 self.root.config(menu=menubar)
-        except:
-            menubar = tk.Menu(self.root)
-            self.root.config(menu=menubar)
+        except (tk.TclError, AttributeError) as e:
+            # Tkinter widget may not be fully initialized or accessed incorrectly
+            try:
+                menubar = tk.Menu(self.root)
+                self.root.config(menu=menubar)
+            except Exception as menu_error:
+                # Log if menu creation completely fails
+                if hasattr(self, 'log_processing'):
+                    self.log_processing(f"Failed to create beta menu: {type(menu_error).__name__}: {str(menu_error)}")
+                return  # Cannot create menu, skip beta menu
+        except Exception as e:
+            # Unexpected error - log for debugging
+            if hasattr(self, 'log_processing'):
+                self.log_processing(f"Unexpected error creating beta menu: {type(e).__name__}: {str(e)}")
+            return  # Cannot create menu, skip beta menu
         
         # Beta menu
         beta_menu = tk.Menu(menubar, tearoff=0)
@@ -8347,8 +7708,16 @@ Your feedback contributes to software quality and reliability.
                 canvas_width = self.main_canvas.winfo_width()
                 if canvas_width > 1:  # Only if canvas is visible
                     self.main_canvas.itemconfig(self.main_canvas_window, width=canvas_width)
-            except Exception:
+            except (tk.TclError, AttributeError) as canvas_error:
+                # Canvas may not be fully initialized or destroyed - cosmetic, continue
                 pass
+            except Exception as canvas_error:
+                # Unexpected error configuring canvas - log for debugging
+                if hasattr(self, 'log_processing'):
+                    try:
+                        self.log_processing(f"Warning: Canvas configuration failed: {type(canvas_error).__name__}: {str(canvas_error)}")
+                    except Exception:
+                        pass  # Can't log logging failure
         
         # Enhanced configure handler that properly calculates scroll region
         def enhanced_configure_handler(event=None):
@@ -8374,8 +7743,16 @@ Your feedback contributes to software quality and reliability.
                 canvas_width = self.main_canvas.winfo_width()
                 if canvas_width > 1:
                     self.main_canvas.itemconfig(self.main_canvas_window, width=canvas_width)
-            except Exception:
+            except (tk.TclError, AttributeError) as canvas_error:
+                # Canvas may not be fully initialized or destroyed - cosmetic, continue
                 pass
+            except Exception as canvas_error:
+                # Unexpected error configuring canvas - log for debugging
+                if hasattr(self, 'log_processing'):
+                    try:
+                        self.log_processing(f"Warning: Canvas configuration failed: {type(canvas_error).__name__}: {str(canvas_error)}")
+                    except Exception:
+                        pass  # Can't log logging failure
         
         # Store configure function and frame reference for later use
         self._configure_scroll_region = enhanced_configure_handler
@@ -8408,23 +7785,51 @@ Your feedback contributes to software quality and reliability.
         def _on_button4(event):
             try:
                 self.main_canvas.yview_scroll(-1, "units")
-            except Exception:
-                pass
+            except (tk.TclError, AttributeError) as scroll_error:
+                # Canvas scrolling failed - graceful degradation
+                if hasattr(self, 'handle_ui_error'):
+                    self.handle_ui_error(
+                        scroll_error,
+                        "Canvas vertical scroll (button 4)",
+                        "main_canvas",
+                        graceful_degradation=True
+                    )
         def _on_button5(event):
             try:
                 self.main_canvas.yview_scroll(1, "units")
-            except Exception:
-                pass
+            except (tk.TclError, AttributeError) as scroll_error:
+                # Canvas scrolling failed - graceful degradation
+                if hasattr(self, 'handle_ui_error'):
+                    self.handle_ui_error(
+                        scroll_error,
+                        "Canvas vertical scroll (button 5)",
+                        "main_canvas",
+                        graceful_degradation=True
+                    )
         def _on_shift_button4(event):
             try:
                 self.main_canvas.xview_scroll(-1, "units")
-            except Exception:
-                pass
+            except (tk.TclError, AttributeError) as scroll_error:
+                # Canvas scrolling failed - graceful degradation
+                if hasattr(self, 'handle_ui_error'):
+                    self.handle_ui_error(
+                        scroll_error,
+                        "Canvas horizontal scroll (shift button 4)",
+                        "main_canvas",
+                        graceful_degradation=True
+                    )
         def _on_shift_button5(event):
             try:
                 self.main_canvas.xview_scroll(1, "units")
-            except Exception:
-                pass
+            except (tk.TclError, AttributeError) as scroll_error:
+                # Canvas scrolling failed - graceful degradation
+                if hasattr(self, 'handle_ui_error'):
+                    self.handle_ui_error(
+                        scroll_error,
+                        "Canvas horizontal scroll (shift button 5)",
+                        "main_canvas",
+                        graceful_degradation=True
+                    )
         self.main_canvas.bind_all("<Button-4>", _on_button4)
         self.main_canvas.bind_all("<Button-5>", _on_button5)
         self.main_canvas.bind_all("<Shift-Button-4>", _on_shift_button4)
@@ -8515,6 +7920,18 @@ Your feedback contributes to software quality and reliability.
     def log_processing(self, message: str) -> None:
         """Route processing messages to the on-screen status UI only (no file logging)."""
         try:
+            # Error handler should be initialized in __init__ after setup_ui()
+            # This is a fallback only if initialization failed
+            if self.error_handler is None and hasattr(self, 'root'):
+                try:
+                    self.error_handler = CentralizedErrorHandler(
+                        root=self.root,
+                        log_callback=self.log_processing
+                    )
+                except Exception:
+                    # Fallback if error handler initialization fails
+                    self.error_handler = None
+            
             if hasattr(self, 'status_manager') and self.status_manager:
                 self.status_manager.update_status(message)
                 return
@@ -8524,16 +7941,55 @@ Your feedback contributes to software quality and reliability.
                     self.results_text.insert(tk.END, f"{message}\n")
                     self.results_text.see(tk.END)
                     self.results_text.update_idletasks()
-                except Exception:
+                except (tk.TclError, AttributeError) as ui_error:
+                    # UI widget may be destroyed or invalid - graceful degradation
+                    pass
+                except Exception as ui_error:
+                    # Unexpected UI error - log if possible
+                    if hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Results text update failed: {type(ui_error).__name__}")
+                        except Exception:
+                            pass  # Can't log logging failure
+            if hasattr(self, 'status_label') and self.status_label:
+                try:
+                    self.status_label.config(text=message)
+                except (tk.TclError, AttributeError) as status_error:
+                    # Status label may be destroyed or invalid - graceful degradation
+                    pass
+                except Exception as status_error:
+                    # Unexpected status update error - log if possible
+                    if hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Status label update failed: {type(status_error).__name__}")
+                        except Exception:
+                            pass  # Can't log logging failure
+        except Exception:
+            # Absolutely no file logging, and avoid raising during UI init
+            pass
+    
+    def _log_processing_internal(self, message: str) -> None:
+        """Internal logging method for error handler (prevents recursion)."""
+        try:
+            if hasattr(self, 'status_manager') and self.status_manager:
+                self.status_manager.update_status(message)
+                return
+            # Fallbacks if status_manager is not available yet
+            if hasattr(self, 'results_text') and self.results_text:
+                try:
+                    self.results_text.insert(tk.END, f"{message}\n")
+                    self.results_text.see(tk.END)
+                    self.results_text.update_idletasks()
+                except (tk.TclError, AttributeError):
                     pass
             if hasattr(self, 'status_label') and self.status_label:
                 try:
                     self.status_label.config(text=message)
-                except Exception:
+                except (tk.TclError, AttributeError):
                     pass
         except Exception:
-            # Absolutely no file logging, and avoid raising during UI init
-            pass
+            # Last resort: print to console
+            print(f"[LOG] {message}")
 
     def _begin_operation(self, message: str) -> None:
         """Unified user feedback when a long-running operation starts."""
@@ -8545,11 +8001,35 @@ Your feedback contributes to software quality and reliability.
                 try:
                     self.progress_bar.config(mode='indeterminate')
                     self.progress_bar.start(10)
-                except Exception:
+                except (tk.TclError, AttributeError) as progress_error:
+                    # Progress bar may not be initialized or destroyed - graceful degradation
                     pass
-            self.root.update_idletasks()
-        except Exception:
-            pass
+                except Exception as progress_error:
+                    # Unexpected error with progress bar - log if possible
+                    if hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Progress bar start failed: {type(progress_error).__name__}")
+                        except Exception:
+                            pass  # Can't log logging failure
+            try:
+                self.root.update_idletasks()
+            except (tk.TclError, RuntimeError) as update_error:
+                # Root window may be destroyed - graceful degradation
+                pass
+            except Exception as update_error:
+                # Unexpected error updating UI - log if possible
+                if hasattr(self, 'log_processing'):
+                    try:
+                        self.log_processing(f"Warning: UI update failed: {type(update_error).__name__}")
+                    except Exception:
+                        pass  # Can't log logging failure
+        except Exception as begin_error:
+            # Unexpected error in begin operation - log if possible
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Begin operation failed: {type(begin_error).__name__}: {str(begin_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
 
     def _end_operation(self, message: str) -> None:
         """Unified user feedback when an operation completes successfully."""
@@ -8558,14 +8038,42 @@ Your feedback contributes to software quality and reliability.
                 try:
                     self.progress_bar.stop()
                     self.progress_bar.config(mode='determinate', value=100)
-                except Exception:
+                except (tk.TclError, AttributeError) as progress_error:
+                    # Progress bar may not be initialized or destroyed - graceful degradation
                     pass
+                except Exception as progress_error:
+                    # Unexpected error with progress bar - log if possible
+                    if hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Progress bar stop failed: {type(progress_error).__name__}")
+                        except Exception:
+                            pass  # Can't log logging failure
             if hasattr(self, 'status_label'):
-                self.status_label.config(text=message)
+                try:
+                    self.status_label.config(text=message)
+                except (tk.TclError, AttributeError):
+                    # Status label may be destroyed - graceful degradation
+                    pass
             self.log_processing(message)
-            self.root.update_idletasks()
-        except Exception:
-            pass
+            try:
+                self.root.update_idletasks()
+            except (tk.TclError, RuntimeError):
+                # Root window may be destroyed - graceful degradation
+                pass
+            except Exception as update_error:
+                # Unexpected error updating UI - log if possible
+                if hasattr(self, 'log_processing'):
+                    try:
+                        self.log_processing(f"Warning: UI update failed: {type(update_error).__name__}")
+                    except Exception:
+                        pass  # Can't log logging failure
+        except Exception as end_error:
+            # Unexpected error in end operation - log if possible
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: End operation failed: {type(end_error).__name__}: {str(end_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
 
     def _fail_operation(self, title: str, message: str) -> None:
         """Unified error feedback with dialog and status label."""
@@ -8574,16 +8082,234 @@ Your feedback contributes to software quality and reliability.
                 try:
                     self.progress_bar.stop()
                     self.progress_bar.config(mode='determinate', value=0)
-                except Exception:
+                except (tk.TclError, AttributeError) as progress_error:
+                    # Progress bar may not be initialized or destroyed - graceful degradation
                     pass
+                except Exception as progress_error:
+                    # Unexpected error with progress bar - log if possible
+                    if hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Progress bar reset failed: {type(progress_error).__name__}")
+                        except Exception:
+                            pass  # Can't log logging failure
             if hasattr(self, 'status_label'):
-                self.status_label.config(text=message)
-        except Exception:
-            pass
+                try:
+                    self.status_label.config(text=message)
+                except (tk.TclError, AttributeError):
+                    # Status label may be destroyed - graceful degradation
+                    pass
+                except Exception as status_error:
+                    # Unexpected error updating status - log if possible
+                    if hasattr(self, 'log_processing'):
+                        try:
+                            self.log_processing(f"Warning: Status label update failed: {type(status_error).__name__}")
+                        except Exception:
+                            pass  # Can't log logging failure
+        except Exception as fail_error:
+            # Unexpected error in fail operation - log if possible
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Fail operation setup failed: {type(fail_error).__name__}: {str(fail_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
         try:
             messagebox.showerror(title, message)
-        except Exception:
-            pass
+        except (tk.TclError, RuntimeError) as dialog_error:
+            # Dialog display failed (may be off main thread or window destroyed) - log but continue
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Error dialog display failed: {type(dialog_error).__name__}: {str(dialog_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
+            # Last resort: print to console
+            print(f"ERROR: {title}: {message}")
+        except Exception as dialog_error:
+            # Unexpected error displaying dialog - log and print to console
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Unexpected error displaying error dialog: {type(dialog_error).__name__}: {str(dialog_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
+            print(f"ERROR: {title}: {message}")
+    
+    # ========================================================================
+    # CENTRALIZED ERROR HANDLING HELPERS
+    # ========================================================================
+    # Professional error handling wrappers for common patterns
+    # These methods provide consistent error handling across the application
+    
+    def handle_ui_error(self, 
+                       error: Exception,
+                       operation: str,
+                       widget_name: str = None,
+                       graceful_degradation: bool = True) -> None:
+        """
+        Handle UI-related errors with graceful degradation.
+        
+        Args:
+            error: The exception that occurred
+            operation: Description of the UI operation
+            widget_name: Name of the widget (optional)
+            graceful_degradation: If True, continue without crashing (default: True)
+        """
+        if self.error_handler is None:
+            # Fallback if error handler not initialized
+            print(f"[UI ERROR] {operation}: {error}")
+            return
+        
+        context = self.error_handler.create_context(
+            operation=operation,
+            component=widget_name or "UI",
+            user_action=f"UI operation: {operation}",
+            remediation_hint="UI widget may have been destroyed or invalid. This is usually non-critical."
+        )
+        
+        # UI errors are typically non-critical - use warning severity for graceful degradation
+        severity = ErrorSeverity.WARNING if graceful_degradation else ErrorSeverity.ERROR
+        
+        # Don't show dialog for UI errors - just log (too disruptive)
+        self.error_handler.handle_error(
+            error=error,
+            context=context,
+            severity=severity,
+            show_dialog=False,  # UI errors shouldn't interrupt user workflow
+            log_error=True
+        )
+    
+    def handle_processing_error(self,
+                               error: Exception,
+                               operation: str,
+                               data_context: str = None,
+                               show_dialog: bool = True) -> None:
+        """
+        Handle data processing errors with user notification.
+        
+        Args:
+            error: The exception that occurred
+            operation: Description of the processing operation
+            data_context: Context about what data was being processed
+            show_dialog: Whether to show error dialog to user (default: True)
+        """
+        if self.error_handler is None:
+            # Fallback if error handler not initialized
+            print(f"[PROCESSING ERROR] {operation}: {error}")
+            if show_dialog:
+                try:
+                    messagebox.showerror(ERROR_TITLE_PROCESSING, f"{operation}: {error}")
+                except (tk.TclError, RuntimeError) as msg_error:
+                    # Messagebox display failed - graceful degradation
+                    # Already in error handler, so just log to console
+                    print(f"[ERROR] Failed to display error dialog: {msg_error}")
+                except Exception as msg_error:
+                    # Unexpected error displaying messagebox
+                    print(f"[ERROR] Unexpected error displaying error dialog: {msg_error}")
+            return
+        
+        context = self.error_handler.create_context(
+            operation=operation,
+            component="Data Processing",
+            user_action=data_context or "Processing data",
+            remediation_hint="Please check your input data and try again. Verify data format and quality.",
+            data_info=data_context
+        )
+        
+        self.error_handler.handle_error(
+            error=error,
+            context=context,
+            severity=ErrorSeverity.ERROR,
+            show_dialog=show_dialog,
+            log_error=True
+        )
+    
+    def handle_file_error(self,
+                         error: Exception,
+                         operation: str,
+                         file_path: str = None,
+                         file_operation: str = None) -> None:
+        """
+        Handle file operation errors with user-friendly messages.
+        
+        Args:
+            error: The exception that occurred
+            operation: Description of the file operation
+            file_path: Path to the file (will be sanitized for display)
+            file_operation: Type of file operation (read/write/validate)
+        """
+        if self.error_handler is None:
+            # Fallback if error handler not initialized
+            print(f"[FILE ERROR] {operation}: {error}")
+            try:
+                sanitized = SafeFileHandler.sanitize_path_for_display(file_path) if file_path else "unknown"
+                if self.error_handler:
+                    context = self.error_handler.create_context(
+                        operation=operation,
+                        component="FileOperations",
+                        user_action="File operation",
+                        remediation_hint=f"Please check file: {sanitized}",
+                        additional_info={"file_path": sanitized}
+                    )
+                    self.error_handler.handle_error(Exception(str(error)), context, severity=ErrorSeverity.ERROR)
+                else:
+                    messagebox.showerror(ERROR_TITLE_FILE, f"{operation}: {error}\nFile: {sanitized}")
+            except Exception:
+                pass
+            return
+        
+        # Sanitize file path for privacy
+        sanitized_path = SafeFileHandler.sanitize_path_for_display(file_path) if file_path else "unknown"
+        
+        remediation = "Please check file path, permissions, and ensure file is not open in another program."
+        if file_operation == "write":
+            remediation += " Verify you have write permissions to the target directory."
+        elif file_operation == "read":
+            remediation += " Verify the file exists and is accessible."
+        
+        context = self.error_handler.create_context(
+            operation=operation,
+            component="File Operations",
+            user_action=f"File {file_operation or 'operation'}",
+            remediation_hint=remediation,
+            file_path=sanitized_path
+        )
+        
+        self.error_handler.handle_error(
+            error=error,
+            context=context,
+            severity=ErrorSeverity.ERROR,
+            show_dialog=True,
+            log_error=True
+        )
+    
+    def handle_graceful_degradation(self,
+                                   error: Exception,
+                                   operation: str,
+                                   fallback_message: str = None) -> None:
+        """
+        Handle non-critical errors that allow graceful degradation.
+        
+        Args:
+            error: The exception that occurred
+            operation: Description of the operation
+            fallback_message: Message to display/log if fallback behavior is used
+        """
+        if self.error_handler is None:
+            # Fallback if error handler not initialized
+            print(f"[WARNING] {operation}: {error}")
+            return
+        
+        context = self.error_handler.create_context(
+            operation=operation,
+            component="Application",
+            user_action="Non-critical operation",
+            remediation_hint=fallback_message or "Operation failed but application continues normally."
+        )
+        
+        # Use warning severity - not critical, don't interrupt user
+        self.error_handler.handle_warning(
+            message=f"{operation}: {error}",
+            context=context,
+            show_dialog=False  # Warnings shouldn't interrupt workflow
+        )
     
     def check_system_resources(self):
         """Monitor system resources periodically"""
@@ -8630,26 +8356,22 @@ Your feedback contributes to software quality and reliability.
                                           command=self.browse_file, button_type='secondary', width=20)
         browse_btn.pack(side='right')
         
-        # Create button frames for logical grouping
-        # Primary actions: file loading
-        primary_actions_frame = ttk.Frame(load_content)
-        primary_actions_frame.pack(fill='x', pady=(10, 5))
+        # Create a button frame for Load and Clear buttons
+        button_frame = ttk.Frame(load_content)
+        button_frame.pack(fill='x', pady=15)
         
-        load_btn = self.ui.create_button(primary_actions_frame, text="Load & Analyze File",
+        load_btn = self.ui.create_button(button_frame, text="Load & Analyze File",
                                         command=self.load_file, button_type='success', width=25)
         load_btn.pack(side='left', padx=(0, 15))
         
-        multi_btn = self.ui.create_button(primary_actions_frame, text="Load Multiple Files",
-                                         command=self.load_multiple_files, button_type='primary', width=25)
-        multi_btn.pack(side='left')
-        
-        # Secondary action: data management (separated for clarity)
-        secondary_actions_frame = ttk.Frame(load_content)
-        secondary_actions_frame.pack(fill='x', pady=(5, 10))
-        
-        clear_btn = self.ui.create_button(secondary_actions_frame, text="Clear Data",
+        clear_btn = self.ui.create_button(button_frame, text="Clear Data",
                                          command=self.clear_data, button_type='warning', width=20)
         clear_btn.pack(side='left')
+        
+        # New: Load multiple files (multiwell)
+        multi_btn = self.ui.create_button(button_frame, text="Load Multiple Files",
+                                         command=self.load_multiple_files, button_type='primary', width=25)
+        multi_btn.pack(side='left', padx=(15, 0))
         
         # CRITICAL: Well Information Card for safety
         well_card, well_content = self.ui.create_card(
@@ -8660,47 +8382,47 @@ Your feedback contributes to software quality and reliability.
         
         # Create labels for well information (will be populated on load)
         self.well_name_label = ttk.Label(well_content, text="Well: Not loaded", 
-                                         font=('Segoe UI', 10, 'bold'), foreground='#CC0000')
+                                         font=(FONT_DEFAULT, 10, 'bold'), foreground='#CC0000')
         self.well_name_label.pack(anchor='w', pady=2)
         
         self.field_label = ttk.Label(well_content, text="Field: Not loaded", 
-                                     font=('Segoe UI', 9))
+                                     font=(FONT_DEFAULT, 9))
         self.field_label.pack(anchor='w', pady=2)
         
         self.uwi_label = ttk.Label(well_content, text="UWI: Not loaded", 
-                                   font=('Segoe UI', 9))
+                                   font=(FONT_DEFAULT, 9))
         self.uwi_label.pack(anchor='w', pady=2)
         
         self.company_label = ttk.Label(well_content, text="Company: Not loaded", 
-                                       font=('Segoe UI', 9))
+                                       font=(FONT_DEFAULT, 9))
         self.company_label.pack(anchor='w', pady=2)
         
         self.depth_range_label = ttk.Label(well_content, text="Depth Range: Not loaded", 
-                                           font=('Segoe UI', 9))
+                                           font=(FONT_DEFAULT, 9))
         self.depth_range_label.pack(anchor='w', pady=2)
 
         # New: Loaded Wells manager
         wells_card, wells_content = self.ui.create_card(
             data_frame, "Loaded Wells",
-            help_text="Manage multiple wells in the session. Set the active well or remove entries. Processing actions are available in the Processing tab."
+            help_text="Manage multiple wells in the session. Set the active well, remove entries, or process all/selected wells."
         )
         wells_card.pack(fill='x', pady=(0, 10))
-        
-        # Well listbox
-        self.well_listbox = tk.Listbox(wells_content, height=6, selectmode='extended')
-        self.well_listbox.pack(fill='x', padx=10, pady=(10, 10))
-        
-        # Well management buttons (separated from processing actions)
         wells_toolbar = ttk.Frame(wells_content)
-        wells_toolbar.pack(fill='x', pady=(0, 10), padx=10)
-        
+        wells_toolbar.pack(fill='x', pady=(5, 5))
+        self.well_listbox = tk.Listbox(wells_content, height=6, selectmode='extended')
+        self.well_listbox.pack(fill='x', padx=10, pady=(0, 8))
         set_active_btn = self.ui.create_button(wells_toolbar, text="Set Active Well",
                                               command=self.on_set_active_well, button_type='secondary', width=20)
         set_active_btn.pack(side='left', padx=(0, 10))
-        
         remove_btn = self.ui.create_button(wells_toolbar, text="Remove Selected",
                                           command=self.on_remove_selected_wells, button_type='warning', width=20)
         remove_btn.pack(side='left')
+        process_all_quick_btn = self.ui.create_button(wells_toolbar, text="Process All Wells",
+                                                     command=self.process_all_wells, button_type='success', width=20)
+        process_all_quick_btn.pack(side='left', padx=(10, 0))
+        process_sel_btn = self.ui.create_button(wells_toolbar, text="Process Selected",
+                                               command=self.process_selected_wells, button_type='primary', width=20)
+        process_sel_btn.pack(side='left', padx=(10, 0))
         
         # Data summary section
         summary_card, summary_content = self.ui.create_card(
@@ -8755,15 +8477,39 @@ Your feedback contributes to software quality and reliability.
         self.well_info = copy.deepcopy(dataset.get('well_info', {}))
         try:
             self.file_path_var.set(dataset.get('file_path', ''))
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as path_error:
+            # UI variable may not be initialized - log but continue
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: File path variable update failed: {type(path_error).__name__}")
+                except Exception:
+                    pass  # Can't log logging failure
+        except Exception as path_error:
+            # Unexpected error setting file path - log for debugging
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Unexpected error setting file path: {type(path_error).__name__}: {str(path_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
         # Refresh UI elements tied to single state
         try:
             self._update_well_info_display()
             self.update_curve_options()
             self.update_data_display()
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as ui_refresh_error:
+            # UI refresh failed - log but don't fail dataset loading
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: UI refresh failed during dataset load: {type(ui_refresh_error).__name__}: {str(ui_refresh_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
+        except Exception as ui_refresh_error:
+            # Unexpected error refreshing UI - log for debugging
+            if hasattr(self, 'log_processing'):
+                try:
+                    self.log_processing(f"Warning: Unexpected error refreshing UI: {type(ui_refresh_error).__name__}: {str(ui_refresh_error)}")
+                except Exception:
+                    pass  # Can't log logging failure
 
     def _dataset_from_current_state(self, file_path: str) -> Dict[str, Any]:
         return {
@@ -8800,8 +8546,22 @@ Your feedback contributes to software quality and reliability.
             self.well_datasets[self.active_well_id] = self._dataset_from_current_state(
                 self.file_path_var.get() if hasattr(self, 'file_path_var') else ''
             )
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as file_var_error:
+            # UI variable access failed - use empty string and log
+            self.handle_ui_error(
+                file_var_error,
+                "File path variable access in well info update",
+                "file_path_var",
+                graceful_degradation=True
+            )
+        except Exception as file_var_error:
+            # Unexpected error accessing file path variable
+            self.handle_ui_error(
+                file_var_error,
+                "File path variable access in well info update",
+                "file_path_var",
+                graceful_degradation=True
+            )
 
     def set_active_well(self, well_id: str) -> None:
         if well_id not in self.well_datasets:
@@ -8811,8 +8571,22 @@ Your feedback contributes to software quality and reliability.
         self._apply_dataset_to_single_state(self.well_datasets[well_id])
         try:
             self.status_label.config(text=f"Active well: {well_id}")
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as status_error:
+            # Status label update failed - graceful degradation
+            self.handle_ui_error(
+                status_error,
+                "Status label update (set active well)",
+                "status_label",
+                graceful_degradation=True
+            )
+        except Exception as status_error:
+            # Unexpected error updating status label
+            self.handle_ui_error(
+                status_error,
+                "Status label update (set active well)",
+                "status_label",
+                graceful_degradation=True
+            )
         # Refresh lists
         self.update_well_list_display()
         try:
@@ -8821,8 +8595,22 @@ Your feedback contributes to software quality and reliability.
                 for wid in self.well_datasets.keys():
                     if wid != self.active_well_id:
                         self.cohort_listbox.insert(tk.END, wid)
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as listbox_error:
+            # Listbox update failed - graceful degradation
+            self.handle_ui_error(
+                listbox_error,
+                "Cohort listbox update",
+                "cohort_listbox",
+                graceful_degradation=True
+            )
+        except Exception as listbox_error:
+            # Unexpected error updating listbox
+            self.handle_ui_error(
+                listbox_error,
+                "Cohort listbox update",
+                "cohort_listbox",
+                graceful_degradation=True
+            )
 
     def update_well_list_display(self) -> None:
         try:
@@ -8835,8 +8623,22 @@ Your feedback contributes to software quality and reliability.
                 rows = len(ds.get('current_data')) if isinstance(ds.get('current_data'), pd.DataFrame) else 0
                 cols = len(ds.get('current_data').columns) if isinstance(ds.get('current_data'), pd.DataFrame) else 0
                 self.well_listbox.insert(tk.END, f"{wid}  |  {label}  |  {rows}x{cols}")
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as listbox_error:
+            # Listbox update failed - graceful degradation
+            self.handle_ui_error(
+                listbox_error,
+                "Well listbox update",
+                "well_listbox",
+                graceful_degradation=True
+            )
+        except Exception as listbox_error:
+            # Unexpected error updating listbox
+            self.handle_ui_error(
+                listbox_error,
+                "Well listbox update",
+                "well_listbox",
+                graceful_degradation=True
+            )
 
     def on_set_active_well(self):
         try:
@@ -8848,7 +8650,16 @@ Your feedback contributes to software quality and reliability.
             wid = display.split("  |  ")[0]
             self.set_active_well(wid)
         except Exception as e:
-            messagebox.showerror("Selection Error", f"Failed to set active well: {e}")
+            if self.error_handler:
+                context = self.error_handler.create_context(
+                    operation="Well Selection",
+                    component="MultiWellManager",
+                    user_action="Selecting well",
+                    remediation_hint="Please check well data and try again."
+                )
+                self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+            else:
+                messagebox.showerror("Selection Error", f"Failed to set active well: {e}")
 
     def on_remove_selected_wells(self):
         try:
@@ -8863,12 +8674,18 @@ Your feedback contributes to software quality and reliability.
                 self.active_well_id = None
                 self.reset_application_state(prompt_if_unsaved=False)
             self.update_well_list_display()
-        except Exception:
-            pass
+        except Exception as remove_error:
+            # Error removing well - log and continue
+            self.handle_processing_error(
+                remove_error,
+                "Remove selected wells",
+                "Removing selected wells from dataset",
+                show_dialog=False
+            )
 
     def load_multiple_files(self):
         try:
-            filetypes = [("LAS files", "*.las"), ("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+            filetypes = [("LAS files", "*.las"), ("DLIS/LIS files", "*.dlis *.lis"), ("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
             filenames = filedialog.askopenfilenames(title="Select Multiple Data Files", filetypes=filetypes)
             if not filenames:
                 return
@@ -8921,13 +8738,32 @@ Your feedback contributes to software quality and reliability.
                         first_well_id = wid
                     self.log_processing(f"Loaded well '{wid}' from {fp}")
                 except Exception as e:
-                    messagebox.showerror("Load Error", f"Failed to load file {fp}: {e}")
+                    if self.error_handler:
+                        context = self.error_handler.create_context(
+                            operation="File Loading",
+                            component="FileLoader",
+                            user_action="Loading file",
+                            remediation_hint=f"Please check file: {fp}",
+                            additional_info={"file_path": fp}
+                        )
+                        self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+                    else:
+                        messagebox.showerror("Load Error", f"Failed to load file {fp}: {e}")
             # Set active to the first loaded well and refresh list
             if first_well_id:
                 self.set_active_well(first_well_id)
             self.update_well_list_display()
         except Exception as e:
-            messagebox.showerror("Load Error", f"Failed to load multiple files: {e}")
+            if self.error_handler:
+                context = self.error_handler.create_context(
+                    operation="Batch File Loading",
+                    component="FileLoader",
+                    user_action="Loading multiple files",
+                    remediation_hint="Please check file paths and formats."
+                )
+                self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+            else:
+                messagebox.showerror("Load Error", f"Failed to load multiple files: {e}")
 
     def process_current_well_blocking(self):
         try:
@@ -8937,13 +8773,36 @@ Your feedback contributes to software quality and reliability.
             while t.is_alive():
                 try:
                     self.root.update()
-                except Exception:
-                    pass
+                except (tk.TclError, RuntimeError) as update_error:
+                    # Root window update failed - continue without update
+                    self.handle_ui_error(
+                        update_error,
+                        "Root window update during file load",
+                        DIALOG_ROOT_WINDOW,
+                        graceful_degradation=True
+                    )
+                except Exception as update_error:
+                    # Unexpected error updating root window
+                    self.handle_ui_error(
+                        update_error,
+                        "Root window update during file load",
+                        DIALOG_ROOT_WINDOW,
+                        graceful_degradation=True
+                    )
                 time.sleep(0.05)
             # Persist results into dataset
             self._save_active_well_to_dataset()
         except Exception as e:
-            messagebox.showerror("Processing Error", f"Failed to process well: {e}")
+            if self.error_handler:
+                context = self.error_handler.create_context(
+                    operation="Well Processing",
+                    component="ProcessingPipeline",
+                    user_action="Processing well data",
+                    remediation_hint="Please check data quality and processing parameters."
+                )
+                self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+            else:
+                messagebox.showerror(ERROR_TITLE_PROCESSING, f"Failed to process well: {e}")
 
     def process_all_wells(self):
         try:
@@ -8962,14 +8821,42 @@ Your feedback contributes to software quality and reliability.
                 self.set_active_well(wid)
                 try:
                     self.status_label.config(text=f"Processing well {i}/{total}: {wid}")
-                except Exception:
-                    pass
+                except (tk.TclError, AttributeError) as status_error:
+                    # Status label update failed - graceful degradation
+                    self.handle_ui_error(
+                        status_error,
+                        "Status label update (process all wells)",
+                        "status_label",
+                        graceful_degradation=True
+                    )
+                except Exception as status_error:
+                    # Unexpected error updating status label
+                    self.handle_ui_error(
+                        status_error,
+                        "Status label update (process all wells)",
+                        "status_label",
+                        graceful_degradation=True
+                    )
                 self.process_current_well_blocking()
             self._end_operation(f"Processed all wells ({total})")
             try:
                 messagebox.showinfo("Process All Wells", f"Completed processing {total} well(s).")
-            except Exception:
-                pass
+            except (tk.TclError, RuntimeError) as msg_error:
+                # Messagebox display failed - graceful degradation
+                self.handle_ui_error(
+                    msg_error,
+                    "Messagebox display (process all wells)",
+                    "messagebox",
+                    graceful_degradation=True
+                )
+            except Exception as msg_error:
+                # Unexpected error displaying messagebox
+                self.handle_ui_error(
+                    msg_error,
+                    "Messagebox display (process all wells)",
+                    "messagebox",
+                    graceful_degradation=True
+                )
         except Exception as e:
             self._fail_operation("Process All Wells", f"Failed to process all wells: {e}")
 
@@ -9001,14 +8888,42 @@ Your feedback contributes to software quality and reliability.
                 self.set_active_well(wid)
                 try:
                     self.status_label.config(text=f"Processing well {i}/{len(selected_ids)}: {wid}")
-                except Exception:
-                    pass
+                except (tk.TclError, AttributeError) as status_error:
+                    # Status label update failed - graceful degradation
+                    self.handle_ui_error(
+                        status_error,
+                        "Status label update (process selected wells)",
+                        "status_label",
+                        graceful_degradation=True
+                    )
+                except Exception as status_error:
+                    # Unexpected error updating status label
+                    self.handle_ui_error(
+                        status_error,
+                        "Status label update (process selected wells)",
+                        "status_label",
+                        graceful_degradation=True
+                    )
                 self.process_current_well_blocking()
             self._end_operation(f"Processed {len(selected_ids)} selected well(s)")
             try:
                 messagebox.showinfo("Process Selected", f"Completed processing {len(selected_ids)} well(s).")
-            except Exception:
-                pass
+            except (tk.TclError, RuntimeError) as msg_error:
+                # Messagebox display failed - graceful degradation
+                self.handle_ui_error(
+                    msg_error,
+                    "Messagebox display (process selected wells)",
+                    "messagebox",
+                    graceful_degradation=True
+                )
+            except Exception as msg_error:
+                # Unexpected error displaying messagebox
+                self.handle_ui_error(
+                    msg_error,
+                    "Messagebox display (process selected wells)",
+                    "messagebox",
+                    graceful_degradation=True
+                )
         except Exception as e:
             self._fail_operation("Process Selected", f"Failed to process selected wells: {e}")
 
@@ -9187,12 +9102,35 @@ Your feedback contributes to software quality and reliability.
                 self.report_text.config(state='disabled')
                 try:
                     self.status_label.config(text="Cross-well summary generated")
-                except Exception:
-                    pass
+                except (tk.TclError, RuntimeError) as msg_error:
+                    # Messagebox display failed - graceful degradation
+                    self.handle_ui_error(
+                        msg_error,
+                        "Messagebox display (cross-well summary)",
+                        "messagebox",
+                        graceful_degradation=True
+                    )
+                except Exception as msg_error:
+                    # Unexpected error displaying messagebox
+                    self.handle_ui_error(
+                        msg_error,
+                        "Messagebox display (cross-well summary)",
+                        "messagebox",
+                        graceful_degradation=True
+                    )
             else:
                 messagebox.showinfo("Cross-Well Summary", summary)
         except Exception as e:
-            messagebox.showerror("Cross-Well Summary", f"Failed to generate cross-well summary: {e}")
+            if self.error_handler:
+                context = self.error_handler.create_context(
+                    operation="Cross-Well Summary",
+                    component="Reporting",
+                    user_action="Generating summary",
+                    remediation_hint="Please check well data availability."
+                )
+                self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+            else:
+                messagebox.showerror("Cross-Well Summary", f"Failed to generate cross-well summary: {e}")
 
     def export_all_processed(self):
         """Export all processed wells with security validation for path traversal protection."""
@@ -9208,7 +9146,17 @@ Your feedback contributes to software quality and reliability.
             validated_dir = SafeFileHandler.validate_file_path(target_dir)
             if not validated_dir or not validated_dir.is_dir():
                 sanitized = SafeFileHandler.sanitize_path_for_display(target_dir)
-                messagebox.showerror("Security Error", f"Invalid export directory: {sanitized}")
+                if self.error_handler:
+                    context = self.error_handler.create_context(
+                        operation="Export Directory Validation",
+                        component="Security",
+                        user_action="Exporting data",
+                        remediation_hint=f"Please use a valid directory path.",
+                        additional_info={"directory": sanitized}
+                    )
+                    self.error_handler.handle_error(Exception(f"Invalid export directory: {sanitized}"), context, severity=ErrorSeverity.ERROR)
+                else:
+                    messagebox.showerror(ERROR_TITLE_SECURITY, f"Invalid export directory: {sanitized}")
                 return
             
             target_dir = str(validated_dir)
@@ -9220,8 +9168,21 @@ Your feedback contributes to software quality and reliability.
                     self.crosswell_priors = self.crosswell_prior_manager.build_priors(
                         depth_binned=self.priors_depth_binning_var.get()
                     )
-                except Exception:
-                    pass
+                except (ValueError, AttributeError, KeyError) as prior_error:
+                    # Prior building failed for this well - continue with others
+                    self.handle_graceful_degradation(
+                        prior_error,
+                        "Cross-well prior building",
+                        f"Skipping well {wid} - continuing with remaining wells"
+                    )
+                except Exception as prior_error:
+                    # Unexpected error building priors
+                    self.handle_processing_error(
+                        prior_error,
+                        "Cross-well prior building",
+                        f"Building priors for well {wid}",
+                        show_dialog=False
+                    )
             
             for wid, ds in self.well_datasets.items():
                 pdf = ds.get('processed_data')
@@ -9243,7 +9204,17 @@ Your feedback contributes to software quality and reliability.
                 final_validated = SafeFileHandler.validate_file_path(out_path, allowed_dir=target_dir)
                 if not final_validated:
                     sanitized = SafeFileHandler.sanitize_path_for_display(out_path)
-                    messagebox.showerror("Security Error", f"Invalid export path generated: {sanitized}")
+                    if self.error_handler:
+                        context = self.error_handler.create_context(
+                            operation="Export Path Generation",
+                            component="Security",
+                            user_action="Exporting data",
+                            remediation_hint="Please check export settings and try again.",
+                            additional_info={"path": sanitized}
+                        )
+                        self.error_handler.handle_error(Exception(f"Invalid export path generated: {sanitized}"), context, severity=ErrorSeverity.ERROR)
+                    else:
+                        messagebox.showerror(ERROR_TITLE_SECURITY, f"Invalid export path generated: {sanitized}")
                     continue
                 
                 with open(str(final_validated), 'w', encoding='utf-8') as f:
@@ -9253,7 +9224,16 @@ Your feedback contributes to software quality and reliability.
             messagebox.showinfo("Export All", f"Exported {exported} processed well(s) to {target_dir}")
         except Exception as e:
             sanitized = SafeFileHandler.sanitize_path_for_display(target_dir if 'target_dir' in locals() else "unknown")
-            messagebox.showerror("Export All", f"Failed to export: {e}")
+            if self.error_handler:
+                context = self.error_handler.create_context(
+                    operation="Batch Export",
+                    component="ExportManager",
+                    user_action="Exporting data",
+                    remediation_hint="Please check export settings and file permissions."
+                )
+                self.error_handler.handle_error(e, context, severity=ErrorSeverity.ERROR)
+            else:
+                messagebox.showerror("Export All", f"Failed to export: {e}")
 
     def build_crosswell_priors(self):
         try:
@@ -9261,7 +9241,16 @@ Your feedback contributes to software quality and reliability.
                 messagebox.showinfo("Cross-Well Priors", "Enable Cross-Well Priors first.")
                 return
             if not self.crosswell_prior_manager:
-                messagebox.showerror("Cross-Well Priors", "Prior manager unavailable.")
+                if self.error_handler:
+                    context = self.error_handler.create_context(
+                        operation="Cross-Well Priors",
+                        component="CrossWellPriorManager",
+                        user_action="Accessing priors",
+                        remediation_hint="Please initialize cross-well prior manager first."
+                    )
+                    self.error_handler.handle_error(Exception("Prior manager unavailable."), context, severity=ErrorSeverity.WARNING)
+                else:
+                    messagebox.showerror("Cross-Well Priors", "Prior manager unavailable.")
                 return
             self._begin_operation("Building cross-well priors...")
             priors = self.crosswell_prior_manager.build_priors(depth_binned=self.priors_depth_binning_var.get())
@@ -9270,8 +9259,22 @@ Your feedback contributes to software quality and reliability.
             self._end_operation(f"Cross-well priors built for {count} curves")
             try:
                 messagebox.showinfo("Cross-Well Priors", f"Built priors for {count} curves.")
-            except Exception:
-                pass
+            except (tk.TclError, RuntimeError) as msg_error:
+                # Messagebox display failed - graceful degradation
+                self.handle_ui_error(
+                    msg_error,
+                    "Messagebox display (cross-well priors)",
+                    "messagebox",
+                    graceful_degradation=True
+                )
+            except Exception as msg_error:
+                # Unexpected error displaying messagebox
+                self.handle_ui_error(
+                    msg_error,
+                    "Messagebox display (cross-well priors)",
+                    "messagebox",
+                    graceful_degradation=True
+                )
         except Exception as e:
             self._fail_operation("Cross-Well Priors", f"Failed to build priors: {e}")
     
@@ -9348,8 +9351,21 @@ Your feedback contributes to software quality and reliability.
                 for fig in self.popup_figures[:]:
                     try:
                         plt.close(fig)
-                    except Exception:
-                        pass
+                    except (RuntimeError, OSError) as fig_error:
+                        # Figure may already be closed - graceful degradation
+                        self.handle_graceful_degradation(
+                            fig_error,
+                            "Popup figure cleanup in reset",
+                            "Figure may already be closed - continuing cleanup"
+                        )
+                    except Exception as fig_error:
+                        # Unexpected error closing popup figure
+                        self.handle_ui_error(
+                            fig_error,
+                            "Popup figure cleanup in reset",
+                            "matplotlib figure",
+                            graceful_degradation=True
+                        )
                 self.popup_figures = []
             
             # Clear visualization state
@@ -9372,22 +9388,137 @@ Your feedback contributes to software quality and reliability.
             if hasattr(self, 'data_tree') and self.data_tree:
                 for item in self.data_tree.get_children():
                     self.data_tree.delete(item)
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as tree_error:
+            # Tree widget clearing failed - graceful degradation
+            self.handle_ui_error(
+                tree_error,
+                "Data tree widget clearing",
+                "data_tree",
+                graceful_degradation=True
+            )
+        except Exception as tree_error:
+            # Unexpected error clearing tree widget
+            self.handle_ui_error(
+                tree_error,
+                "Data tree widget clearing",
+                "data_tree",
+                graceful_degradation=True
+            )
+
+    def show_error_dialog(self, title: str, message: str) -> None:
+        """Thread-safe error reporting helper shared across background workers.
+        
+        This method now uses the centralized error handler if available,
+        falling back to direct messagebox for backward compatibility.
+        """
+        # Use centralized error handler if available
+        if self.error_handler:
+            try:
+                context = self.error_handler.create_context(
+                    operation="Error Display",
+                    component="UI",
+                    user_action="Error occurred",
+                    remediation_hint="Please check the error message and try again."
+                )
+                # Determine severity from title
+                severity = ErrorSeverity.ERROR
+                if "Critical" in title or "Fatal" in title:
+                    severity = ErrorSeverity.CRITICAL
+                elif "Warning" in title:
+                    severity = ErrorSeverity.WARNING
+                
+                # Create a simple exception for the error handler
+                error = Exception(message)
+                self.error_handler.handle_error(error, context, severity=severity, show_dialog=True, log_error=True)
+                return
+            except Exception as handler_error:
+                # Centralized handler failed - fall back to direct display
+                if hasattr(self, 'log_processing'):
+                    try:
+                        self.log_processing(f"Warning: Centralized error handler failed: {type(handler_error).__name__}: {str(handler_error)}")
+                    except Exception:
+                        pass
+
+        def _display():
+            try:
+                self.log_processing(f"[ERROR] {title}: {message}")
+            except Exception as log_error:
+                # Logging failed - continue without logging
+                if hasattr(self, 'handle_ui_error'):
+                    self.handle_ui_error(
+                        log_error,
+                        "Error logging in show_error_dialog",
+                        "log_processing",
+                        graceful_degradation=True
+                    )
+            try:
+                messagebox.showerror(title, message)
+            except (tk.TclError, RuntimeError) as msg_error:
+                # Messagebox display failed - graceful degradation
+                self.handle_ui_error(
+                    msg_error,
+                    "Error dialog display",
+                    "messagebox",
+                    graceful_degradation=True
+                )
+            except Exception as msg_error:
+                # Unexpected error displaying error dialog
+                self.handle_ui_error(
+                    msg_error,
+                    "Error dialog display",
+                    "messagebox",
+                    graceful_degradation=True
+                )
+
+        if threading.current_thread() is threading.main_thread():
+            _display()
+        else:
+            try:
+                self.root.after(0, _display)
+            except Exception:
+                _display()
         
         # Clear results text
         try:
             if hasattr(self, 'results_text') and self.results_text:
                 self.results_text.delete('1.0', 'end')
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as text_error:
+            # Text widget clearing failed - graceful degradation
+            self.handle_ui_error(
+                text_error,
+                "Results text widget clearing",
+                "results_text",
+                graceful_degradation=True
+            )
+        except Exception as text_error:
+            # Unexpected error clearing text widget
+            self.handle_ui_error(
+                text_error,
+                "Results text widget clearing",
+                "results_text",
+                graceful_degradation=True
+            )
         
         # Clear report text
         try:
             if hasattr(self, 'report_text') and self.report_text:
                 self.report_text.delete('1.0', 'end')
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as text_error:
+            # Text widget clearing failed - graceful degradation
+            self.handle_ui_error(
+                text_error,
+                "Report text widget clearing",
+                "report_text",
+                graceful_degradation=True
+            )
+        except Exception as text_error:
+            # Unexpected error clearing text widget
+            self.handle_ui_error(
+                text_error,
+                "Report text widget clearing",
+                "report_text",
+                graceful_degradation=True
+            )
         
         # Clear LAS preview panes (original and processed)
         try:
@@ -9395,28 +9526,76 @@ Your feedback contributes to software quality and reliability.
                 self.original_las_preview_text.config(state='normal')
                 self.original_las_preview_text.delete('1.0', 'end')
                 self.original_las_preview_text.config(state='disabled')
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as text_error:
+            # Text widget clearing failed - graceful degradation
+            self.handle_ui_error(
+                text_error,
+                "Original LAS preview text widget clearing",
+                "original_las_preview_text",
+                graceful_degradation=True
+            )
+        except Exception as text_error:
+            # Unexpected error clearing text widget
+            self.handle_ui_error(
+                text_error,
+                "Original LAS preview text widget clearing",
+                "original_las_preview_text",
+                graceful_degradation=True
+            )
         try:
             if hasattr(self, 'processed_las_preview_text') and self.processed_las_preview_text:
                 self.processed_las_preview_text.config(state='normal')
                 self.processed_las_preview_text.delete('1.0', 'end')
                 self.processed_las_preview_text.config(state='disabled')
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as text_error:
+            # Text widget clearing failed - graceful degradation
+            self.handle_ui_error(
+                text_error,
+                "Processed LAS preview text widget clearing",
+                "processed_las_preview_text",
+                graceful_degradation=True
+            )
+        except Exception as text_error:
+            # Unexpected error clearing text widget
+            self.handle_ui_error(
+                text_error,
+                "Processed LAS preview text widget clearing",
+                "processed_las_preview_text",
+                graceful_degradation=True
+            )
         
         # Clear visualization resources
         try:
             self.cleanup_visualization()
-        except Exception:
-            pass
+        except Exception as cleanup_error:
+            # Visualization cleanup failed - log and continue
+            self.handle_ui_error(
+                cleanup_error,
+                "Visualization cleanup in reset",
+                "cleanup_visualization",
+                graceful_degradation=True
+            )
         
         # Reset file path field
         try:
             if hasattr(self, 'file_path_var') and self.file_path_var:
                 self.file_path_var.set("")
-        except Exception:
-            pass
+        except (tk.TclError, AttributeError) as var_error:
+            # File path variable reset failed - graceful degradation
+            self.handle_ui_error(
+                var_error,
+                "File path variable reset",
+                "file_path_var",
+                graceful_degradation=True
+            )
+        except Exception as var_error:
+            # Unexpected error resetting file path variable
+            self.handle_ui_error(
+                var_error,
+                "File path variable reset",
+                "file_path_var",
+                graceful_degradation=True
+            )
         
         # Refresh any dependent UI choices
         try:
@@ -9429,28 +9608,25 @@ Your feedback contributes to software quality and reliability.
         process_frame = ttk.Frame(self.notebook)
         self.notebook.add(process_frame, text="Processing")
         
-        # Left panel - Configuration with fixed execution section
+        # Left panel - Configuration (no nested scrolling)
         config_frame = ttk.Frame(process_frame)
         config_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
 
-        # Scrollable configuration area container (only config tabs)
-        config_scrollable_container = ttk.Frame(config_frame)
-        config_scrollable_container.pack(side='top', fill='both', expand=True)
-        
-        config_canvas = tk.Canvas(config_scrollable_container)
-        config_scrollbar = ttk.Scrollbar(config_scrollable_container, orient='vertical', command=config_canvas.yview)
+        # Make left configuration panel scrollable
+        config_canvas = tk.Canvas(config_frame)
+        config_scrollbar = ttk.Scrollbar(config_frame, orient='vertical', command=config_canvas.yview)
         config_canvas.configure(yscrollcommand=config_scrollbar.set)
         config_scrollbar.pack(side='right', fill='y')
         config_canvas.pack(side='left', fill='both', expand=True)
 
-        # Inner frame that holds configuration widgets only
+        # Inner frame that holds all configuration widgets
         config_inner = ttk.Frame(config_canvas)
         config_canvas.create_window((0, 0), window=config_inner, anchor='nw')
 
         # Update scrollable region when inner frame changes size
         def _config_on_configure(event):
             config_canvas.configure(scrollregion=config_canvas.bbox('all'))
-        config_inner.bind('<Configure>', _config_on_configure)
+        config_inner.bind(EVENT_CONFIGURE, _config_on_configure)
         
         # Create notebook for configuration categories
         config_notebook = ttk.Notebook(config_inner)
@@ -9626,7 +9802,7 @@ Your feedback contributes to software quality and reliability.
         help_text = ttk.Label(gap_filling_tab, 
                              text="Gaps larger than this threshold are considered geological/logging features\n"
                                   "(e.g., cased holes, interval logging), not data errors.",
-                             foreground='#666666', font=('Segoe UI', 8))
+                             foreground='#666666', font=(FONT_DEFAULT, 8))
         help_text.pack(anchor='w', padx=10, pady=(0, 5))
         
         # Geological threshold frame with slider
@@ -9756,35 +9932,41 @@ Your feedback contributes to software quality and reliability.
                                           command=_apply_cohort_selection, button_type='secondary', width=25)
         apply_btn.pack(anchor='e', padx=10, pady=(0, 10))
         
-        # Fixed execution section (outside scrollable area, always visible at bottom)
+        # Processing execution - placed below the notebook; now reachable via scrolling
         exec_card, exec_content = self.ui.create_card(
-            config_frame, "Execute Processing",
-            help_text="Run processing for the active well, selected wells, or all wells. Use Cross-Well Cohort to enable priors and two-pass refinement."
+            config_inner, "Execute Processing",
+            help_text="Run processing for the active well or all wells. Use Cross-Well Cohort to enable priors and two-pass refinement."
         )
-        exec_card.pack(side='bottom', fill='x', pady=(10, 0))
+        exec_card.pack(fill='x', pady=10)
         
-        # Primary processing actions
         process_btn = self.ui.create_button(exec_content, text="Start Processing (Active Well)",
                                            command=self.start_processing, button_type='primary', width=30)
         process_btn.pack(fill='x', pady=(10, 5), padx=10)
 
-        process_selected_btn = self.ui.create_button(exec_content, text="Process Selected Wells",
-                                                    command=self.process_selected_wells, button_type='success', width=30)
-        process_selected_btn.pack(fill='x', pady=(0, 5), padx=10)
-
         process_all_btn = self.ui.create_button(exec_content, text="Process All Wells",
                                                command=self.process_all_wells, button_type='success', width=30)
-        process_all_btn.pack(fill='x', pady=(0, 10), padx=10)
+        process_all_btn.pack(fill='x', pady=(0, 5), padx=10)
+
+        cross_summary_btn = self.ui.create_button(exec_content, text="Cross-Well Summary",
+                                                 command=self.show_cross_well_summary, button_type='secondary', width=30)
+        cross_summary_btn.pack(fill='x', pady=(0, 5), padx=10)
+
+        export_all_btn = self.ui.create_button(exec_content, text="Export All Processed (LAS)",
+                                              command=self.export_all_processed, button_type='secondary', width=30)
+        export_all_btn.pack(fill='x', pady=(0, 10), padx=10)
         
-        # Add a separator for visual clarity between processing and visualization
+        # Add a separator for visual clarity
         separator = ttk.Separator(exec_content, orient='horizontal')
-        separator.pack(fill='x', pady=(0, 10))
+        separator.pack(fill='x', pady=20)
         
-        # Quick visualization actions (grouped together)
-        ttk.Label(exec_content, text="Quick Visualization:", style='Card.TLabel').pack(anchor='w', padx=10, pady=(0, 8))
+        # Add quick visualization buttons for unprocessed curves
+        viz_buttons_frame = ttk.Frame(exec_content)
+        viz_buttons_frame.pack(fill='x', pady=(10, 10), padx=10)
         
-        quick_viz_frame = ttk.Frame(exec_content)
-        quick_viz_frame.pack(fill='x', pady=(0, 10), padx=10)
+        ttk.Label(viz_buttons_frame, text="Quick Visualization:", style='Card.TLabel').pack(anchor='w', pady=(0, 8))
+        
+        quick_viz_frame = ttk.Frame(viz_buttons_frame)
+        quick_viz_frame.pack(fill='x')
         
         # Button to visualize unprocessed curves
         unprocessed_btn = self.ui.create_button(quick_viz_frame, text="View Unprocessed Curves",
@@ -9843,7 +10025,7 @@ Your feedback contributes to software quality and reliability.
         
         ttk.Label(row1, text="Visualization Type:", style='Card.TLabel').pack(side='left')
         self.viz_type_var = tk.StringVar(value="comparison")
-        viz_types = ["single_curve", "single_curve_comparison", "comparison", "uncertainty", "quality_metrics", "correlation_matrix", "scatter_plot", "3d_visualization", "multi_curve", "log_display", "unprocessed_curves", "quality_overview", "curve_comparison_all"]
+        viz_types = ["single_curve", "single_curve_comparison", "comparison", "uncertainty", "quality_metrics", "correlation_matrix", "scatter_plot", "3d_visualization", "multi_curve", "log_display", "unprocessed_curves", "quality_overview", "histogram"]
         viz_combo = ttk.Combobox(row1, textvariable=self.viz_type_var, values=viz_types, width=22)
         viz_combo.pack(side='left', padx=10)
         
@@ -9894,11 +10076,11 @@ Your feedback contributes to software quality and reliability.
         curve_scroll_h.pack(side='bottom', fill='x')
         
         # Select/Deselect All buttons
-        select_all_btn = ttk.Button(self.multi_curve_frame, text="Select All", 
+        select_all_btn = ttk.Button(self.multi_curve_frame, text=DIALOG_SELECT_ALL, 
                                    command=lambda: self.curve_listbox.select_set(0, tk.END))
         select_all_btn.pack(side='left', padx=(10, 5))
         
-        deselect_all_btn = ttk.Button(self.multi_curve_frame, text="Deselect All", 
+        deselect_all_btn = ttk.Button(self.multi_curve_frame, text=DIALOG_DESELECT_ALL, 
                                      command=lambda: self.curve_listbox.selection_clear(0, tk.END))
         deselect_all_btn.pack(side='left')
         
@@ -10021,6 +10203,8 @@ Your feedback contributes to software quality and reliability.
 
             # Phase 3: Plotting with method-specific error handling
             plot_method_map = {
+                "single_curve": self.plot_single_curve,
+                "single_curve_comparison": self.plot_single_curve_comparison,
                 "comparison": self.plot_comparison,
                 "uncertainty": self.plot_uncertainty,
                 "quality_metrics": self.plot_quality_metrics,
@@ -10028,7 +10212,10 @@ Your feedback contributes to software quality and reliability.
                 "scatter_plot": self.plot_scatter,
                 "3d_visualization": self.plot_3d_visualization,
                 "multi_curve": self.plot_multi_curve,
-                "log_display": self.plot_log_display
+                "log_display": self.plot_log_display,
+                "unprocessed_curves": self.plot_unprocessed_curves,
+                "quality_overview": self.plot_curve_quality_overview,
+                "histogram": self.plot_histogram
             }
 
             plot_method = plot_method_map.get(viz_type)
@@ -10036,9 +10223,11 @@ Your feedback contributes to software quality and reliability.
                 raise ValueError(f"Unknown visualization type: {viz_type}")
 
             # Execute plotting with parameters based on method requirements
-            if viz_type in ["comparison", "uncertainty", "quality_metrics", "scatter_plot", "3d_visualization"]:
+            # Types that require a curve parameter
+            if viz_type in ["single_curve", "comparison", "uncertainty", "quality_metrics", "scatter_plot", "3d_visualization", "histogram"]:
                 plot_method(curve)
             else:
+                # Types that don't require a curve parameter or handle curve selection internally
                 plot_method()
 
             # Phase 4: Canvas creation with enhanced error handling
@@ -10126,7 +10315,7 @@ Your feedback contributes to software quality and reliability.
                 f"Check data availability and visualization parameters.",
                 UserWarning
             )
-            messagebox.showerror("Visualization Error", 
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, 
                                f"Failed to create {viz_type} visualization:\n{str(e)}\n\n"
                                f"Check the processing log for details.")
             
@@ -10137,8 +10326,10 @@ Your feedback contributes to software quality and reliability.
             # Cleanup on failure
             try:
                 self.cleanup_visualization()
-            except:
-                pass
+            except Exception as cleanup_error:
+                # Log cleanup errors but don't fail the main operation
+                if hasattr(self, 'log_processing'):
+                    self.log_processing(f"Warning: Visualization cleanup failed: {type(cleanup_error).__name__}: {str(cleanup_error)}")
 
     def _validate_visualization_prerequisites(self):
         """Comprehensive validation of visualization prerequisites"""
@@ -10216,8 +10407,15 @@ Your feedback contributes to software quality and reliability.
             if hasattr(self, 'status_label'):
                 try:
                     self.status_label.config(text="Processing completed (preview update failed)")
-                except:
-                    pass
+                except (tk.TclError, AttributeError) as ui_error:
+                    # UI widget may have been destroyed or accessed incorrectly
+                    # Log but don't fail - this is graceful degradation
+                    if hasattr(self, 'log_processing'):
+                        self.log_processing(f"Warning: Status label update failed: {type(ui_error).__name__}: {str(ui_error)}")
+                except Exception as ui_error:
+                    # Unexpected error - log for debugging
+                    if hasattr(self, 'log_processing'):
+                        self.log_processing(f"Warning: Unexpected error updating status label: {type(ui_error).__name__}: {str(ui_error)}")
 
     def plot_multi_curve(self):
         """Plot multiple curves in petroleum industry standard format with depth on Y-axis"""
@@ -10264,7 +10462,7 @@ Your feedback contributes to software quality and reliability.
             self._plot_depth_based_curves(ax, valid_curves, industry_colors)
             
             # Add professional styling
-            ax.set_ylabel('Depth (m)', fontsize=10, fontweight='bold')
+            ax.set_ylabel(LABEL_DEPTH_M, fontsize=10, fontweight='bold')
             ax.grid(True, alpha=0.3)
             ax.legend(loc='best', frameon=True, fancybox=False, shadow=False)
             
@@ -10299,7 +10497,7 @@ Your feedback contributes to software quality and reliability.
                 
                 # Only show depth labels on the first track
                 if i == 0:
-                    track_ax.set_ylabel('Depth (m)', fontsize=10, fontweight='bold')
+                    track_ax.set_ylabel(LABEL_DEPTH_M, fontsize=10, fontweight='bold')
                 else:
                     track_ax.set_ylabel('')
         
@@ -10320,12 +10518,19 @@ Your feedback contributes to software quality and reliability.
         if depth_curve:
             # Use current_data as primary source
             data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
+            # Validate data_source and depth_curve before access
+            if data_source is None or not isinstance(data_source, pd.DataFrame):
+                raise ValueError("No valid data source available for plotting")
+            if depth_curve not in data_source.columns:
+                raise ValueError(f"Depth curve '{depth_curve}' not found in data columns")
             depth = data_source[depth_curve].values
             # Remove depth from plotting curves
             plot_curves = [c for c in curves if c != depth_curve]
         else:
             # Use row index as depth
             data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
+            if data_source is None or not isinstance(data_source, pd.DataFrame):
+                raise ValueError("No valid data source available for plotting")
             depth = np.arange(len(data_source))
             plot_curves = curves
         
@@ -10507,10 +10712,10 @@ Your feedback contributes to software quality and reliability.
             if color and color != '#000000':  # Valid color
                 return color
         
-        # Try to get from mnemonic library database
+        # Try to get from unified curve identifier database
         try:
-            if hasattr(self, 'curve_manager') and self.curve_manager:
-                db = self.curve_manager.mnemonic_database
+            if hasattr(self, 'curve_identifier') and self.curve_identifier:
+                db = self.curve_identifier.mnemonic_database
                 if curve_type in db and 'industry_color' in db[curve_type]:
                     color = db[curve_type]['industry_color']
                     if color and color != '#000000':
@@ -10621,24 +10826,23 @@ Your feedback contributes to software quality and reliability.
         # Return operations list for badge display
         return processing_operations
     
-    def plot_log_display(self):
-        """Create a standard industry log display with multiple tracks"""
+    def _setup_log_display_figure(self, data_source: pd.DataFrame) -> Tuple[List[Any], np.ndarray, str, Dict[str, List[str]], float]:
+        """Setup figure and axes for industry log display.
+        
+        Returns:
+            Tuple of (axes, depth, depth_unit, curve_by_type, null_value)
+        """
         # Clean up previous visualization resources
         self.cleanup_visualization()
         
-        # Validate data availability
-        if not hasattr(self, 'current_data') or self.current_data is None:
-            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
-            return
-        
-        # Use current_data as the primary source
-        data_source = self.current_data
-        
-        # Industry-standard 4-track configuration
-        # Track 1: GR, SP, Caliper (Lithology)
-        # Track 2: Resistivity (Formation Evaluation)
-        # Track 3: Porosity (Neutron, Density, Sonic)
-        # Track 4: Computed (Derived parameters: Sw, PHI, Vshale, etc.)
+        # Get null value for data conversion
+        if hasattr(self, 'null_value_var') and self.null_value_var.get():
+            try:
+                null_value = float(self.null_value_var.get())
+            except (ValueError, AttributeError):
+                null_value = -999.25  # Default LAS null value
+        else:
+            null_value = -999.25  # Default LAS null value
         
         # Identify curves by type
         curve_by_type = {}
@@ -10679,61 +10883,46 @@ Your feedback contributes to software quality and reliability.
         for ax in axes:
             ax.set_ylim(depth_max, depth_min)  # Inverted for depth
         
-        # Track 1: GR, SP, Caliper (Lithology Track)
-        ax1 = axes[0]
-        ax1.set_title('Track 1: GR/SP/CAL', fontsize=12, fontweight='bold')
-        ax1.set_ylabel(f'Depth ({depth_unit})', fontsize=10, fontweight='bold')
+        return axes, depth, depth_unit, curve_by_type, null_value
+    
+    def _plot_lithology_track(self, ax: Any, data_source: pd.DataFrame, depth: np.ndarray, 
+                              curve_by_type: Dict[str, List[str]], null_value: float) -> None:
+        """Plot Track 1: GR, SP, Caliper (Lithology Track)."""
+        ax.set_title('Track 1: GR/SP/CAL', fontsize=12, fontweight='bold')
         
         # GR with industry-standard zone shading
         gr_curves = curve_by_type.get('GAMMA_RAY_TOTAL', [])
-        gr_data_for_shading = None
         if gr_curves:
             gr_curve_name = gr_curves[0]
             gr_data = data_source[gr_curve_name].values
-            # Convert null values to NaN for proper line breaking
             gr_data = self._convert_nulls_to_nan(gr_data)
-            gr_data_for_shading = gr_data.copy()
             gr_color = self._get_industry_color('GAMMA_RAY_TOTAL', gr_curve_name)
             
-            # Plot GR curve
-            ax1.plot(gr_data, depth, color=gr_color, linewidth=1.5, label=gr_curve_name, zorder=3)
+            ax.plot(gr_data, depth, color=gr_color, linewidth=1.5, label=gr_curve_name, zorder=3)
             
-            # Industry-standard GR zone shading (green/yellow/red zones)
-            # Green: 0-60 API (clean zones, typically sand/carbonate)
-            # Yellow/Gold: 60-90 API (transition zones)
-            # Red: 90-150+ API (shale zones)
+            # Industry-standard GR zone shading
             valid_mask = ~np.isnan(gr_data) & ~np.isnan(depth)
             if np.any(valid_mask):
                 valid_gr = gr_data[valid_mask]
                 valid_depth = depth[valid_mask]
-                
-                # Green zone: 0-60 API
-                ax1.fill_betweenx(valid_depth, 0, valid_gr, 
-                                 where=(valid_gr < 60), 
+                ax.fill_betweenx(valid_depth, 0, valid_gr, where=(valid_gr < 60), 
                                  color='green', alpha=0.15, label='Clean Zone')
-                
-                # Yellow/Gold zone: 60-90 API
-                ax1.fill_betweenx(valid_depth, 60, valid_gr, 
+                ax.fill_betweenx(valid_depth, 60, valid_gr, 
                                  where=(valid_gr >= 60) & (valid_gr < 90), 
                                  color='gold', alpha=0.15, label='Transition Zone')
-                
-                # Red zone: 90+ API
-                ax1.fill_betweenx(valid_depth, 90, valid_gr, 
-                                 where=(valid_gr >= 90), 
+                ax.fill_betweenx(valid_depth, 90, valid_gr, where=(valid_gr >= 90), 
                                  color='red', alpha=0.15, label='Shale Zone')
             
-            ax1.set_xlim([0, 150])
-            ax1.set_xlabel('GR (API)', fontsize=10)
+            ax.set_xlim([0, 150])
+            ax.set_xlabel('GR (API)', fontsize=10)
         
         # SP with industry color
         sp_curves = curve_by_type.get('SPONTANEOUS_POTENTIAL', [])
         if sp_curves:
             sp_curve_name = sp_curves[0]
             sp_color = self._get_industry_color('SPONTANEOUS_POTENTIAL', sp_curve_name)
-            twin1 = ax1.twiny()
-            sp_data = data_source[sp_curve_name].values
-            # Convert null values to NaN for proper line breaking
-            sp_data = self._convert_nulls_to_nan(sp_data, null_value)
+            twin1 = ax.twiny()
+            sp_data = self._convert_nulls_to_nan(data_source[sp_curve_name].values, null_value)
             twin1.plot(sp_data, depth, color=sp_color, linewidth=1.5, label=sp_curve_name, zorder=2)
             twin1.set_xlim([-100, 100])
             twin1.xaxis.set_ticks_position('top')
@@ -10744,12 +10933,24 @@ Your feedback contributes to software quality and reliability.
         if cal_curves:
             cal_curve_name = cal_curves[0]
             cal_color = self._get_industry_color('CALIPER_SINGLE', cal_curve_name)
-            twin1_2 = ax1.twiny()
+            twin1_2 = ax.twiny()
             cal_data = data_source[cal_curve_name].values
             twin1_2.plot(cal_data, depth, color=cal_color, linewidth=1.5, label=cal_curve_name, zorder=2)
-            # Position x-axis
             twin1_2.xaxis.set_ticks_position('top')
             twin1_2.spines['top'].set_position(('outward', 40))
+    
+    def plot_log_display(self):
+        """Create a standard industry log display with multiple tracks"""
+        # Validate data availability
+        if not hasattr(self, 'current_data') or self.current_data is None:
+            messagebox.showwarning("Warning", "No data loaded. Please load a file first.")
+            return
+        
+        data_source = self.current_data
+        axes, depth, depth_unit, curve_by_type, null_value = self._setup_log_display_figure(data_source)
+        
+        axes[0].set_ylabel(f'Depth ({depth_unit})', fontsize=10, fontweight='bold')
+        self._plot_lithology_track(axes[0], data_source, depth, curve_by_type, null_value)
         
         # Track 2: Resistivity curves (log scale, industry standard)
         ax2 = axes[1]
@@ -11059,7 +11260,7 @@ Your feedback contributes to software quality and reliability.
                     patch.set_facecolor('green')
             
             ax1.set_xlabel('Confidence Score', fontsize=10)
-            ax1.set_ylabel('Number of Curves', fontsize=10)
+            ax1.set_ylabel(LABEL_NUMBER_OF_CURVES, fontsize=10)
             ax1.set_xlim([0, 1])
             ax1.grid(True, alpha=0.3, axis='y')
             
@@ -11295,7 +11496,7 @@ Your feedback contributes to software quality and reliability.
         ax.set_ylabel(f'Depth ({depth_unit})', fontsize=11)
         ax.grid(True, alpha=0.3)
         ax.invert_yaxis()
-        ax.legend(loc='upper right', fontsize=10)
+        ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10)
         
         self.fig.tight_layout()
     
@@ -11323,7 +11524,7 @@ Your feedback contributes to software quality and reliability.
                 self._plot_unprocessed_single_curve(curve)
             
         except Exception as e:
-            messagebox.showerror("Visualization Error", f"Failed to visualize unprocessed data: {e}")
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, f"Failed to visualize unprocessed data: {e}")
     
     def _plot_unprocessed_single_curve(self, curve: str):
         """Plot a single unprocessed curve"""
@@ -11711,7 +11912,7 @@ Your feedback contributes to software quality and reliability.
                         x_proc = processed[significant_idx]
                         y_proc = depth[significant_idx]
                         scatter = ax.scatter(x_proc, y_proc, color=base_color, s=30, alpha=0.6, 
-                                  marker='o', edgecolors='none', label='Significant Changes', zorder=3)
+                                  marker='o', edgecolors='none', label=LABEL_SIGNIFICANT_CHANGES, zorder=3)
                         plot_objects['changes'] = scatter
             
             # Add gap annotations if available
@@ -11726,7 +11927,7 @@ Your feedback contributes to software quality and reliability.
                             ax.annotate(f'Gap {i+1}',
                                        xy=(processed[gap_center], depth[gap_center]),
                                        xytext=(10, 20),
-                                       textcoords='offset points',
+                                       textcoords=LABEL_OFFSET_POINTS,
                                        fontsize=8,
                                        arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=.2',
                                                       color=base_color, alpha=0.6))
@@ -11742,7 +11943,7 @@ Your feedback contributes to software quality and reliability.
             ax.invert_yaxis()  # Industry standard: depth increases downward
             
             # Legend with toggle capability
-            legend = ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
+            legend = ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10, framealpha=0.9)
             self.fig._comparison_legend = legend
             self.fig._comparison_plot_objects = plot_objects
             self.fig._comparison_ax = ax  # Store for event handler
@@ -11781,7 +11982,7 @@ Your feedback contributes to software quality and reliability.
                             if hasattr(handle, 'set_alpha'):
                                 handle.set_alpha(1.0 if new_visibility else 0.3)
                             clicked = True
-                        elif 'changes' in stored_objects and label == 'Significant Changes':
+                        elif 'changes' in stored_objects and label == LABEL_SIGNIFICANT_CHANGES:
                             new_visibility = not stored_objects['changes'].get_visible()
                             stored_objects['changes'].set_visible(new_visibility)
                             if hasattr(handle, 'set_alpha'):
@@ -11824,7 +12025,7 @@ Your feedback contributes to software quality and reliability.
                         x_proc = processed_plot[significant_idx]
                         y_proc = depth[significant_idx]
                         scatter = ax.scatter(x_proc, y_proc, color=base_color, s=30, alpha=0.6, 
-                                  marker='o', edgecolors='none', label='Significant Changes', zorder=3)
+                                  marker='o', edgecolors='none', label=LABEL_SIGNIFICANT_CHANGES, zorder=3)
                         plot_objects['changes'] = scatter
             
             # Re-add gap annotations
@@ -11839,7 +12040,7 @@ Your feedback contributes to software quality and reliability.
                             ax.annotate(f'Gap {i+1}',
                                        xy=(processed[gap_center], depth[gap_center]),
                                        xytext=(10, 20),
-                                       textcoords='offset points',
+                                       textcoords=LABEL_OFFSET_POINTS,
                                        fontsize=8,
                                        arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=.2',
                                                       color=base_color, alpha=0.6))
@@ -11853,7 +12054,7 @@ Your feedback contributes to software quality and reliability.
             ax.grid(True, alpha=0.3)
             ax.invert_yaxis()
             
-            legend = ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
+            legend = ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10, framealpha=0.9)
             self.fig._comparison_legend = legend
             self.fig._comparison_plot_objects = plot_objects
             self.fig._comparison_ax = ax
@@ -11902,7 +12103,7 @@ Your feedback contributes to software quality and reliability.
         else:
             # Single panel if not processed
             ax = self.fig.add_subplot(111)
-            ax.plot(original, depth, color=base_color, alpha=0.7, label='Original Data', linewidth=2)
+            ax.plot(original, depth, color=base_color, alpha=0.7, label=LABEL_ORIGINAL_DATA, linewidth=2)
             ax.set_title(f'Original Data: {curve} (Not Yet Processed)', fontsize=14, fontweight='bold')
             ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
             ax.set_ylabel(y_label, fontsize=11)
@@ -11933,52 +12134,11 @@ Your feedback contributes to software quality and reliability.
         report_frame = ttk.Frame(self.notebook)
         self.notebook.add(report_frame, text="Report")
         
-        # Report controls - compact horizontal layout to maximize report display space
+        # Report controls - redesigned with logical grouping
         control_frame = ttk.Frame(report_frame)
-        control_frame.pack(side='top', fill='x', padx=10, pady=(10, 5))
+        control_frame.pack(side='top', fill='x', padx=10, pady=10)
 
-        # Compact horizontal button layout (reduced vertical space)
-        buttons_row = ttk.Frame(control_frame)
-        buttons_row.pack(fill='x', pady=(0, 5))
-        
-        # Primary actions (left side)
-        primary_frame = ttk.Frame(buttons_row)
-        primary_frame.pack(side='left', fill='x', expand=True)
-        
-        ttk.Label(primary_frame, text="Primary:", font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 5))
-        generate_btn = self.ui.create_button(primary_frame, text="Generate Report",
-                                            command=self.generate_report, button_type='success', width=18)
-        generate_btn.pack(side='left', padx=(0, 8))
-        
-        export_btn = self.ui.create_button(primary_frame, text="Export Data",
-                                          command=self.export_data, button_type='primary', width=16)
-        export_btn.pack(side='left', padx=(0, 15))
-        
-        # Secondary actions (middle)
-        ttk.Label(primary_frame, text="Secondary:", font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 5))
-        export_all_btn = self.ui.create_button(primary_frame, text="Export All",
-                                               command=self.export_all_processed, button_type='secondary', width=16)
-        export_all_btn.pack(side='left', padx=(0, 8))
-        
-        cross_btn = self.ui.create_button(primary_frame, text="Cross-Well Summary",
-                                         command=self.show_cross_well_summary, button_type='secondary', width=18)
-        cross_btn.pack(side='left', padx=(0, 8))
-        
-        build_priors_btn = self.ui.create_button(primary_frame, text="Build Priors",
-                                                command=self.build_crosswell_priors, button_type='secondary', width=14)
-        build_priors_btn.pack(side='left', padx=(0, 15))
-        
-        # Preview actions (right side)
-        ttk.Label(primary_frame, text="Preview:", font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 5))
-        preview_orig_btn = self.ui.create_button(primary_frame, text="Original LAS",
-                                                command=self.preview_original_las, button_type='secondary', width=16)
-        preview_orig_btn.pack(side='left', padx=(0, 8))
-        
-        preview_proc_btn = self.ui.create_button(primary_frame, text="Processed LAS",
-                                                command=self.preview_processed_las, button_type='secondary', width=16)
-        preview_proc_btn.pack(side='left')
-        
-        # Help button (rightmost)
+        # Tab-level Help button
         def _show_report_help():
             try:
                 from tkinter import Toplevel
@@ -11992,7 +12152,7 @@ Your feedback contributes to software quality and reliability.
                 text = (
                     "Generate a comprehensive processing report for the active well. "
                     "Use Cross-Well Summary to view field-wide statistics across loaded wells. "
-                    "Export Data exports the active well's processed data; Export All Processed writes LAS for every well."
+                    "Export Data exports the active well’s processed data; Export All Processed writes LAS for every well."
                 )
                 lbl = ttk.Label(body, text=text, wraplength=560, justify='left')
                 lbl.pack(fill='x', expand=True)
@@ -12003,10 +12163,51 @@ Your feedback contributes to software quality and reliability.
                 dialog.geometry(f"+{x}+{y}")
             except Exception:
                 pass
-        help_btn = ttk.Button(buttons_row, text='Help', command=_show_report_help, width=8)
+        help_btn = ttk.Button(control_frame, text='Help', command=_show_report_help)
         help_btn.pack(side='right')
         
-        # Create notebook for report tabs - maximize space for report content
+        # Group 1: Report Actions
+        report_actions_frame = ttk.Frame(control_frame)
+        report_actions_frame.pack(side='top', fill='x', pady=(0, 10))
+        
+        ttk.Label(report_actions_frame, text="Report Actions:", 
+                 font=(FONT_DEFAULT, 9, 'bold')).pack(side='left', padx=(0, 15))
+        
+        generate_btn = self.ui.create_button(report_actions_frame, text="Generate Report",
+                                            command=self.generate_report, button_type='success', width=20)
+        generate_btn.pack(side='left', padx=(0, 15))
+        
+        export_btn = self.ui.create_button(report_actions_frame, text="Export Data",
+                                          command=self.export_data, button_type='primary', width=18)
+        export_btn.pack(side='left')
+
+        # New: Cross-well utilities in Report tab
+        cross_btn = self.ui.create_button(report_actions_frame, text="Cross-Well Summary",
+                                         command=self.show_cross_well_summary, button_type='secondary', width=20)
+        cross_btn.pack(side='left', padx=(15, 0))
+        export_all_btn2 = self.ui.create_button(report_actions_frame, text="Export All Processed",
+                                               command=self.export_all_processed, button_type='secondary', width=20)
+        export_all_btn2.pack(side='left', padx=(10, 0))
+        build_priors_btn = self.ui.create_button(report_actions_frame, text="Build Priors",
+                                                command=self.build_crosswell_priors, button_type='secondary', width=14)
+        build_priors_btn.pack(side='left', padx=(10, 0))
+        
+        # Group 2: LAS Preview Actions
+        preview_actions_frame = ttk.Frame(control_frame)
+        preview_actions_frame.pack(side='top', fill='x')
+        
+        ttk.Label(preview_actions_frame, text="LAS Preview Actions:", 
+                 font=(FONT_DEFAULT, 9, 'bold')).pack(side='left', padx=(0, 15))
+        
+        preview_orig_btn = self.ui.create_button(preview_actions_frame, text="Preview Original LAS",
+                                                command=self.preview_original_las, button_type='secondary', width=22)
+        preview_orig_btn.pack(side='left', padx=(0, 15))
+        
+        preview_proc_btn = self.ui.create_button(preview_actions_frame, text="Preview Processed LAS",
+                                                command=self.preview_processed_las, button_type='secondary', width=22)
+        preview_proc_btn.pack(side='left')
+        
+        # Create notebook for report tabs
         report_notebook = ttk.Notebook(report_frame)
         report_notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         
@@ -12014,43 +12215,27 @@ Your feedback contributes to software quality and reliability.
         report_tab = ttk.Frame(report_notebook)
         report_notebook.add(report_tab, text="Processing Report")
         
-        # Create proper scrolling container for report text
-        report_container = ttk.Frame(report_tab)
-        report_container.pack(fill='both', expand=True)
-        
-        # Text widget with proper scrolling (wrap='none' for better scrolling control)
-        self.report_text = tk.Text(report_container, font=('Consolas', 10), wrap='none', state='normal')
-        report_scroll_v = ttk.Scrollbar(report_container, orient='vertical', command=self.report_text.yview)
-        report_scroll_h = ttk.Scrollbar(report_container, orient='horizontal', command=self.report_text.xview)
+        self.report_text = tk.Text(report_tab, font=('Consolas', 10), wrap='word')
+        report_scroll_v = ttk.Scrollbar(report_tab, orient='vertical', command=self.report_text.yview)
+        report_scroll_h = ttk.Scrollbar(report_tab, orient='horizontal', command=self.report_text.xview)
         self.report_text.configure(yscrollcommand=report_scroll_v.set, xscrollcommand=report_scroll_h.set)
         
-        # Pack with proper layout for scrolling
-        self.report_text.grid(row=0, column=0, sticky='nsew')
-        report_scroll_v.grid(row=0, column=1, sticky='ns')
-        report_scroll_h.grid(row=1, column=0, sticky='ew')
-        
-        # Configure grid weights for proper expansion
-        report_container.grid_rowconfigure(0, weight=1)
-        report_container.grid_columnconfigure(0, weight=1)
+        self.report_text.pack(side='left', fill='both', expand=True)
+        report_scroll_v.pack(side='right', fill='y')
+        report_scroll_h.pack(side='bottom', fill='x')
         
         # Original LAS preview tab
         original_las_preview_tab = ttk.Frame(report_notebook)
         report_notebook.add(original_las_preview_tab, text="Original LAS Preview")
         
-        original_container = ttk.Frame(original_las_preview_tab)
-        original_container.pack(fill='both', expand=True)
-        
-        self.original_las_preview_text = tk.Text(original_container, font=('Consolas', 10), wrap='none', state='disabled', selectbackground='#F0F0F0', selectforeground='black')
-        original_las_preview_scroll_y = ttk.Scrollbar(original_container, orient='vertical', command=self.original_las_preview_text.yview)
-        original_las_preview_scroll_x = ttk.Scrollbar(original_container, orient='horizontal', command=self.original_las_preview_text.xview)
+        self.original_las_preview_text = tk.Text(original_las_preview_tab, font=('Consolas', 10), wrap='none', state='disabled', selectbackground='#F0F0F0', selectforeground='black')
+        original_las_preview_scroll_y = ttk.Scrollbar(original_las_preview_tab, orient='vertical', command=self.original_las_preview_text.yview)
+        original_las_preview_scroll_x = ttk.Scrollbar(original_las_preview_tab, orient='horizontal', command=self.original_las_preview_text.xview)
         self.original_las_preview_text.configure(yscrollcommand=original_las_preview_scroll_y.set, xscrollcommand=original_las_preview_scroll_x.set)
         
-        self.original_las_preview_text.grid(row=0, column=0, sticky='nsew')
-        original_las_preview_scroll_y.grid(row=0, column=1, sticky='ns')
-        original_las_preview_scroll_x.grid(row=1, column=0, sticky='ew')
-        
-        original_container.grid_rowconfigure(0, weight=1)
-        original_container.grid_columnconfigure(0, weight=1)
+        self.original_las_preview_text.pack(side='top', fill='both', expand=True)
+        original_las_preview_scroll_y.pack(side='right', fill='y')
+        original_las_preview_scroll_x.pack(side='bottom', fill='x')
         
         # Disable copy functionality for original preview
         self.original_las_preview_text.bind("<Control-c>", lambda e: "break")
@@ -12062,20 +12247,14 @@ Your feedback contributes to software quality and reliability.
         processed_las_preview_tab = ttk.Frame(report_notebook)
         report_notebook.add(processed_las_preview_tab, text="Processed LAS Preview")
         
-        processed_container = ttk.Frame(processed_las_preview_tab)
-        processed_container.pack(fill='both', expand=True)
-        
-        self.processed_las_preview_text = tk.Text(processed_container, font=('Consolas', 10), wrap='none', state='disabled', selectbackground='#F0F0F0', selectforeground='black')
-        processed_las_preview_scroll_y = ttk.Scrollbar(processed_container, orient='vertical', command=self.processed_las_preview_text.yview)
-        processed_las_preview_scroll_x = ttk.Scrollbar(processed_container, orient='horizontal', command=self.processed_las_preview_text.xview)
+        self.processed_las_preview_text = tk.Text(processed_las_preview_tab, font=('Consolas', 10), wrap='none', state='disabled', selectbackground='#F0F0F0', selectforeground='black')
+        processed_las_preview_scroll_y = ttk.Scrollbar(processed_las_preview_tab, orient='vertical', command=self.processed_las_preview_text.yview)
+        processed_las_preview_scroll_x = ttk.Scrollbar(processed_las_preview_tab, orient='horizontal', command=self.processed_las_preview_text.xview)
         self.processed_las_preview_text.configure(yscrollcommand=processed_las_preview_scroll_y.set, xscrollcommand=processed_las_preview_scroll_x.set)
         
-        self.processed_las_preview_text.grid(row=0, column=0, sticky='nsew')
-        processed_las_preview_scroll_y.grid(row=0, column=1, sticky='ns')
-        processed_las_preview_scroll_x.grid(row=1, column=0, sticky='ew')
-        
-        processed_container.grid_rowconfigure(0, weight=1)
-        processed_container.grid_columnconfigure(0, weight=1)
+        self.processed_las_preview_text.pack(side='top', fill='both', expand=True)
+        processed_las_preview_scroll_y.pack(side='right', fill='y')
+        processed_las_preview_scroll_x.pack(side='bottom', fill='x')
         
         # Disable copy functionality for processed preview
         self.processed_las_preview_text.bind("<Control-c>", lambda e: "break")
@@ -12094,14 +12273,11 @@ Your feedback contributes to software quality and reliability.
                 return
             # Build report from current application state
             report_text = self.create_comprehensive_report()
-            # Update UI text widget - keep normal state for scrolling
+            # Update UI text widget
             self.report_text.config(state='normal')
             self.report_text.delete('1.0', 'end')
             self.report_text.insert('1.0', report_text)
-            # Keep in normal state so scrolling works properly
-            self.report_text.config(state='normal')
-            # Scroll to top
-            self.report_text.see('1.0')
+            self.report_text.config(state='disabled')
             try:
                 self.status_label.config(text="Report generated")
             except Exception:
@@ -12141,7 +12317,23 @@ Your feedback contributes to software quality and reliability.
             lines.append("~Well")
             try:
                 file_label = self.file_path_var.get() if hasattr(self, 'file_path_var') else ''
-            except Exception:
+            except (tk.TclError, AttributeError) as file_var_error:
+                # UI variable access failed - use empty string and log
+                self.handle_ui_error(
+                    file_var_error,
+                    "File path variable access in LAS export",
+                    "file_path_var",
+                    graceful_degradation=True
+                )
+                file_label = ''
+            except Exception as file_var_error:
+                # Unexpected error accessing file path variable
+                self.handle_ui_error(
+                    file_var_error,
+                    "File path variable access in LAS export",
+                    "file_path_var",
+                    graceful_degradation=True
+                )
                 file_label = ''
             lines.append(f"FILE. {file_label} :   Source file path")
             lines.append(f"DATE. {_dt.now().strftime('%Y-%m-%d %H:%M:%S')} :   Export timestamp")
@@ -12301,7 +12493,7 @@ Your feedback contributes to software quality and reliability.
             validated_path = SafeFileHandler.validate_file_path(save_path)
             if not validated_path:
                 sanitized = SafeFileHandler.sanitize_path_for_display(save_path)
-                messagebox.showerror("Security Error", f"Invalid export path: {sanitized}")
+                messagebox.showerror(ERROR_TITLE_SECURITY, f"Invalid export path: {sanitized}")
                 return
             
             # Security: Validate file extension
@@ -12313,18 +12505,28 @@ Your feedback contributes to software quality and reliability.
             
             sp = str(validated_path)
             sp_lower = sp.lower()
+            export_df = self._dataframe_with_uncertainty_bands(self.processed_data)
             if sp_lower.endswith('.csv'):
-                self.processed_data.to_csv(sp, index=False)
+                export_df.to_csv(sp, index=False)
             elif sp_lower.endswith('.xlsx'):
                 try:
-                    self.processed_data.to_excel(sp, index=False)
+                    export_df.to_excel(sp, index=False)
                 except Exception as ex:
                     messagebox.showerror("Export", f"Excel export failed: {ex}")
                     return
             else:
                 # Default to LAS
                 null_value = self.null_value_var.get() if hasattr(self, 'null_value_var') else "-999.25"
-                las_text = self._generate_las_text_from_dataframe(self.processed_data, self.curve_info or {}, str(null_value), max_rows=None)
+                # Merge uncertainty into curve_info for LAS headers when present
+                export_info = dict(self.curve_info or {})
+                for col in export_df.columns:
+                    if col.endswith('_UNC') or col.endswith('_CONF'):
+                        export_info.setdefault(col, {
+                            'unit': '' if col.endswith('_CONF') else export_info.get(col.replace('_UNC', '').replace('_CONF', ''), {}).get('unit', ''),
+                            'description': 'Gap-fill uncertainty' if col.endswith('_UNC') else 'Gap-fill confidence (0-1)',
+                            'curve_type': 'QC',
+                        })
+                las_text = self._generate_las_text_from_dataframe(export_df, export_info, str(null_value), max_rows=None)
                 with open(sp, 'w', encoding='utf-8') as f:
                     f.write(las_text)
             messagebox.showinfo("Export", f"Exported data to: {sp}")
@@ -12338,6 +12540,25 @@ Your feedback contributes to software quality and reliability.
                 self.status_label.config(text="Export failed")
             except Exception:
                 pass
+
+    def _dataframe_with_uncertainty_bands(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Attach per-curve uncertainty and confidence columns from gap-fill results when available."""
+        out = df.copy()
+        results = getattr(self, 'processing_results', None) or {}
+        for curve, result in results.items():
+            if curve not in out.columns:
+                continue
+            gap = result.get('gap_filling') or {}
+            unc = gap.get('uncertainty')
+            conf = gap.get('confidence')
+            n = len(out)
+            if unc is not None and len(unc) == n and np.nanmax(unc) > 0:
+                out[f'{curve}_UNC'] = np.asarray(unc, dtype=float)
+            if conf is not None and len(conf) == n:
+                # Only export confidence where uncertainty was meaningful (filled gaps)
+                if unc is not None and len(unc) == n and np.nanmax(unc) > 0:
+                    out[f'{curve}_CONF'] = np.asarray(conf, dtype=float)
+        return out
     
     def create_batch_tab(self):
         """Create batch processing tab for processing multiple files"""
@@ -12398,7 +12619,7 @@ Your feedback contributes to software quality and reliability.
         
         # Status label
         self.batch_status_label = ttk.Label(list_content, text="No directory selected",
-                                           font=('Segoe UI', 9))
+                                           font=(FONT_DEFAULT, 9))
         self.batch_status_label.pack(anchor='w', padx=10, pady=(0, 10))
         
         # Processing controls
@@ -12445,7 +12666,7 @@ Your feedback contributes to software quality and reliability.
         progress_card.pack(fill='x', padx=10)
         
         self.batch_progress_label = ttk.Label(progress_content, text="Ready",
-                                             font=('Segoe UI', 9))
+                                             font=(FONT_DEFAULT, 9))
         self.batch_progress_label.pack(anchor='w', padx=10, pady=(10, 5))
         
         self.batch_progress_bar = ttk.Progressbar(progress_content, mode='determinate')
@@ -12615,6 +12836,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
         """Browse for data file"""
         filetypes = [
             ("LAS files", "*.las"),
+            ("DLIS/LIS files", "*.dlis *.lis"),
             ("CSV files", "*.csv"),
             ("Excel files", "*.xlsx *.xls"),
             ("All files", "*.*")
@@ -12628,188 +12850,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
         if filename:
             self.file_path_var.set(filename)
     
-    # ============================================================================
-    # MEMORY MANAGEMENT AND PERFORMANCE METHODS
-    # ============================================================================
-    
-    def check_system_memory(self) -> tuple[float, bool]:
-        """Check current system memory usage.
-        
-        Returns:
-            tuple: (memory_percent, is_critical) where is_critical=True if above threshold
-        """
-        try:
-            if PSUTIL_AVAILABLE:
-                mem = psutil.virtual_memory()
-                return mem.percent, mem.percent >= self.MEMORY_WARNING_THRESHOLD
-            else:
-                # If psutil not available, return safe values
-                return 0.0, False
-        except Exception:
-            return 0.0, False
-    
-    def warn_if_memory_high(self) -> bool:
-        """Check memory and warn user if high. Returns False if user wants to abort.
-        
-        Returns:
-            bool: True to continue, False to abort operation
-        """
-        mem_percent, is_critical = self.check_system_memory()
-        
-        if is_critical:
-            result = messagebox.askyesno(
-                "Memory Warning",
-                f"System memory usage is at {mem_percent:.1f}%.\n\n"
-                f"Loading more data may cause slowdowns or crashes.\n\n"
-                f"Continue anyway?",
-                icon='warning'
-            )
-            return result
-        
-        return True
-    
-    def check_well_count_limit(self) -> bool:
-        """Check if well count limit has been reached.
-        
-        Returns:
-            bool: True if under limit, False if at/over limit
-        """
-        current_count = len(self.well_datasets)
-        
-        if current_count >= self.MAX_ACTIVE_WELLS:
-            messagebox.showerror(
-                "Well Limit Reached",
-                f"Maximum of {self.MAX_ACTIVE_WELLS} wells can be loaded simultaneously.\n\n"
-                f"Current wells loaded: {current_count}\n\n"
-                f"Please unload some wells before loading more.\n"
-                f"(Use the 'Unload Well' button in the well list)"
-            )
-            return False
-        
-        return True
-    
-    def check_file_size_warning(self, filepath: str) -> bool:
-        """Warn user if file is large. Returns False if user wants to abort.
-        
-        Args:
-            filepath: Path to file to check
-            
-        Returns:
-            bool: True to continue, False to abort
-        """
-        try:
-            size_bytes = os.path.getsize(filepath)
-            size_mb = size_bytes / (1024 * 1024)
-            
-            if size_mb > self.LARGE_FILE_WARNING_MB:
-                estimated_memory_mb = size_mb * 3  # Rough estimate: 3x file size
-                
-                result = messagebox.askyesno(
-                    "Large File Warning",
-                    f"File size: {size_mb:.1f} MB\n"
-                    f"Estimated memory usage: ~{estimated_memory_mb:.0f} MB\n\n"
-                    f"Large files may:\n"
-                    f"  • Take longer to load\n"
-                    f"  • Use significant memory\n"
-                    f"  • Slow down processing\n\n"
-                    f"Continue loading this file?",
-                    icon='warning'
-                )
-                return result
-            
-            return True
-        except Exception:
-            # If we can't determine size, allow load
-            return True
-    
-    def unload_well(self, well_id: str) -> None:
-        """Remove a well from memory to free up resources.
-        
-        Args:
-            well_id: ID of well to unload
-        """
-        try:
-            if well_id not in self.well_datasets:
-                messagebox.showwarning("Warning", f"Well '{well_id}' not found in loaded wells.")
-                return
-            
-            # Confirm with user
-            well_name = self.well_datasets[well_id].get('well_info', {}).get('well_name', well_id)
-            result = messagebox.askyesno(
-                "Confirm Unload",
-                f"Unload well: {well_name}?\n\n"
-                f"Any unsaved changes will be lost.\n"
-                f"The well can be reloaded from the original file."
-            )
-            
-            if not result:
-                return
-            
-            # If this is the active well, clear current state
-            if self.active_well_id == well_id:
-                self.current_data = None
-                self.processed_data = None
-                self.processing_results = {}
-                self.curve_info = {}
-                self.active_well_id = None
-                self.file_path_var.set("")
-                
-                # Update UI
-                self.update_data_display()
-                self.update_curve_options()
-            
-            # Remove from datasets
-            del self.well_datasets[well_id]
-            
-            # Force garbage collection
-            import gc
-            gc.collect()
-            
-            # Update well list display
-            self.update_well_list_display()
-            
-            # Show success message with memory info
-            mem_percent, _ = self.check_system_memory()
-            mem_info = f"\nCurrent memory usage: {mem_percent:.1f}%" if PSUTIL_AVAILABLE else ""
-            
-            messagebox.showinfo(
-                "Well Unloaded",
-                f"Successfully unloaded: {well_name}\n"
-                f"Remaining wells: {len(self.well_datasets)}{mem_info}"
-            )
-            
-            self.log_processing(f"Unloaded well: {well_id}")
-            
-        except Exception as e:
-            messagebox.showerror("Unload Error", f"Failed to unload well: {str(e)}")
-            self.log_processing(f"Error unloading well {well_id}: {e}")
-    
-    def get_memory_usage_summary(self) -> str:
-        """Get a formatted summary of current memory usage.
-        
-        Returns:
-            str: Formatted memory usage summary
-        """
-        try:
-            if not PSUTIL_AVAILABLE:
-                return "Memory monitoring unavailable (psutil not installed)"
-            
-            mem = psutil.virtual_memory()
-            process = psutil.Process()
-            process_mem_mb = process.memory_info().rss / (1024 * 1024)
-            
-            summary = f"System Memory: {mem.percent:.1f}% ({mem.used / (1024**3):.1f} GB / {mem.total / (1024**3):.1f} GB)\n"
-            summary += f"This App: {process_mem_mb:.1f} MB\n"
-            summary += f"Wells Loaded: {len(self.well_datasets)} / {self.MAX_ACTIVE_WELLS} max"
-            
-            return summary
-        except Exception as e:
-            return f"Error getting memory info: {e}"
-    
-    # ============================================================================
-    # FILE LOADING (with memory and limit checks)
-    # ============================================================================
-    
     def load_file(self):
         """Load and analyze data file with analytics and security validation"""
         filepath = self.file_path_var.get()
@@ -12821,7 +12861,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
         validated_path = SafeFileHandler.validate_file_path(filepath)
         if not validated_path:
             sanitized = SafeFileHandler.sanitize_path_for_display(filepath)
-            messagebox.showerror("Security Error", f"Invalid or inaccessible file path: {sanitized}")
+            messagebox.showerror(ERROR_TITLE_SECURITY, f"Invalid or inaccessible file path: {sanitized}")
             return
         
         # Security: Validate file size before loading
@@ -12842,18 +12882,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
         # Use validated path
         filepath = str(validated_path)
         
-        # PERFORMANCE CHECK 1: Check well count limit
-        if not self.check_well_count_limit():
-            return
-        
-        # PERFORMANCE CHECK 2: Check system memory
-        if not self.warn_if_memory_high():
-            return
-        
-        # PERFORMANCE CHECK 3: Warn for large files
-        if not self.check_file_size_warning(filepath):
-            return
-        
         try:
             # Clear existing data before loading new file with unsaved data check
             if self.reset_application_state(prompt_if_unsaved=True) == False:
@@ -12869,6 +12897,8 @@ This ensures consistent data interpretation and fixes depth validation issues.
             if ext == '.las':
                 self.current_data = self.load_las_file(filepath)
                 # Well info is extracted in load_las_file, so it's already set
+            elif ext in ('.dlis', '.lis'):
+                self.current_data = self.load_dlis_file(filepath)
             elif ext == '.csv':
                 self.current_data = self.load_csv_file(filepath)
                 # For CSV/Excel, create basic well info from filename if not set
@@ -12963,9 +12993,104 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 self.beta_analytics.track_error("file_load_failed", str(e), filepath)
             
             messagebox.showerror("File Load Error", f"Failed to load file: {e}")
+            messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
             self.status_label.config(text="Failed to load file")
             self.progress_bar['value'] = 0
     
+    def load_data(self, filepath: str) -> None:
+        """Headless/batch entry point: load a file into current_data without UI dialogs."""
+        validated_path = SafeFileHandler.validate_file_path(filepath)
+        if not validated_path:
+            raise ValueError(f"Invalid or inaccessible file path: {filepath}")
+        filepath = str(validated_path)
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext == '.las':
+            self.current_data = self.load_las_file(filepath)
+        elif ext in ('.dlis', '.lis'):
+            self.current_data = self.load_dlis_file(filepath)
+        elif ext == '.csv':
+            self.current_data = self.load_csv_file(filepath)
+        elif ext in ('.xlsx', '.xls'):
+            self.current_data = self.load_excel_file(filepath)
+        else:
+            raise ValueError(f"Unsupported file format: {ext}")
+        self.processed_data = self.current_data.copy() if self.current_data is not None else None
+        if hasattr(self, 'analyze_curves'):
+            try:
+                self.analyze_curves()
+            except Exception as e:
+                self.log_processing(f"analyze_curves after load_data: {e}")
+
+    def load_dlis_file(self, filepath: str) -> pd.DataFrame:
+        """Load DLIS/LIS file via dlisio when available; raise clear error otherwise."""
+        try:
+            from dlisio import dlis as dlis_mod
+        except ImportError as e:
+            raise ImportError(
+                "dlisio is required for DLIS/LIS support. Install with: pip install dlisio"
+            ) from e
+
+        self.log_processing(f"Loading DLIS/LIS file with dlisio: {filepath}")
+        frames = []
+        well_name = os.path.splitext(os.path.basename(filepath))[0]
+
+        with dlis_mod.load(filepath) as files:
+            for f in files:
+                try:
+                    if hasattr(f, 'origins') and f.origins:
+                        origin = f.origins[0]
+                        well_name = getattr(origin, 'well_name', None) or getattr(origin, 'well_id', None) or well_name
+                except Exception:
+                    pass
+                for frame in getattr(f, 'frames', []) or []:
+                    try:
+                        curves = frame.curves()
+                        if curves is None:
+                            continue
+                        # dlisio returns a structured numpy array
+                        df_part = pd.DataFrame(curves)
+                        if df_part.empty:
+                            continue
+                        frames.append(df_part)
+                    except Exception as frame_err:
+                        self.log_processing(f"Skipping DLIS frame: {frame_err}")
+
+        if not frames:
+            raise ValueError(f"No readable curve frames found in DLIS file: {filepath}")
+
+        df = frames[0]
+        for extra in frames[1:]:
+            # Align on overlapping columns when possible
+            common = [c for c in extra.columns if c in df.columns]
+            if common:
+                df = pd.concat([df, extra], ignore_index=True, sort=False)
+            else:
+                for col in extra.columns:
+                    if col not in df.columns:
+                        df[col] = extra[col].values[:len(df)] if len(extra) >= len(df) else np.nan
+
+        df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # Prefer TDEP / DEPT as depth
+        depth_candidates = [c for c in df.columns if str(c).upper() in ('TDEP', 'DEPT', 'DEPTH', 'MD')]
+        if depth_candidates and depth_candidates[0] != 'DEPT':
+            df = df.rename(columns={depth_candidates[0]: 'DEPT'})
+
+        self.well_info = {
+            'well_name': str(well_name).strip() or 'UNKNOWN',
+            'uwi': 'N/A',
+            'field': 'N/A',
+            'company': 'N/A',
+            'start_depth': float(df['DEPT'].min()) if 'DEPT' in df.columns else 'N/A',
+            'stop_depth': float(df['DEPT'].max()) if 'DEPT' in df.columns else 'N/A',
+            'depth_unit': 'm',
+            'source_format': 'DLIS',
+        }
+        self.log_processing(f"Loaded DLIS with {len(df)} rows, {len(df.columns)} curves")
+        return df
+
     def load_las_file(self, filepath: str) -> pd.DataFrame:
         """Load LAS file using industry-standard lasio library"""
         if not LASIO_AVAILABLE:
@@ -13093,7 +13218,8 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                                 val = float(part)
                                                 if 0 < val < 50000:  # Reasonable depth range
                                                     depth_like_first = True
-                                            except:
+                                            except (ValueError, TypeError):
+                                                # Not a valid numeric value - expected for non-depth fields
                                                 pass
                                 
                                 # Enhanced data line detection
@@ -13164,8 +13290,12 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                     self.log_processing(f"Data section detected after empty line at {line_num}")
                                     header_lines.append(line_stripped)
                                     break
-                            except:
-                                pass
+                            except (IOError, OSError) as file_error:
+                                # File reading error - log but continue with other detection methods
+                                self.log_processing(f"Warning: File peek ahead failed at line {line_num}: {type(file_error).__name__}: {str(file_error)}")
+                            except Exception as peek_error:
+                                # Unexpected error - log for debugging
+                                self.log_processing(f"Warning: Unexpected error peeking ahead in file: {type(peek_error).__name__}: {str(peek_error)}")
                         
                         # Method 8: Detect sudden format change to tabular data
                         if (line_num > 5 and  # Only after some header content
@@ -13189,8 +13319,12 @@ This ensures consistent data interpretation and fixes depth validation issues.
                                     self.log_processing(f"Data section detected by format change at line {line_num}")
                                     self.log_processing(f"Sample: '{line_stripped[:60]}...'")
                                     break
-                            except:
-                                pass
+                            except (IOError, OSError) as file_error:
+                                # File reading error - log but continue with other detection methods
+                                self.log_processing(f"Warning: File look-ahead failed at line {line_num}: {type(file_error).__name__}: {str(file_error)}")
+                            except Exception as lookahead_error:
+                                # Unexpected error - log for debugging
+                                self.log_processing(f"Warning: Unexpected error in file look-ahead: {type(lookahead_error).__name__}: {str(lookahead_error)}")
                         
                         header_lines.append(line_stripped)
                         
@@ -13718,9 +13852,8 @@ This ensures consistent data interpretation and fixes depth validation issues.
 
     
     def _identify_curve_from_lasio(self, curve_name, curve_info):
-        """Identify curve type from lasio metadata using comprehensive mnemonic library"""
-        # Use the comprehensive mnemonic library for proper curve identification
-        curve_type, confidence, curve_data = self.mnemonic_library.identify_curve(
+        """Identify curve type from lasio metadata using the unified curve identifier"""
+        curve_type, confidence, curve_data = self.curve_identifier.identify_curve(
             curve_name, 
             curve_info.get('unit', ''), 
             curve_info.get('description', '')
@@ -13942,7 +14075,8 @@ This ensures consistent data interpretation and fixes depth validation issues.
             cleaned = value_clean.replace(',', '').replace('_', '')
             float(cleaned)
             return True
-        except:
+        except (ValueError, TypeError):
+            # Not a valid numeric value after cleaning - expected for non-numeric fields
             pass
         
         return False
@@ -13974,7 +14108,8 @@ This ensures consistent data interpretation and fixes depth validation issues.
                         val = float(part)
                         if 0 <= val <= 50000:  # Reasonable depth range (0 to 50,000 feet/meters)
                             depth_like_first = True
-                    except:
+                    except (ValueError, TypeError):
+                        # Not a valid numeric value - expected for non-depth fields
                         pass
         
         # Various criteria for data line detection
@@ -14106,7 +14241,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             description = self.curve_info[column].get('description', '')
             
             # Identify curve type
-            curve_type, confidence, curve_data = self.mnemonic_library.identify_curve(
+            curve_type, confidence, curve_data = self.curve_identifier.identify_curve(
                 column, unit, description
             )
             
@@ -14147,7 +14282,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
         # === DUPLICATE DETECTION AND RESOLUTION ===
         try:
             # Detect duplicates
-            duplicate_info = self.curve_manager.detect_and_resolve_duplicates(self.curve_info)
+            duplicate_info = self.curve_identifier.detect_and_resolve_duplicates(self.curve_info)
             
             if duplicate_info['duplicates_found']:
                 # Log what was found
@@ -14453,90 +14588,253 @@ This ensures consistent data interpretation and fixes depth validation issues.
         processing_thread = threading.Thread(target=self.process_data_thread)
         processing_thread.daemon = True
         processing_thread.start()
-    def process_data_thread(self):
-        """Process data in separate thread with standardization"""
+    def _initialize_processing_pipeline(self) -> None:
+        """Initialize processing pipeline with data setup and validation."""
+        # Schedule UI updates on main thread
+        self.root.after(0, lambda: self.progress_bar.configure(value=0))
+        self.root.after(0, lambda: self.status_label.config(text="Initializing processing..."))
+        
+        # Initialize processed data
+        self.processed_data = self.current_data.copy()
+        self.processing_results = {}
+        
+        # Save initial state for undo/redo
+        self.processing_history.save_state(
+            self.processed_data, 
+            self.curve_info, 
+            "Initial Data Load"
+        )
+        
+        # Debug: Log available columns and curve_info
+        self.log_processing(f"Available columns in data: {list(self.processed_data.columns)}")
+        self.log_processing(f"Available curve_info keys: {list(self.curve_info.keys())}")
+        
+        # Check for missing curve_info entries
+        missing_curve_info = [col for col in self.processed_data.columns if col not in self.curve_info]
+        if missing_curve_info:
+            self.log_processing(f"WARNING: Missing curve_info for columns: {missing_curve_info}")
+            # Create default curve_info for missing columns
+            for col in missing_curve_info:
+                self.curve_info[col] = {
+                    'curve_type': 'UNKNOWN',
+                    'unit': '',
+                    'description': f'Unknown curve: {col}',
+                    'quality': 0.5
+                }
+                self.log_processing(f"Created default curve_info for: {col}")
+        
+        # Memory monitoring: Before processing starts
+        self.monitor_and_cleanup_memory("Processing Start")
+    
+    def normalize_processed_data(self) -> None:
+        """Normalize numeric log curves (excludes depth and discrete flag columns)."""
+        if self.processed_data is None or self.processed_data.empty:
+            return
+
+        depth_cols = {'DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS', 'DEPTH_PRIMARY'}
+        method = 'zscore'
+        if hasattr(self, 'normalize_method_var'):
+            method = self.normalize_method_var.get() or 'zscore'
+
+        normalized_count = 0
+        for col in self.processed_data.columns:
+            if str(col).upper() in depth_cols:
+                continue
+            series = pd.to_numeric(self.processed_data[col], errors='coerce')
+            arr = series.to_numpy(dtype=float)
+            if np.sum(~np.isnan(arr)) < 2:
+                continue
+            curve_type = str(self.curve_info.get(col, {}).get('curve_type', '')).upper()
+            if curve_type in ('FACIES', 'LITH', 'FLAG', 'DISCRETE'):
+                continue
+
+            if method == 'zscore':
+                mean_val = np.nanmean(arr)
+                std_val = np.nanstd(arr)
+                if std_val <= 0:
+                    continue
+                out = (arr - mean_val) / std_val
+            else:
+                vmin = np.nanmin(arr)
+                vmax = np.nanmax(arr)
+                if vmax <= vmin:
+                    continue
+                out = (arr - vmin) / (vmax - vmin)
+
+            self.processed_data[col] = pd.Series(out, index=self.processed_data.index)
+            normalized_count += 1
+
+        self.log_processing(
+            f"Normalization ({method}) applied to {normalized_count} curve(s); depth columns excluded"
+        )
+    
+    def _validate_and_standardize_depth(self) -> None:
+        """Validate and standardize depth reference for processing."""
+        self.root.after(0, lambda: self.status_label.config(text="Validating depth reference..."))
+        self.log_processing("Starting enhanced depth validation...")
+        
         try:
-            # Schedule UI updates on main thread
-            self.root.after(0, lambda: self.progress_bar.configure(value=0))
-            self.root.after(0, lambda: self.status_label.config(text="Initializing processing..."))
-            
-            # Initialize processed data
-            self.processed_data = self.current_data.copy()
-            self.processing_results = {}
-            
-            # Save initial state for undo/redo
-            self.processing_history.save_state(
-                self.processed_data, 
+            # Validate and identify depth curve
+            depth_curve = self.depth_validator.validate_and_identify_depth(
+                self.processed_data.columns, 
                 self.curve_info, 
-                "Initial Data Load"
+                self.processed_data
             )
+            self.log_processing(f"Validated depth curve: {depth_curve}")
             
-            # Debug: Log available columns and curve_info
-            self.log_processing(f"Available columns in data: {list(self.processed_data.columns)}")
-            self.log_processing(f"Available curve_info keys: {list(self.curve_info.keys())}")
+            # Standardize depth reference for reservoir work
+            selected_depth, depth_metadata = self.reservoir_depth_manager.standardize_depth_reference(
+                self.processed_data, 
+                self.curve_info
+            )
+            self.log_processing(f"Standardized depth reference: {selected_depth}")
+            self.log_processing(f"Depth metadata: {depth_metadata}")
+
+            # After depth reference is known, sync default resampling spacing
+            try:
+                self._sync_depth_spacing_default()
+            except Exception:
+                pass
             
-            # Check for missing curve_info entries
-            missing_curve_info = [col for col in self.processed_data.columns if col not in self.curve_info]
-            if missing_curve_info:
-                self.log_processing(f"WARNING: Missing curve_info for columns: {missing_curve_info}")
-                # Create default curve_info for missing columns
-                for col in missing_curve_info:
-                    self.curve_info[col] = {
-                        'curve_type': 'UNKNOWN',
-                        'unit': '',
-                        'description': f'Unknown curve: {col}',
-                        'quality': 0.5
-                    }
-                    self.log_processing(f"Created default curve_info for: {col}")
+        except Exception as e:
+            error_category = self.categorize_error(e, "depth_validation")
+            error_msg = f"[{error_category}] Depth validation failed: {e}"
+            self.log_processing(f"ERROR: {error_msg}")
             
-            # ENHANCED PROCESSING WORKFLOW - Step 1: Depth Validation and Standardization
-            self.root.after(0, lambda: self.status_label.config(text="Validating depth reference..."))
-            self.log_processing("Starting enhanced depth validation...")
+            # Provide category-specific user feedback
+            if error_category == "MEMORY_ERROR":
+                self.show_error_dialog(ERROR_TITLE_MEMORY, 
+                    "Insufficient memory for depth validation. Try processing smaller datasets.")
+            elif error_category == "DATA_ERROR":
+                self.show_error_dialog(ERROR_TITLE_DATA, 
+                    "Invalid depth data format detected. Check your input files.")
+            elif error_category == "FILE_ERROR":
+                self.show_error_dialog(ERROR_TITLE_FILE, 
+                    "Unable to access depth data file. Check file permissions and path.")
+            else:
+                self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg)
+            
+            self.root.after(0, lambda: self.status_label.config(text="Depth validation failed - continuing with defaults"))
+            self.log_processing("Continuing with existing depth reference...")
+    
+    def _detect_geological_zones(self) -> List[Any]:
+        """Detect geological zones from gamma ray data.
+        
+        Returns:
+            List of zone masks for zone-aware processing
+        """
+        zones = []  # Initialize zones as empty list
+        self._gamma_ray_curves = [
+            col for col in self.processed_data.columns
+            if 'GR' in col.upper() or 'GAMMA' in col.upper()
+        ]
+        gamma_ray_curves = self._gamma_ray_curves
+        if gamma_ray_curves and 'DEPT' in self.processed_data.columns:
+            self.root.after(0, lambda: self.status_label.config(text="Detecting geological boundaries..."))
+            self.log_processing("Starting geological boundary detection...")
             
             try:
-                # Validate and identify depth curve
-                depth_curve = self.depth_validator.validate_and_identify_depth(
-                    self.processed_data.columns, 
-                    self.curve_info, 
-                    self.processed_data
-                )
-                self.log_processing(f"Validated depth curve: {depth_curve}")
+                depth_data = self.processed_data['DEPT'].values
+                gamma_ray_data = self.processed_data[gamma_ray_curves[0]].values
                 
-                # Standardize depth reference for reservoir work
-                selected_depth, depth_metadata = self.reservoir_depth_manager.standardize_depth_reference(
-                    self.processed_data, 
-                    self.curve_info
+                boundary_depths = self.geological_zone_manager.detect_geological_boundaries(
+                    depth_data, 
+                    gamma_ray_data
                 )
-                self.log_processing(f"Standardized depth reference: {selected_depth}")
-                self.log_processing(f"Depth metadata: {depth_metadata}")
-
-                # After depth reference is known, sync default resampling spacing
-                try:
-                    self._sync_depth_spacing_default()
-                except Exception:
-                    pass
+                self.log_processing(f"Detected {len(boundary_depths)} geological boundaries")
+                
+                # Create zone masks for zone-aware processing
+                zones = self.geological_zone_manager.create_zone_masks(depth_data, boundary_depths)
+                self.log_processing(f"Created {len(zones)} processing zones")
                 
             except Exception as e:
-                error_category = self.categorize_error(e, "depth_validation")
-                error_msg = f"[{error_category}] Depth validation failed: {e}"
+                error_category = self.categorize_error(e, "geological_detection")
+                error_msg = f"[{error_category}] Geological boundary detection failed: {e}"
                 self.log_processing(f"ERROR: {error_msg}")
                 
                 # Provide category-specific user feedback
-                if error_category == "MEMORY_ERROR":
-                    self.root.after(0, lambda: messagebox.showerror("Memory Error", 
-                        "Insufficient memory for depth validation. Try processing smaller datasets."))
-                elif error_category == "DATA_ERROR":
-                    self.root.after(0, lambda: messagebox.showerror("Data Error", 
-                        "Invalid depth data format detected. Check your input files."))
-                elif error_category == "FILE_ERROR":
-                    self.root.after(0, lambda: messagebox.showerror("File Error", 
-                        "Unable to access depth data file. Check file permissions and path."))
+                if error_category == "DATA_ERROR":
+                    self.show_error_dialog(ERROR_TITLE_DATA, 
+                        "Unable to detect geological boundaries. Check gamma ray data quality.")
+                elif error_category == "MEMORY_ERROR":
+                    self.show_error_dialog(ERROR_TITLE_MEMORY, 
+                        "Insufficient memory for geological analysis. Try processing smaller datasets.")
                 else:
-                    self.root.after(0, lambda: messagebox.showerror("Processing Error", error_msg))
+                    self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg)
                 
-                self.root.after(0, lambda: self.status_label.config(text="Depth validation failed - continuing with defaults"))
-                self.log_processing("Continuing with existing depth reference...")
-
+                self.root.after(0, lambda: self.status_label.config(text="Geological detection failed - continuing without zones"))
+                self.log_processing("Continuing without geological zones...")
+                zones = []
+        else:
+            zones = []
+            self._gamma_ray_curves = []
+            self.log_processing("No gamma ray data available for geological boundary detection")
+        
+        return zones
+    
+    def _apply_environmental_corrections(self) -> None:
+        """Apply environmental corrections to log data."""
+        self.root.after(0, lambda: self.status_label.config(text="Applying environmental corrections..."))
+        self.log_processing("Starting environmental corrections...")
+        
+        try:
+            # Default well parameters (can be enhanced with actual well data)
+            well_parameters = {
+                'HOLE_SIZE': 8.5,  # inches
+                'MUD_RESISTIVITY': 1.0,  # ohm-m
+                'BHT': 150  # °F
+            }
+            
+            corrected_data, corrections_applied = self.environmental_corrections.apply_environmental_corrections(
+                self.processed_data, 
+                self.curve_info, 
+                well_parameters
+            )
+            self.processed_data = corrected_data
+            self.log_processing(f"Applied environmental corrections: {corrections_applied}")
+            
+        except Exception as e:
+            error_category = self.categorize_error(e, "environmental_corrections")
+            error_msg = f"[{error_category}] Environmental corrections failed: {e}"
+            self.log_processing(f"ERROR: {error_msg}")
+            
+            # Provide category-specific user feedback
+            if error_category == "DATA_ERROR":
+                self.show_error_dialog(ERROR_TITLE_DATA, 
+                    "Unable to apply environmental corrections. Check well parameters and data quality.")
+            elif error_category == "MEMORY_ERROR":
+                self.show_error_dialog(ERROR_TITLE_MEMORY, 
+                    "Insufficient memory for environmental corrections. Try processing smaller datasets.")
+            else:
+                self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg)
+            
+            self.root.after(0, lambda: self.status_label.config(text="Environmental corrections failed - continuing without corrections"))
+            self.log_processing("Continuing without environmental corrections...")
+    
+    def _uniformize_data(self) -> None:
+        """Uniformize curve names and units, resample to standard spacing."""
+        if self.rename_curves_var.get() or self.standardize_units_var.get():
+            self.root.after(0, lambda: self.status_label.config(text="Uniformizing data..."))
+            self.log_processing("Starting data uniformization...")
+            
+            # Standardize curve names and units
+            self.uniformize_curves()
+            
+            # Resample to standard depth spacing if needed
+            if 'DEPT' in self.processed_data.columns:
+                depth_spacing = self.depth_spacing_var.get()
+                self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} m")
+                self.resample_to_standard_spacing('DEPT', depth_spacing)
+    
+    def process_data_thread(self):
+        """Process data in separate thread with standardization"""
+        try:
+            # Initialize processing pipeline
+            self._initialize_processing_pipeline()
+            
+            # Step 1: Depth Validation and Standardization
+            self._validate_and_standardize_depth()
+            
             # Optional normalization step
             try:
                 if hasattr(self, 'normalize_var') and self.normalize_var.get():
@@ -14547,50 +14845,13 @@ This ensures consistent data interpretation and fixes depth validation issues.
             except Exception as e:
                 self.log_processing(f"WARNING: Normalization failed: {e}")
             
-            # Step 2: Geological Zone Detection (if gamma ray available)
-            zones = []  # Initialize zones as empty list
-            gamma_ray_curves = [col for col in self.processed_data.columns if 'GR' in col.upper() or 'GAMMA' in col.upper()]
-            if gamma_ray_curves and 'DEPT' in self.processed_data.columns:
-                self.root.after(0, lambda: self.status_label.config(text="Detecting geological boundaries..."))
-                self.log_processing("Starting geological boundary detection...")
-                
-                try:
-                    depth_data = self.processed_data['DEPT'].values
-                    gamma_ray_data = self.processed_data[gamma_ray_curves[0]].values
-                    
-                    boundary_depths = self.geological_zone_manager.detect_geological_boundaries(
-                        depth_data, 
-                        gamma_ray_data
-                    )
-                    self.log_processing(f"Detected {len(boundary_depths)} geological boundaries")
-                    
-                    # Create zone masks for zone-aware processing
-                    zones = self.geological_zone_manager.create_zone_masks(depth_data, boundary_depths)
-                    self.log_processing(f"Created {len(zones)} processing zones")
-                    
-                except Exception as e:
-                    error_category = self.categorize_error(e, "geological_detection")
-                    error_msg = f"[{error_category}] Geological boundary detection failed: {e}"
-                    self.log_processing(f"ERROR: {error_msg}")
-                    
-                    # Provide category-specific user feedback
-                    if error_category == "DATA_ERROR":
-                        self.root.after(0, lambda: messagebox.showerror("Data Error", 
-                            "Unable to detect geological boundaries. Check gamma ray data quality."))
-                    elif error_category == "MEMORY_ERROR":
-                        self.root.after(0, lambda: messagebox.showerror("Memory Error", 
-                            "Insufficient memory for geological analysis. Try processing smaller datasets."))
-                    else:
-                        self.root.after(0, lambda: messagebox.showerror("Processing Error", error_msg))
-                    
-                    self.root.after(0, lambda: self.status_label.config(text="Geological detection failed - continuing without zones"))
-                    self.log_processing("Continuing without geological zones...")
-                    zones = []
-            else:
-                zones = []
-                self.log_processing("No gamma ray data available for geological boundary detection")
-
-            # Step 2b: Build cross-well priors early if enabled (so downstream steps can use bounds)
+            # Step 2: Geological Zone Detection
+            zones = self._detect_geological_zones()
+            
+            # Memory monitoring: After zone detection
+            self.monitor_and_cleanup_memory("After Zone Detection")
+            
+            # Step 2b: Build cross-well priors early if enabled
             if self.use_crosswell_priors_var.get() and self.crosswell_prior_manager:
                 try:
                     self.root.after(0, lambda: self.status_label.config(text="Building cross-well priors..."))
@@ -14601,57 +14862,11 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 except Exception as e:
                     self.log_processing(f"Cross-well priors build skipped: {e}")
             
-            # Step 3: Environmental Corrections (if well parameters available)
-            self.root.after(0, lambda: self.status_label.config(text="Applying environmental corrections..."))
-            self.log_processing("Starting environmental corrections...")
+            # Step 3: Environmental Corrections
+            self._apply_environmental_corrections()
             
-            try:
-                # Default well parameters (can be enhanced with actual well data)
-                well_parameters = {
-                    'HOLE_SIZE': 8.5,  # inches
-                    'MUD_RESISTIVITY': 1.0,  # ohm-m
-                    'BHT': 150  # °F
-                }
-                
-                corrected_data, corrections_applied = self.environmental_corrections.apply_environmental_corrections(
-                    self.processed_data, 
-                    self.curve_info, 
-                    well_parameters
-                )
-                self.processed_data = corrected_data
-                self.log_processing(f"Applied environmental corrections: {corrections_applied}")
-                
-            except Exception as e:
-                error_category = self.categorize_error(e, "environmental_corrections")
-                error_msg = f"[{error_category}] Environmental corrections failed: {e}"
-                self.log_processing(f"ERROR: {error_msg}")
-                
-                # Provide category-specific user feedback
-                if error_category == "DATA_ERROR":
-                    self.root.after(0, lambda: messagebox.showerror("Data Error", 
-                        "Unable to apply environmental corrections. Check well parameters and data quality."))
-                elif error_category == "MEMORY_ERROR":
-                    self.root.after(0, lambda: messagebox.showerror("Memory Error", 
-                        "Insufficient memory for environmental corrections. Try processing smaller datasets."))
-                else:
-                    self.root.after(0, lambda: messagebox.showerror("Processing Error", error_msg))
-                
-                self.root.after(0, lambda: self.status_label.config(text="Environmental corrections failed - continuing without corrections"))
-                self.log_processing("Continuing without environmental corrections...")
-            
-            # Step 1: Uniformization based on settings
-            if self.rename_curves_var.get() or self.standardize_units_var.get():
-                self.root.after(0, lambda: self.status_label.config(text="Uniformizing data..."))
-                self.log_processing("Starting data uniformization...")
-                
-                # Standardize curve names and units
-                self.uniformize_curves()
-                
-                # Resample to standard depth spacing if needed
-                if 'DEPT' in self.processed_data.columns:
-                    depth_spacing = self.depth_spacing_var.get()
-                    self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} m")
-                    self.resample_to_standard_spacing('DEPT', depth_spacing)
+            # Step 4: Uniformization
+            self._uniformize_data()
             
             total_curves = len(self.processed_data.columns)
             
@@ -14699,6 +14914,10 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 # Skip depth column for processing
                 if column in ['DEPT', 'DEPTH', 'MD', 'TVD']:
                     continue
+                
+                # Memory monitoring: Every 5 curves
+                if i % 5 == 0:
+                    self.monitor_and_cleanup_memory(f"Processing Curve {i}/{total_curves}")
                     
                 curve_progress = (i / total_curves) * 100
                 # Schedule UI updates on main thread
@@ -14775,7 +14994,10 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     self.log_processing(f"Zone-aware gap filling for {column}...")
                     
                     depth_data = self.processed_data['DEPT'].values
-                    gamma_ray_data = self.processed_data[gamma_ray_curves[0]].values if gamma_ray_curves else None
+                    gamma_ray_data = (
+                        self.processed_data[self._gamma_ray_curves[0]].values
+                        if getattr(self, '_gamma_ray_curves', None) else None
+                    )
                     
                     # Get auxiliary curves for zone-aware processing
                     auxiliary_curves = auxiliary_curves_dict.get(column, {}) if self.multi_curve_var.get() else {}
@@ -14981,6 +15203,10 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 self.log_processing(f"Completed processing for {column}")
                 self.log_processing(f"  - Scale type: {scale_type}")
                 self.log_processing(f"  - Processing method: {'Zone-aware' if zones else 'Standard'}")
+                
+                # Memory cleanup: After each curve (aggressive for large datasets)
+                if total_curves > 20 and i % 3 == 0:  # Every 3 curves for large datasets
+                    self.monitor_and_cleanup_memory(f"After Curve {i}/{total_curves}")
             
             # ENHANCED PROCESSING: Final Validation and Quality Assurance
             self.root.after(0, lambda: self.status_label.config(text="Validating petrophysical relationships..."))
@@ -15011,16 +15237,33 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 
                 # Provide category-specific user feedback
                 if error_category == "DATA_ERROR":
-                    self.root.after(0, lambda: messagebox.showerror("Data Error", 
-                        "Unable to validate petrophysical relationships. Check data quality and curve correlations."))
+                    self.show_error_dialog(ERROR_TITLE_DATA, 
+                        "Unable to validate petrophysical relationships. Check data quality and curve correlations.")
                 elif error_category == "MEMORY_ERROR":
-                    self.root.after(0, lambda: messagebox.showerror("Memory Error", 
-                        "Insufficient memory for petrophysical validation. Try processing smaller datasets."))
+                    self.show_error_dialog(ERROR_TITLE_MEMORY, 
+                        "Insufficient memory for petrophysical validation. Try processing smaller datasets.")
                 else:
-                    self.root.after(0, lambda: messagebox.showerror("Processing Error", error_msg))
+                    self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg)
                 
                 self.root.after(0, lambda: self.status_label.config(text="Petrophysical validation failed - continuing without validation"))
                 self.log_processing("Continuing without relationship validation...")
+            
+            # Memory monitoring: After all curves processed
+            self.monitor_and_cleanup_memory("After All Curves Processed")
+            
+            # Cleanup intermediate DataFrames and variables
+            if hasattr(self, 'auxiliary_curves_dict'):
+                try:
+                    del auxiliary_curves_dict
+                except Exception:
+                    pass
+            
+            # Force DataFrame memory consolidation
+            if hasattr(self, 'processed_data') and self.processed_data is not None:
+                try:
+                    self.processed_data._consolidate_inplace()
+                except Exception:
+                    pass
             
             # Save final processing state for undo/redo
             self.processing_history.save_state(
@@ -15069,19 +15312,19 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             # Show category-specific error to user
             if error_category == "MEMORY_ERROR":
-                messagebox.showerror("Memory Error", 
+                self.show_error_dialog(ERROR_TITLE_MEMORY, 
                     "Insufficient memory for processing. Try processing smaller datasets or close other applications.")
             elif error_category == "DATA_ERROR":
-                messagebox.showerror("Data Error", 
+                self.show_error_dialog(ERROR_TITLE_DATA, 
                     "Invalid data format detected. Check your input files and data quality.")
             elif error_category == "FILE_ERROR":
-                messagebox.showerror("File Error", 
+                self.show_error_dialog(ERROR_TITLE_FILE, 
                     "Unable to access data files. Check file permissions and paths.")
             elif error_category == "DEPENDENCY_ERROR":
-                messagebox.showerror("Dependency Error", 
+                self.show_error_dialog("Dependency Error", 
                     "Required libraries not available. Check your Python environment setup.")
             else:
-                messagebox.showerror("Processing Error", error_msg)
+                self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg)
             
             # Track error with analytics
             if BETA_SYSTEM_AVAILABLE and self.beta_analytics:
@@ -15486,10 +15729,10 @@ This ensures consistent data interpretation and fixes depth validation issues.
         report.append("PROCESSING CONFIGURATION")
         report.append("=" * 80)
         report.append("Gap Filling Parameters:")
-        report.append(f"  Max Gap Size: {self.max_gap_var.get()} points ({self.max_gap_var.get() * self.depth_spacing_var.get():.1f} m)")
-        report.append(f"  Large Gap Threshold: {self.large_gap_threshold_var.get()} points ({self.large_gap_threshold_var.get() * self.depth_spacing_var.get():.1f} m)")
+        report.append(f"  Max Gap Size: {depth_params['max_gap_size']} points ({depth_params['max_gap_meters']:.1f} m)")
+        report.append(f"  Large Gap Threshold: {depth_params['large_gap_threshold']} points ({depth_params['large_gap_meters']:.1f} m)")
         report.append(f"  Large Gap Treatment: {self.large_gap_var.get()}")
-        report.append(f"  Geological Gap Threshold: {self.geological_gap_threshold_var.get()} points ({self.geological_gap_threshold_var.get() * self.depth_spacing_var.get():.1f} m)")
+        report.append(f"  Geological Gap Threshold: {depth_params['geological_gap_threshold']} points ({depth_params['geological_gap_meters']:.1f} m)")
         report.append(f"  Method Priority: {self.gap_method_var.get()}")
         report.append(f"  Physics-Informed: {self.physics_informed_var.get()}")
         report.append(f"  Multi-Curve Correlation: {self.multi_curve_var.get()}")
@@ -15665,7 +15908,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
         try:
             curve2 = self.viz_curve2_var.get() if hasattr(self, 'viz_curve2_var') else None
             if not curve2 or curve2 not in getattr(self, 'processed_data', pd.DataFrame()).columns:
-                messagebox.showwarning("Visualization Error", "Please select a valid secondary curve for the scatter plot")
+                messagebox.showwarning(ERROR_TITLE_VISUALIZATION, "Please select a valid secondary curve for the scatter plot")
                 return
 
             # Check if curves have been processed, otherwise use original data
@@ -15676,7 +15919,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 x = self.current_data[curve].values
                 x_status = 'original'
             else:
-                messagebox.showwarning("Visualization Error", f"Curve '{curve}' not found in data")
+                messagebox.showwarning(ERROR_TITLE_VISUALIZATION, f"Curve '{curve}' not found in data")
                 return
                 
             if curve2 in self.processing_results:
@@ -15686,7 +15929,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 y = self.current_data[curve2].values
                 y_status = 'original'
             else:
-                messagebox.showwarning("Visualization Error", f"Curve '{curve2}' not found in data")
+                messagebox.showwarning(ERROR_TITLE_VISUALIZATION, f"Curve '{curve2}' not found in data")
                 return
 
             self.ensure_figure_exists()
@@ -15711,7 +15954,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Data already retrieved above
             valid_mask = (~np.isnan(x)) & (~np.isnan(y))
             if not np.any(valid_mask):
-                messagebox.showwarning("Visualization Error", "No valid data points available for the scatter plot")
+                messagebox.showwarning(ERROR_TITLE_VISUALIZATION, "No valid data points available for the scatter plot")
                 return
 
             # Filter valid data
@@ -15732,7 +15975,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     y_trend = p(x_trend)
                     ax_scatter.plot(x_trend, y_trend, 'r--', alpha=0.8, linewidth=2, 
                                   label=f'Trend (R² = {np.corrcoef(x_valid, y_valid)[0,1]:.3f})')
-                    ax_scatter.legend(loc='upper left')
+                    ax_scatter.legend(loc=LABEL_UPPER_LEFT)
                 except Exception:
                     pass  # Continue without trend line if calculation fails
             
@@ -15811,7 +16054,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.fig.subplots_adjust(right=0.92, top=0.90, hspace=0.35, wspace=0.35)
             
         except Exception as e:
-            messagebox.showerror("Visualization Error", f"Failed to create scatter plot: {str(e)}")
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, f"Failed to create scatter plot: {str(e)}")
     
     def plot_3d_visualization(self, curve: str):
         """Create a 3D visualization with 3 curves plus depth (industry standard)"""
@@ -16179,25 +16422,34 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Scaling factor
             spacing_ratio = reference_spacing / depth_spacing if depth_spacing > 0 else 1.0
             
+            # Scale thresholds to maintain physical distances
+            raw_geological = self.geological_gap_threshold_var.get()
+            raw_large = self.large_gap_threshold_var.get()
+            raw_max = self.max_gap_var.get()
+            
+            geological_points = max(1, int(np.ceil(raw_geological * spacing_ratio)))
+            large_gap_points = max(1, int(np.ceil(raw_large * spacing_ratio)))
+            max_gap_points = max(1, int(np.ceil(raw_max * spacing_ratio)))
+            
             # Adjusted parameters
             adjusted = {
                 'depth_spacing': depth_spacing,
                 'spacing_ratio': spacing_ratio,
                 
                 # Gap thresholds (scale to maintain same physical distance)
-                'geological_gap_threshold': int(self.geological_gap_threshold_var.get() * spacing_ratio),
-                'large_gap_threshold': int(self.large_gap_threshold_var.get() * spacing_ratio),
-                'max_gap_size': int(self.max_gap_var.get() * spacing_ratio),
+                'geological_gap_threshold': geological_points,
+                'large_gap_threshold': large_gap_points,
+                'max_gap_size': max_gap_points,
                 
                 # Filter windows (scale to maintain same physical smoothing distance)
-                'savgol_window': max(5, int(11 * spacing_ratio)),
-                'median_window': max(3, int(5 * spacing_ratio)),
-                'bilateral_window': max(5, int(10 * spacing_ratio)),
+                'savgol_window': max(5, int(np.ceil(11 * spacing_ratio))),
+                'median_window': max(3, int(np.ceil(5 * spacing_ratio))),
+                'bilateral_window': max(5, int(np.ceil(10 * spacing_ratio))),
                 
                 # Physical interpretation
-                'geological_gap_meters': self.geological_gap_threshold_var.get() * depth_spacing,
-                'large_gap_meters': self.large_gap_threshold_var.get() * depth_spacing,
-                'max_gap_meters': self.max_gap_var.get() * depth_spacing
+                'geological_gap_meters': geological_points * depth_spacing,
+                'large_gap_meters': large_gap_points * depth_spacing,
+                'max_gap_meters': max_gap_points * depth_spacing
             }
             
             return adjusted
@@ -16257,10 +16509,10 @@ This ensures consistent data interpretation and fixes depth validation issues.
             return 'UNKNOWN'
 
     def get_curve_info(self, curve_name: str):
-        """Get curve info from the curve manager, creating default if not exists."""
+        """Get curve info from the curve identifier, creating default if not exists."""
         try:
-            if hasattr(self, 'curve_manager') and self.curve_manager:
-                return self.curve_manager.get_curve_info(curve_name)
+            if hasattr(self, 'curve_identifier') and self.curve_identifier:
+                return self.curve_identifier.get_curve_info(curve_name)
             else:
                 # Fallback to direct curve_info access
                 return self.curve_info.get(curve_name, {
@@ -16342,7 +16594,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     try:
                         unit = self.curve_info.get(col, {}).get('unit', '')
                         desc = self.curve_info.get(col, {}).get('description', '')
-                        curve_type, confidence, info = self.mnemonic_library.identify_curve(col, unit, desc)
+                        curve_type, confidence, info = self.curve_identifier.identify_curve(col, unit, desc)
                         mnemonics = info.get('mnemonics', []) if isinstance(info, dict) else []
                         if confidence >= 0.5 and mnemonics:
                             standard_name = mnemonics[0]
@@ -16571,7 +16823,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             processed_plot = self._convert_nulls_to_nan(processed)
             
             # Plot main curve
-            ax.plot(processed_plot, depth, 'b-', linewidth=2, label='Processed Data')
+            ax.plot(processed_plot, depth, 'b-', linewidth=2, label=LABEL_PROCESSED_DATA)
             
             # CRITICAL: Set axis limits to ACTUAL data range
             ax.set_ylim(depth_max, depth_min)  # Inverted for depth
@@ -16657,7 +16909,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             ax1 = axes[0, 0]
             completeness = gap_metrics.get('data_completeness', 0)
             colors = ['#00FF00' if completeness > 80 else '#FFA500' if completeness > 60 else '#FF0000', '#FF0000']
-            ax1.pie([completeness, 100-completeness], labels=['Valid Data', 'Missing Data'],
+            ax1.pie([completeness, 100-completeness], labels=['Valid Data', LABEL_MISSING_DATA],
                     colors=colors, autopct='%1.1f%%', startangle=90)
             ax1.set_title('Data Completeness', fontsize=12, fontweight='bold')
             
@@ -16711,11 +16963,181 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             # Apply proper spacing for quality metrics display
             self.fig.tight_layout()
-            self.fig.subplots_adjust(top=0.93)  # Space for suptitle
+            
+            # Create canvas if not embedded
+            if hasattr(self, 'viz_content') and self.viz_content:
+                self.cleanup_visualization()
+                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
+                self.canvas.draw()
+                
+                if NavigationToolbar2Tk:
+                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                    toolbar.update()
+                    toolbar.pack(side='top', fill='x')
+                
+                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
+            
+            self.log_processing(f"Quality metrics visualization created: {curve}")
             
         except Exception as e:
-            messagebox.showerror("Quality Metrics Error", f"Failed to create quality metrics plot: {str(e)}")
-
+            self.log_processing(f"Error in quality metrics visualization: {e}")
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, f"Failed to create quality metrics plot:\n{e}")
+    
+    def plot_histogram(self, curve: str):
+        """Create a professional histogram/distribution plot for data quality control.
+        
+        Industry-standard histogram visualization for petrophysical data analysis.
+        Shows data distribution, identifies outliers, bimodality, and data quality issues.
+        
+        Features:
+        - Original vs processed comparison (if available)
+        - Statistical annotations (mean, median, std dev)
+        - Outlier detection visualization
+        - Normal distribution overlay (if applicable)
+        - Professional styling with industry-standard colors
+        """
+        # Check if curve has been processed, otherwise use original data
+        if curve in self.processing_results:
+            processed = self.processing_results[curve]['final_data']
+            original = self.processing_results[curve].get('original_data', None)
+            has_processed = True
+        elif self.current_data is not None and curve in self.current_data.columns:
+            processed = self.current_data[curve].values
+            original = None
+            has_processed = False
+        else:
+            messagebox.showwarning("Warning", f"Curve '{curve}' not found in data")
+            return
+        
+        try:
+            self.cleanup_visualization()
+            self.ensure_figure_exists()
+            self.fig.set_size_inches(12, 9)
+            
+            # Convert null values to NaN for proper filtering
+            processed_clean = self._convert_nulls_to_nan(processed)
+            valid_processed = processed_clean[~np.isnan(processed_clean) & np.isfinite(processed_clean)]
+            
+            if len(valid_processed) == 0:
+                messagebox.showwarning("Warning", f"No valid data points for curve '{curve}'")
+                return
+            
+            # Create main histogram plot
+            ax = self.fig.add_subplot(111)
+            
+            # Calculate optimal number of bins (Freedman-Diaconis rule for petrophysical data)
+            iqr = np.percentile(valid_processed, 75) - np.percentile(valid_processed, 25)
+            bin_width = 2 * iqr / (len(valid_processed) ** (1/3)) if iqr > 0 else (valid_processed.max() - valid_processed.min()) / 30
+            num_bins = max(20, min(50, int((valid_processed.max() - valid_processed.min()) / bin_width))) if bin_width > 0 else 30
+            
+            # Plot processed data histogram
+            n, bins, patches = ax.hist(valid_processed, bins=num_bins, alpha=0.7, color='blue', 
+                                      edgecolor='black', linewidth=1.2, label=LABEL_PROCESSED_DATA if has_processed else 'Data')
+            
+            # Color-code bins by frequency (darker = higher frequency) for better visualization
+            max_freq = n.max() if len(n) > 0 else 1
+            for i, (patch, freq) in enumerate(zip(patches, n)):
+                intensity = 0.3 + 0.7 * (freq / max_freq) if max_freq > 0 else 0.5
+                patch.set_facecolor(plt.cm.Blues(intensity))
+            
+            # Plot original data histogram if available (overlay)
+            if original is not None:
+                original_clean = self._convert_nulls_to_nan(original)
+                valid_original = original_clean[~np.isnan(original_clean) & np.isfinite(original_clean)]
+                
+                if len(valid_original) > 0:
+                    ax.hist(valid_original, bins=bins, alpha=0.4, color='red', 
+                           edgecolor='darkred', linestyle='--', 
+                           label=LABEL_ORIGINAL_DATA, histtype='step', linewidth=2)
+            
+            # Calculate and display statistics
+            mean_val = np.mean(valid_processed)
+            median_val = np.median(valid_processed)
+            std_val = np.std(valid_processed)
+            min_val = np.min(valid_processed)
+            max_val = np.max(valid_processed)
+            
+            # Add vertical lines for mean and median
+            ax.axvline(mean_val, color='green', linestyle='--', linewidth=2, label=f'Mean: {mean_val:.3f}')
+            ax.axvline(median_val, color='orange', linestyle='--', linewidth=2, label=f'Median: {median_val:.3f}')
+            
+            # Add normal distribution overlay if data appears normally distributed
+            if len(valid_processed) > 30:  # Only for sufficient data points
+                from scipy import stats
+                try:
+                    # Test for normality (Shapiro-Wilk test)
+                    if len(valid_processed) <= 5000:  # Test limited to reasonable size
+                        _, p_value = stats.shapiro(valid_processed[:5000])
+                        if p_value > 0.05:  # Data appears normal
+                            # Overlay normal distribution
+                            x_norm = np.linspace(valid_processed.min(), valid_processed.max(), 100)
+                            y_norm = stats.norm.pdf(x_norm, mean_val, std_val) * len(valid_processed) * (bins[1] - bins[0])
+                            ax.plot(x_norm, y_norm, 'r-', linewidth=2, alpha=0.6, label='Normal Distribution Fit')
+                except:
+                    pass  # Skip normal overlay if scipy not available or test fails
+            
+            # Add outlier detection visualization (IQR method)
+            q1 = np.percentile(valid_processed, 25)
+            q3 = np.percentile(valid_processed, 75)
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            outliers = valid_processed[(valid_processed < lower_bound) | (valid_processed > upper_bound)]
+            
+            if len(outliers) > 0:
+                ax.axvspan(lower_bound, upper_bound, alpha=0.1, color='green', label='Normal Range (IQR)')
+                ax.scatter(outliers, np.zeros_like(outliers) + max(n) * 0.05, 
+                          color='red', marker='x', s=50, alpha=0.7, zorder=5, label=f'Outliers ({len(outliers)})')
+            
+            # Professional styling
+            curve_unit = self.curve_info.get(curve, {}).get('unit', '')
+            ax.set_xlabel(f'{curve} ({curve_unit})', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Frequency', fontsize=12, fontweight='bold')
+            
+            if has_processed:
+                ax.set_title(f'Distribution Analysis: {curve} (Processed)', fontsize=14, fontweight='bold')
+            else:
+                ax.set_title(f'Distribution Analysis: {curve} (Original)', fontsize=14, fontweight='bold')
+            
+            # Add statistics text box
+            stats_text = f'Statistics:\n'
+            stats_text += f'Mean: {mean_val:.3f}\n'
+            stats_text += f'Median: {median_val:.3f}\n'
+            stats_text += f'Std Dev: {std_val:.3f}\n'
+            stats_text += f'Min: {min_val:.3f}\n'
+            stats_text += f'Max: {max_val:.3f}\n'
+            stats_text += f'Count: {len(valid_processed):,}\n'
+            if len(outliers) > 0:
+                stats_text += f'Outliers: {len(outliers)} ({len(outliers)/len(valid_processed)*100:.1f}%)'
+            
+            ax.text(0.98, 0.98, stats_text, transform=ax.transAxes, 
+                   verticalalignment='top', horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                   fontsize=10, family='monospace')
+            
+            ax.legend(loc=LABEL_UPPER_LEFT, fontsize=10)
+            ax.grid(True, alpha=0.3)
+            
+            self.fig.tight_layout()
+            
+            # Create canvas if embedded
+            if hasattr(self, 'viz_content') and self.viz_content:
+                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
+                self.canvas.draw()
+                
+                if NavigationToolbar2Tk:
+                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
+                    toolbar.update()
+                    toolbar.pack(side='top', fill='x')
+                
+                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
+            
+            self.log_processing(f"Histogram visualization created: {curve}")
+            
+        except Exception as e:
+            self.log_processing(f"Error in histogram visualization: {e}")
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, f"Failed to create histogram plot:\n{e}")
+    
     def plot_correlation_matrix(self):
         """Plot correlation matrix for all processed curves"""
         if self.processed_data is None:
@@ -16977,7 +17399,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     if mid_point < len(valid_data):
                         current_ax.annotate(f'{missing_percent:.1f}% missing',
                                           xy=(valid_data[mid_point], valid_depth[mid_point]),
-                                          xytext=(10, 10), textcoords='offset points',
+                                          xytext=(10, 10), textcoords=LABEL_OFFSET_POINTS,
                                           bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7),
                                           fontsize=8, color='black')
             
@@ -17080,7 +17502,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 bars = ax3.bar(status_counts.keys(), status_counts.values(), 
                               color=['lightblue', 'lightcoral'], alpha=0.7)
                 ax3.set_title('Processing Status', fontweight='bold')
-                ax3.set_ylabel('Number of Curves')
+                ax3.set_ylabel(LABEL_NUMBER_OF_CURVES)
                 
                 # Add value labels on bars
                 for bar in bars:
@@ -17103,7 +17525,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 
                 bars = ax4.bar(range(len(types)), counts, color='lightgreen', alpha=0.7)
                 ax4.set_title('Curve Type Distribution', fontweight='bold')
-                ax4.set_ylabel('Number of Curves')
+                ax4.set_ylabel(LABEL_NUMBER_OF_CURVES)
                 ax4.set_xticks(range(len(types)))
                 ax4.set_xticklabels(types, rotation=45, ha='right')
                 
@@ -17142,161 +17564,39 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.log_processing(f"Error in plot_curve_quality_overview: {e}")
 
     def plot_curve_comparison_all(self):
-        """Plot all curves for comparison, including unprocessed ones"""
-        if self.current_data is None:
-            messagebox.showwarning("Warning", "No data loaded for comparison")
-            return
+        """Plot all curves for comparison, including unprocessed ones
         
-        try:
-            self.cleanup_visualization()
-            self.ensure_figure_exists()
-            
-            # Get all non-depth curves
-            curves = []
-            depth_curve = None
-            
-            for curve in self.current_data.columns:
-                curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
-                if 'DEPTH' in curve_type:
-                    depth_curve = curve
-                else:
-                    curves.append(curve)
-            
-            if not curves:
-                messagebox.showwarning("Warning", "No non-depth curves available for comparison")
-                return
-            
-            # Use depth curve or create index-based depth
-            if depth_curve:
-                depth_data = self.current_data[depth_curve].values
-                depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
-                y_label = f'Depth ({depth_unit})'
-            else:
-                depth_data = np.arange(len(self.current_data))
-                y_label = 'Depth (index)'
-            
-            # Create subplots for better organization
-            num_curves = len(curves)
-            num_cols = min(3, num_curves)
-            num_rows = (num_curves + num_cols - 1) // num_cols
-            
-            # Clear figure and create subplots
-            self.fig.clear()
-            
-            for i, curve in enumerate(curves):
-                ax = self.fig.add_subplot(num_rows, num_cols, i + 1)
-                
-                # Plot the curve
-                curve_data = self.current_data[curve].values
-                curve_type = self.curve_info.get(curve, {}).get('curve_type', 'UNKNOWN')
-                curve_family = curve_type.split('_')[0] if '_' in curve_type else 'UNKNOWN'
-                
-                # Determine color and styling
-                industry_colors = PHYSICAL_CONSTANTS.LOG_COLORS
-                if curve_family in industry_colors:
-                    color = industry_colors[curve_family]
-                else:
-                    color = plt.cm.tab10.colors[i % len(plt.cm.tab10.colors)]
-                
-                # Determine line style based on quality
-                quality = self.curve_info.get(curve, {}).get('quality', 'UNKNOWN')
-                if quality == 'Poor':
-                    line_style = '--'
-                    alpha = 0.6
-                elif quality == 'Fair':
-                    line_style = '-.'
-                    alpha = 0.8
-                else:
-                    line_style = '-'
-                    alpha = 1.0
-                
-                # Plot with appropriate scale
-                valid_mask = ~np.isnan(curve_data) & np.isfinite(curve_data)
-                if np.any(valid_mask):
-                    valid_data = curve_data[valid_mask]
-                    valid_depth = depth_data[valid_mask]
-                    
-                    # Check if curve should use log scale
-                    use_log_scale = curve_family in ['RESISTIVITY', 'PERMEABILITY']
-                    
-                    if use_log_scale and np.all(valid_data > 0):
-                        ax.set_xscale('log')
-                        ax.plot(valid_data, valid_depth, color=color, linestyle=line_style,
-                               alpha=alpha, linewidth=1.5)
-                    else:
-                        ax.plot(valid_data, valid_depth, color=color, linestyle=line_style,
-                               alpha=alpha, linewidth=1.5)
-                    
-                    # Add quality indicator
-                    missing_percent = self.curve_info.get(curve, {}).get('missing_percent', 0)
-                    if missing_percent > 50:
-                        ax.text(0.02, 0.98, f'{missing_percent:.1f}% missing',
-                               transform=ax.transAxes, verticalalignment='top',
-                               bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7),
-                               fontsize=8)
-                
-                # Set subplot properties
-                ax.set_title(curve, fontsize=10, fontweight='bold')
-                ax.invert_yaxis()
-                ax.grid(True, alpha=0.3)
-                
-                # Only show depth labels on leftmost subplots
-                if i % num_cols == 0:
-                    ax.set_ylabel(y_label)
-                else:
-                    ax.set_ylabel('')
-                
-                # Only show x-axis labels on bottom subplots
-                if i >= num_curves - num_cols:
-                    ax.set_xlabel('Value')
-                else:
-                    ax.set_xlabel('')
-            
-            self.fig.suptitle('All Curves Comparison', fontsize=16, fontweight='bold')
-            plt.tight_layout()
-            
-            # Create canvas display for embedded visualization
-            if hasattr(self, 'viz_content') and self.viz_content:
-                # Clean up any existing widgets in viz_content
-                for widget in self.viz_content.winfo_children():
-                    widget.destroy()
-                self.canvas = None
-                
-                # Create canvas using existing professional pattern
-                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
-                self.canvas.draw()
-                
-                # Create navigation toolbar for professional interaction
-                if NavigationToolbar2Tk:
-                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
-                    toolbar.update()
-                    toolbar.pack(side='top', fill='x')
-                
-                # Pack canvas below toolbar
-                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
-            
-        except Exception as e:
-            messagebox.showerror("Curve Comparison Error", f"Failed to create curve comparison: {str(e)}")
-            self.log_processing(f"Error in plot_curve_comparison_all: {e}")
+        DEPRECATED: This visualization has been replaced by 'multi_curve' (for selected curves)
+        and 'quality_overview' (for comprehensive analysis). This function is kept for backward
+        compatibility but will show a deprecation message.
+        """
+        messagebox.showinfo("Visualization Update", 
+                          "The 'curve_comparison_all' visualization has been replaced.\n\n"
+                          "Please use:\n"
+                          "- 'multi_curve' for selected curves in organized tracks\n"
+                          "- 'quality_overview' for comprehensive quality analysis\n\n"
+                          "This function is deprecated and will be removed in a future version.")
+        return
 
     # ============================================================================
     # NEW SINGLE CURVE VISUALIZATION METHODS
     # ============================================================================
     
     def plot_single_curve(self, curve: str):
-        """Create a large, detailed view of a single curve for professional inspection.
+        """Create a large, detailed view of a single curve with original vs processed comparison.
         
         Features:
         - Large figure (12x10) for excellent readability
         - Depth-based plotting (industry standard)
+        - Original vs Processed comparison
         - Statistical annotations
         - Gap indicators
         - Quality metrics overlay
         - Processing status indication
         """
         try:
-            # Check if curve exists
-            if curve not in self.current_data.columns:
+            # Check if curve exists in original data
+            if self.current_data is None or curve not in self.current_data.columns:
                 messagebox.showwarning("Warning", f"Curve '{curve}' not found in data")
                 return
             
@@ -17307,18 +17607,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             # Create main axis
             ax = self.fig.add_subplot(111)
-            
-            # Get curve data
-            if curve in self.processing_results:
-                curve_data = self.processing_results[curve]['final_data']
-                status = 'Processed'
-                color = 'blue'
-                linewidth = 2.0
-            else:
-                curve_data = self.current_data[curve].values
-                status = 'Original (Not Yet Processed)'
-                color = 'red'
-                linewidth = 1.5
             
             # Get depth data
             depth_curve = None
@@ -17333,26 +17621,64 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
                 y_label = f'Depth ({depth_unit})'
             else:
-                depth = np.arange(len(curve_data))
-                y_label = 'Depth (index)'
+                depth = np.arange(len(self.current_data))
+                y_label = 'Sample Index'
             
-            # Plot curve with depth on Y-axis
-            ax.plot(curve_data, depth, color=color, linewidth=linewidth, label=status, alpha=0.9)
+            # Plot original data
+            original_data = self.current_data[curve].values
+            ax.plot(original_data, depth, color='red', linewidth=1.5, 
+                   alpha=0.7, label='Original', linestyle='-')
             
-            # Highlight gaps
-            gap_mask = np.isnan(curve_data)
+            # Plot processed data if available
+            if (self.processed_data is not None and 
+                curve in self.processed_data.columns):
+                processed_data = self.processed_data[curve].values
+                ax.plot(processed_data, depth, color='blue', linewidth=2.0, 
+                       label='Processed', linestyle='-')
+                
+                # Add processing quality info if available
+                if curve in self.processing_results:
+                    quality = self.processing_results[curve].get('quality_score', 0)
+                    methods = self.processing_results[curve].get('methods_used', [])
+                    status = f'Processed (Quality: {quality:.2f})'
+                    if methods:
+                        status += f' - Methods: {", ".join(methods[:3])}'
+                else:
+                    status = 'Processed'
+            else:
+                status = 'Original (Not Yet Processed)'
+            
+            # Set proper axis limits based on data range
+            all_data = [original_data]
+            if (self.processed_data is not None and curve in self.processed_data.columns):
+                all_data.append(self.processed_data[curve].values)
+            
+            combined_data = np.concatenate([d[~np.isnan(d)] for d in all_data])
+            if len(combined_data) > 0:
+                data_min, data_max = np.min(combined_data), np.max(combined_data)
+                data_range = data_max - data_min
+                if data_range > 0:
+                    padding = data_range * 0.05
+                    ax.set_xlim(data_min - padding, data_max + padding)
+                else:
+                    ax.set_xlim(data_min - 1, data_min + 1)
+            
+            # Highlight gaps in original data
+            gap_mask = np.isnan(original_data)
             if np.any(gap_mask):
                 gap_indices = np.where(gap_mask)[0]
                 if len(gap_indices) > 0:
-                    ax.scatter(np.zeros(len(gap_indices)), depth[gap_indices], 
-                             color='orange', s=10, alpha=0.5, label='Missing Data', zorder=1)
+                    ax.scatter(np.full(len(gap_indices), data_min if len(combined_data) > 0 else 0), 
+                             depth[gap_indices], color='orange', s=10, alpha=0.5, 
+                             label=LABEL_MISSING_DATA, zorder=1)
             
             # Set title and labels
             curve_info = self.curve_info.get(curve, {})
             curve_type = curve_info.get('curve_type', 'UNKNOWN')
             unit = curve_info.get('unit', '')
             
-            ax.set_title(f'{curve} - {curve_type}\n({status})', fontsize=14, fontweight='bold')
+            ax.set_title(f'{curve} - {curve_type}\nOriginal vs Processed Comparison', 
+                        fontsize=14, fontweight='bold')
             ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
             ax.set_ylabel(y_label, fontsize=12)
             
@@ -17365,55 +17691,27 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Invert Y-axis (industry standard)
             ax.invert_yaxis()
             
-            # Add statistics text box
-            valid_data = curve_data[~np.isnan(curve_data)]
-            if len(valid_data) > 0:
-                stats = curve_info.get('statistics', {})
-                quality = "Unknown"
-                missing_pct = stats.get('missing_percent', 0.0)
+            # Add processing statistics if available
+            if curve in self.processing_results:
+                result = self.processing_results[curve]
+                quality = result.get('quality_score', 0)
+                methods = result.get('methods_used', [])
                 
-                if missing_pct < 5.0:
-                    quality = "Excellent"
-                elif missing_pct < 15.0:
-                    quality = "Good"
-                elif missing_pct < 30.0:
-                    quality = "Fair"
-                else:
-                    quality = "Poor"
+                stats_text = f'Quality Score: {quality:.2f}'
+                if methods:
+                    stats_text += f'\nMethods: {", ".join(methods[:2])}'
                 
-                stats_text = (
-                    f"Statistics:\n"
-                    f"  Min: {stats.get('min', 0):.2f}\n"
-                    f"  Max: {stats.get('max', 0):.2f}\n"
-                    f"  Mean: {stats.get('mean', 0):.2f}\n"
-                    f"  Std: {stats.get('std', 0):.2f}\n"
-                    f"  Missing: {missing_pct:.1f}%\n"
-                    f"  Quality: {quality}"
-                )
-                
-                ax.text(0.98, 0.02, stats_text, transform=ax.transAxes,
-                       fontsize=9, verticalalignment='bottom', horizontalalignment='right',
-                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.85, edgecolor='gray'))
+                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                       verticalalignment='top', bbox=dict(boxstyle='round', 
+                       facecolor='lightblue', alpha=0.8), fontsize=9)
             
-            self.fig.tight_layout()
-            
-            # Create canvas and display in viz_content
-            if hasattr(self, 'viz_content') and self.viz_content:
-                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
-                self.canvas.draw()
-                
-                # Create navigation toolbar
-                if NavigationToolbar2Tk is not None:
-                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
-                    toolbar.update()
-                    toolbar.pack(side='top', fill='x')
-                
-                # Pack canvas below toolbar
-                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
+            # Update display
+            self.canvas.draw()
+            self.log_processing(f"Single curve visualization updated: {curve} - {status}")
             
         except Exception as e:
-            messagebox.showerror("Single Curve Plot Error", f"Failed to create single curve plot: {str(e)}")
-            self.log_processing(f"Error in plot_single_curve: {e}")
+            self.log_processing(f"Error in single curve visualization: {e}")
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, f"Failed to create single curve plot:\n{e}")
     
     def plot_single_curve_comparison(self):
         """Create a side-by-side comparison of two single curves for easy visual comparison.
@@ -17531,20 +17829,6 @@ This ensures consistent data interpretation and fixes depth validation issues.
             self.fig.tight_layout()
             self.fig.subplots_adjust(top=0.93, wspace=0.30)
             
-            # Create canvas and display in viz_content
-            if hasattr(self, 'viz_content') and self.viz_content:
-                self.canvas = FigureCanvasTkAgg(self.fig, self.viz_content)
-                self.canvas.draw()
-                
-                # Create navigation toolbar
-                if NavigationToolbar2Tk is not None:
-                    toolbar = NavigationToolbar2Tk(self.canvas, self.viz_content)
-                    toolbar.update()
-                    toolbar.pack(side='top', fill='x')
-                
-                # Pack canvas below toolbar
-                self.canvas.get_tk_widget().pack(side='bottom', fill='both', expand=True)
-            
         except Exception as e:
             messagebox.showerror("Single Curve Comparison Error", f"Failed to create comparison plot: {str(e)}")
             self.log_processing(f"Error in plot_single_curve_comparison: {e}")
@@ -17594,7 +17878,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 '3d_visualization': (12, 10),
                 'multi_curve': (16, 10),
                 'unprocessed_curves': (14, 10),
-                'curve_comparison_all': (16, 10),
+                'histogram': (12, 9),
                 'uncertainty': (12, 9)
             }
             
@@ -17636,6 +17920,18 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 self._plot_quality_overview_popup(fig)
             elif viz_type == "unprocessed_curves":
                 self._plot_unprocessed_curves_popup(fig)
+            elif viz_type == "correlation_matrix":
+                self._plot_correlation_matrix_popup(fig)
+            elif viz_type == "scatter_plot":
+                self._plot_scatter_plot_popup(fig, curve)
+            elif viz_type == "3d_visualization":
+                self._plot_3d_visualization_popup(fig, curve)
+            elif viz_type == "quality_metrics":
+                self._plot_quality_metrics_popup(fig)
+            elif viz_type == "uncertainty":
+                self._plot_uncertainty_popup(fig, curve)
+            elif viz_type == "histogram":
+                self._plot_histogram_popup(fig, curve)
             else:
                 # For other types, show message
                 ax = fig.add_subplot(111)
@@ -17670,79 +17966,175 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     # Clean up canvas and toolbar
                     try:
                         toolbar.destroy()
-                    except:
-                        pass
+                    except (tk.TclError, AttributeError) as toolbar_error:
+                        # Toolbar may already be destroyed or accessed incorrectly
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"Warning: Toolbar cleanup failed: {type(toolbar_error).__name__}: {str(toolbar_error)}")
+                    except Exception as toolbar_error:
+                        # Unexpected error - log for debugging
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"Warning: Unexpected error cleaning up toolbar: {type(toolbar_error).__name__}: {str(toolbar_error)}")
+                    
                     try:
                         canvas.get_tk_widget().destroy()
-                    except:
-                        pass
+                    except (tk.TclError, AttributeError) as canvas_error:
+                        # Canvas widget may already be destroyed or accessed incorrectly
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"Warning: Canvas cleanup failed: {type(canvas_error).__name__}: {str(canvas_error)}")
+                    except Exception as canvas_error:
+                        # Unexpected error - log for debugging
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"Warning: Unexpected error cleaning up canvas: {type(canvas_error).__name__}: {str(canvas_error)}")
+                    
                     # Close figure properly (import plt here to ensure availability)
                     try:
                         import matplotlib.pyplot as plt
                         plt.close(fig)
-                    except:
-                        pass
+                    except (AttributeError, ImportError) as plt_error:
+                        # Matplotlib may not be available or figure already closed
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"Warning: Figure cleanup failed: {type(plt_error).__name__}: {str(plt_error)}")
+                    except Exception as plt_error:
+                        # Unexpected error - log for debugging
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"Warning: Unexpected error closing figure: {type(plt_error).__name__}: {str(plt_error)}")
+                    
                     # Destroy window
                     popup.destroy()
                     # Garbage collection
                     gc.collect()
                     self.log_processing(f"Closed popup visualization: {viz_type}")
                 except Exception as cleanup_error:
-                    self.log_processing(f"Warning during popup cleanup: {cleanup_error}")
+                    self.log_processing(f"Warning during popup cleanup: {type(cleanup_error).__name__}: {str(cleanup_error)}")
                     # Force destroy even if cleanup fails
                     try:
                         popup.destroy()
-                    except:
-                        pass
+                    except (tk.TclError, AttributeError) as destroy_error:
+                        # Window may already be destroyed
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"Warning: Popup window destruction failed: {type(destroy_error).__name__}: {str(destroy_error)}")
+                    except Exception as destroy_error:
+                        # Unexpected error - log for debugging
+                        if hasattr(self, 'log_processing'):
+                            self.log_processing(f"Warning: Unexpected error destroying popup window: {type(destroy_error).__name__}: {str(destroy_error)}")
             
             popup.protocol("WM_DELETE_WINDOW", on_close)
             
             self.log_processing(f"Opened {viz_type} visualization in Toplevel window (proper memory management)")
             
         except Exception as e:
-            err_msg = (
-                f"Failed to open visualization in new window:\n{str(e)}\n\n"
-                f"Details: Check that data is loaded and processed.\n"
-                f"Try unchecking 'Open in new window' to use embedded mode."
-            )
             try:
                 self.root.after(0, lambda: messagebox.showerror(
-                    "Popup Visualization Error", err_msg
+                    "Popup Visualization Error",
+                    f"Failed to open visualization in new window:\n{str(e)}\n\n"
+                    f"Details: Check that data is loaded and processed.\n"
+                    f"Try unchecking 'Open in new window' to use embedded mode."
                 ))
             except Exception:
-                messagebox.showerror("Popup Visualization Error", err_msg)
-            self.log_processing(f"ERROR: Failed to create popup visualization: {e}")
+                messagebox.showerror(
+                    "Popup Visualization Error",
+                    f"Failed to open visualization in new window:\n{str(e)}\n\n"
+                    f"Details: Check that data is loaded and processed.\n"
+                    f"Try unchecking 'Open in new window' to use embedded mode."
+                )
+            self.log_processing(f"Error creating popup visualization: {e}")
             import traceback
             self.log_processing(f"Traceback: {traceback.format_exc()}")
     
     # Simplified popup plotting methods (delegate to matplotlib's popup system)
     def _plot_single_curve_popup(self, fig, curve):
-        """Plot single curve in popup window"""
+        """Plot single curve in popup window with original vs processed comparison"""
         ax = fig.add_subplot(111)
         
-        # Get data and plot - check processed first, then current
-        if self.processing_results and curve in self.processing_results:
-            data = self.processing_results[curve]['final_data']
-            color, status = 'blue', 'Processed'
-        elif self.processed_data is not None and curve in self.processed_data.columns:
-            data = self.processed_data[curve].values
-            color, status = 'green', 'Processed'
-        elif self.current_data is not None and curve in self.current_data.columns:
-            data = self.current_data[curve].values
-            color, status = 'red', 'Original'
-        else:
+        # Check if curve exists in original data
+        if self.current_data is None or curve not in self.current_data.columns:
             ax.text(0.5, 0.5, f"Curve '{curve}' not found in data", 
                    ha='center', va='center', fontsize=12)
             return
         
         depth = self._get_depth_array()
-        ax.plot(data, depth, color=color, linewidth=2, label=status)
-        ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
-        ax.set_ylabel('Depth (m)')
-        ax.set_title(f"{curve} - {status}", fontsize=14, fontweight='bold')
-        ax.invert_yaxis()
+        
+        # Plot original data
+        original_data = self.current_data[curve].values
+        ax.plot(original_data, depth, color='red', linewidth=1.5, 
+               alpha=0.7, label='Original', linestyle='-')
+        
+        # Plot processed data if available
+        if (self.processed_data is not None and curve in self.processed_data.columns):
+            processed_data = self.processed_data[curve].values
+            ax.plot(processed_data, depth, color='blue', linewidth=2.0, 
+                   label='Processed', linestyle='-')
+            
+            # Add processing quality info if available
+            if curve in self.processing_results:
+                quality = self.processing_results[curve].get('quality_score', 0)
+                methods = self.processing_results[curve].get('methods_used', [])
+                status = f'Processed (Quality: {quality:.2f})'
+                if methods:
+                    status += f' - Methods: {", ".join(methods[:3])}'
+            else:
+                status = 'Processed'
+        else:
+            status = 'Original (Not Yet Processed)'
+        
+        # Set proper axis limits based on data range
+        all_data = [original_data]
+        if (self.processed_data is not None and curve in self.processed_data.columns):
+            all_data.append(self.processed_data[curve].values)
+        
+        combined_data = np.concatenate([d[~np.isnan(d)] for d in all_data])
+        if len(combined_data) > 0:
+            data_min, data_max = np.min(combined_data), np.max(combined_data)
+            data_range = data_max - data_min
+            if data_range > 0:
+                padding = data_range * 0.05
+                ax.set_xlim(data_min - padding, data_max + padding)
+            else:
+                ax.set_xlim(data_min - 1, data_min + 1)
+        
+        # Highlight gaps in original data
+        gap_mask = np.isnan(original_data)
+        if np.any(gap_mask):
+            gap_indices = np.where(gap_mask)[0]
+            if len(gap_indices) > 0:
+                data_min = np.min(combined_data) if len(combined_data) > 0 else 0
+                ax.scatter(np.full(len(gap_indices), data_min), 
+                         depth[gap_indices], color='orange', s=10, alpha=0.5, 
+                         label=LABEL_MISSING_DATA, zorder=1)
+        
+        # Set title and labels
+        curve_info = self.curve_info.get(curve, {})
+        curve_type = curve_info.get('curve_type', 'UNKNOWN')
+        unit = curve_info.get('unit', '')
+        
+        ax.set_title(f'{curve} - {curve_type}\nOriginal vs Processed Comparison', 
+                    fontsize=14, fontweight='bold')
+        ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
+        ax.set_ylabel(LABEL_DEPTH_M, fontsize=12)
+        
+        # Add legend
+        ax.legend(loc='best', fontsize=10)
+        
+        # Add grid
         ax.grid(True, alpha=0.3)
-        ax.legend()
+        
+        # Invert Y-axis (industry standard)
+        ax.invert_yaxis()
+        
+        # Add processing statistics if available
+        if curve in self.processing_results:
+            result = self.processing_results[curve]
+            quality = result.get('quality_score', 0)
+            methods = result.get('methods_used', [])
+            
+            stats_text = f'Quality Score: {quality:.2f}'
+            if methods:
+                stats_text += f'\nMethods: {", ".join(methods[:2])}'
+            
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                   verticalalignment='top', bbox=dict(boxstyle='round', 
+                   facecolor='lightblue', alpha=0.8), fontsize=9)
+        
         fig.tight_layout()
     
     def _plot_single_curve_comparison_popup(self, fig):
@@ -17760,7 +18152,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
         ax1.plot(data1, depth, 'b-', linewidth=2)
         ax1.set_title(curve1, fontsize=12, fontweight='bold')
         ax1.set_xlabel(f"{curve1}")
-        ax1.set_ylabel('Depth (m)')
+        ax1.set_ylabel(LABEL_DEPTH_M)
         ax1.invert_yaxis()
         ax1.grid(True, alpha=0.3)
         
@@ -17790,7 +18182,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
         
         ax.set_title(f"Comparison: {curve}", fontsize=14, fontweight='bold')
         ax.set_xlabel(f"{curve}")
-        ax.set_ylabel('Depth (m)')
+        ax.set_ylabel(LABEL_DEPTH_M)
         ax.invert_yaxis()
         ax.grid(True, alpha=0.3)
         ax.legend()
@@ -17811,11 +18203,11 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 data = self.current_data[curve].values
                 ax.plot(data, depth, label=curve, linewidth=1.5, alpha=0.8)
         
-        ax.set_ylabel('Depth (m)')
+        ax.set_ylabel(LABEL_DEPTH_M)
         ax.set_title("Multi-Curve Display", fontsize=14, fontweight='bold')
         ax.invert_yaxis()
         ax.grid(True, alpha=0.3)
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc=LABEL_UPPER_LEFT)
         fig.tight_layout()
     
     def _plot_log_display_popup(self, fig):
@@ -17874,7 +18266,12 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             # CRITICAL: Convert null values to NaN for proper line breaking
             # This creates gaps where data is missing instead of drawing lines
-            curve_data = self._convert_nulls_to_nan(curve_data)
+            if hasattr(self, '_convert_nulls_to_nan'):
+                curve_data = self._convert_nulls_to_nan(curve_data)
+            else:
+                # Fallback: replace common null values with NaN
+                null_value = -999.25
+                curve_data = np.where(curve_data == null_value, np.nan, curve_data)
             
             # Skip if entire curve is NaN
             if np.all(np.isnan(curve_data)):
@@ -17899,6 +18296,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             ax.legend(loc='best', fontsize=8, framealpha=0.9)
         
         # Add info text
+        null_value = -999.25
         info_text = (
             f"Depth Range: {depth_min:.1f} - {depth_max:.1f} {depth_unit}\n"
             f"Total Depth Points: {len(depth)}\n"
@@ -17911,42 +18309,391 @@ This ensures consistent data interpretation and fixes depth validation issues.
         
         fig.tight_layout()
     
-    def _get_depth_array(self) -> np.ndarray:
-        """Get depth array for plotting with proper fallback handling.
-
-        Prefers processed_data when available, otherwise current_data.
-
-        Returns:
-            np.ndarray: Depth array from data if available, otherwise index array.
-        """
+    def _plot_correlation_matrix_popup(self, fig):
+        """Plot correlation matrix with professional styling"""
+        ax = fig.add_subplot(111)
+        
+        if self.processed_data is None or len(self.processed_data.columns) < 2:
+            ax.text(0.5, 0.5, "Need at least 2 curves for correlation matrix", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        # Calculate correlation matrix
+        numeric_data = self.processed_data.select_dtypes(include=[np.number])
+        correlation_matrix = numeric_data.corr()
+        
+        # Use seaborn for professional heatmap
+        sns.heatmap(correlation_matrix, annot=True, cmap='RdBu_r', center=0,
+                   square=True, ax=ax, cbar_kws={'shrink': 0.8},
+                   fmt='.2f', annot_kws={'size': 8})
+        
+        ax.set_title('Curve Correlation Matrix', fontsize=14, fontweight='bold', pad=20)
+        fig.tight_layout()
+    
+    def _plot_scatter_plot_popup(self, fig, curve):
+        """Plot scatter plot with proper industry styling"""
+        ax = fig.add_subplot(111)
+        
+        if self.processed_data is None or curve not in self.processed_data.columns:
+            ax.text(0.5, 0.5, f"Curve '{curve}' not available for scatter plot", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        # Get depth and curve data
+        depth = self._get_depth_array()
+        data = self.processed_data[curve].values
+        
+        # Remove NaN values
+        valid_mask = ~(np.isnan(data) | np.isnan(depth))
+        if not np.any(valid_mask):
+            ax.text(0.5, 0.5, "No valid data points for scatter plot", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        # Create scatter plot with color gradient by depth (industry standard)
+        scatter = ax.scatter(data[valid_mask], depth[valid_mask], 
+                           c=depth[valid_mask], cmap='viridis', 
+                           alpha=0.7, s=20, edgecolors='none')
+        
+        # Add colorbar for depth reference
+        cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
+        cbar.set_label(LABEL_DEPTH_M, rotation=270, labelpad=20)
+        
+        # Set proper axis limits
+        data_min, data_max = np.nanmin(data[valid_mask]), np.nanmax(data[valid_mask])
+        if data_max > data_min:
+            padding = (data_max - data_min) * 0.05
+            ax.set_xlim(data_min - padding, data_max + padding)
+        
+        ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
+        ax.set_ylabel(LABEL_DEPTH_M)
+        ax.set_title(f'{curve} vs Depth Scatter Plot', fontsize=14, fontweight='bold')
+        ax.invert_yaxis()  # Industry standard: depth downward
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+    
+    def _plot_3d_visualization_popup(self, fig, curve):
+        """Plot 3D visualization (depth vs curve vs another curve)"""
         try:
-            data_source = None
-            if hasattr(self, 'processed_data') and self.processed_data is not None:
-                data_source = self.processed_data
-            elif hasattr(self, 'current_data') and self.current_data is not None:
-                data_source = self.current_data
-
+            from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+        except Exception:
+            ax = fig.add_subplot(111)
+            ax.text(0.5, 0.5, '3D toolkit unavailable (matplotlib.mplot3d). Use embedded 2D plots.',
+                    ha='center', va='center')
+            ax.axis('off')
+            fig.tight_layout()
+            return
+        
+        ax = fig.add_subplot(111, projection='3d')
+        
+        if self.processed_data is None or len(self.processed_data.columns) < 2:
+            ax.text(0.5, 0.5, 0.5, "Need at least 2 curves for 3D visualization", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        # Get first two numeric curves for 3D plot
+        numeric_cols = self.processed_data.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) < 2:
+            ax.text(0.5, 0.5, 0.5, "Need numeric curves for 3D plot", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        curve1, curve2 = numeric_cols[0], numeric_cols[1]
+        if curve in numeric_cols:
+            curve1 = curve
+        
+        depth = self._get_depth_array()
+        data1 = self.processed_data[curve1].values
+        data2 = self.processed_data[curve2].values
+        
+        # Remove NaN values
+        valid_mask = ~(np.isnan(data1) | np.isnan(data2) | np.isnan(depth))
+        if not np.any(valid_mask):
+            ax.text(0.5, 0.5, 0.5, "No valid data for 3D plot", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        # Create 3D scatter plot
+        ax.scatter(data1[valid_mask], data2[valid_mask], depth[valid_mask],
+                  c=depth[valid_mask], cmap='viridis', alpha=0.7, s=10)
+        
+        ax.set_xlabel(f"{curve1} ({self.curve_info.get(curve1, {}).get('unit', '')})")
+        ax.set_ylabel(f"{curve2} ({self.curve_info.get(curve2, {}).get('unit', '')})")
+        ax.set_zlabel(LABEL_DEPTH_M)
+        ax.set_title(f'3D Plot: {curve1} vs {curve2} vs Depth', fontsize=14, fontweight='bold')
+        ax.invert_zaxis()  # Industry standard: depth downward
+        fig.tight_layout()
+    
+    def _plot_quality_metrics_popup(self, fig):
+        """Plot quality metrics dashboard"""
+        if not hasattr(self, 'processing_results') or not self.processing_results:
+            ax = fig.add_subplot(111)
+            ax.text(0.5, 0.5, "No processing results available for quality metrics", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        # Create subplots for different quality metrics
+        gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+        
+        # Quality scores bar chart
+        ax1 = fig.add_subplot(gs[0, 0])
+        curves = list(self.processing_results.keys())
+        scores = [self.processing_results[curve].get('quality_score', 0) for curve in curves]
+        
+        bars = ax1.bar(range(len(curves)), scores, color='steelblue', alpha=0.7)
+        ax1.set_xticks(range(len(curves)))
+        ax1.set_xticklabels(curves, rotation=45, ha='right')
+        ax1.set_ylabel('Quality Score')
+        ax1.set_title('Processing Quality Scores', fontweight='bold')
+        ax1.grid(True, alpha=0.3)
+        
+        # Add value labels on bars
+        for bar, score in zip(bars, scores):
+            ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                    f'{score:.2f}', ha='center', va='bottom', fontsize=8)
+        
+        # Processing methods used
+        ax2 = fig.add_subplot(gs[0, 1])
+        methods_used = {}
+        for curve, result in self.processing_results.items():
+            for method in result.get('methods_used', []):
+                methods_used[method] = methods_used.get(method, 0) + 1
+        
+        if methods_used:
+            method_names = list(methods_used.keys())
+            method_counts = list(methods_used.values())
+            ax2.pie(method_counts, labels=method_names, autopct='%1.1f%%', startangle=90)
+            ax2.set_title('Processing Methods Used', fontweight='bold')
+        
+        # Data completeness
+        ax3 = fig.add_subplot(gs[1, :])
+        completeness = []
+        for curve in curves:
+            if curve in self.processed_data.columns:
+                total_points = len(self.processed_data[curve])
+                valid_points = self.processed_data[curve].count()
+                completeness.append(valid_points / total_points * 100)
+            else:
+                completeness.append(0)
+        
+        bars = ax3.bar(range(len(curves)), completeness, color='forestgreen', alpha=0.7)
+        ax3.set_xticks(range(len(curves)))
+        ax3.set_xticklabels(curves, rotation=45, ha='right')
+        ax3.set_ylabel('Data Completeness (%)')
+        ax3.set_title('Data Completeness by Curve', fontweight='bold')
+        ax3.grid(True, alpha=0.3)
+        ax3.set_ylim(0, 100)
+        
+        # Add value labels
+        for bar, comp in zip(bars, completeness):
+            ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                    f'{comp:.1f}%', ha='center', va='bottom', fontsize=8)
+        
+        fig.suptitle('Quality Metrics Dashboard', fontsize=16, fontweight='bold')
+        fig.tight_layout()
+    
+    def _plot_uncertainty_popup(self, fig, curve):
+        """Plot uncertainty analysis for a curve"""
+        ax = fig.add_subplot(111)
+        
+        if (not hasattr(self, 'processing_results') or 
+            not self.processing_results or 
+            curve not in self.processing_results):
+            ax.text(0.5, 0.5, f"No uncertainty data available for '{curve}'", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        result = self.processing_results[curve]
+        depth = self._get_depth_array()
+        
+        # Get processed data and uncertainty estimates
+        if 'final_data' in result:
+            data = result['final_data']
+            
+            # Plot main curve
+            ax.plot(data, depth, color='blue', linewidth=2, label=f'{curve} (processed)')
+            
+            # Add uncertainty bands if available
+            if 'uncertainty' in result:
+                uncertainty = result['uncertainty']
+                ax.fill_betweenx(depth, data - uncertainty, data + uncertainty,
+                               alpha=0.3, color='blue', label='±1σ Uncertainty')
+            
+            # Add original data for comparison if available
+            if (self.current_data is not None and 
+                curve in self.current_data.columns):
+                original_data = self.current_data[curve].values
+                ax.plot(original_data, depth, color='red', alpha=0.7, 
+                       linewidth=1, label=f'{curve} (original)')
+            
+            # Set proper axis limits
+            data_min, data_max = np.nanmin(data), np.nanmax(data)
+            if data_max > data_min:
+                padding = (data_max - data_min) * 0.05
+                ax.set_xlim(data_min - padding, data_max + padding)
+            
+            ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
+            ax.set_ylabel(LABEL_DEPTH_M)
+            ax.set_title(f'{curve} - Uncertainty Analysis', fontsize=14, fontweight='bold')
+            ax.invert_yaxis()  # Industry standard: depth downward
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+        else:
+            ax.text(0.5, 0.5, f"No processed data available for '{curve}'", 
+                   ha='center', va='center', fontsize=12)
+        
+        fig.tight_layout()
+    
+    def _plot_histogram_popup(self, fig, curve: str):
+        """Plot histogram in popup window (reuses plot_histogram logic)"""
+        # Check if curve has been processed, otherwise use original data
+        if curve in self.processing_results:
+            processed = self.processing_results[curve]['final_data']
+            original = self.processing_results[curve].get('original_data', None)
+            has_processed = True
+        elif self.current_data is not None and curve in self.current_data.columns:
+            processed = self.current_data[curve].values
+            original = None
+            has_processed = False
+        else:
+            ax = fig.add_subplot(111)
+            ax.text(0.5, 0.5, f"Curve '{curve}' not found in data", 
+                   ha='center', va='center', fontsize=12)
+            return
+        
+        try:
+            # Convert null values to NaN for proper filtering
+            processed_clean = self._convert_nulls_to_nan(processed)
+            valid_processed = processed_clean[~np.isnan(processed_clean) & np.isfinite(processed_clean)]
+            
+            if len(valid_processed) == 0:
+                ax = fig.add_subplot(111)
+                ax.text(0.5, 0.5, f"No valid data points for curve '{curve}'", 
+                       ha='center', va='center', fontsize=12)
+                return
+            
+            # Create main histogram plot
+            ax = fig.add_subplot(111)
+            
+            # Calculate optimal number of bins (Freedman-Diaconis rule)
+            iqr = np.percentile(valid_processed, 75) - np.percentile(valid_processed, 25)
+            bin_width = 2 * iqr / (len(valid_processed) ** (1/3)) if iqr > 0 else (valid_processed.max() - valid_processed.min()) / 30
+            num_bins = max(20, min(50, int((valid_processed.max() - valid_processed.min()) / bin_width))) if bin_width > 0 else 30
+            
+            # Plot processed data histogram
+            n, bins, patches = ax.hist(valid_processed, bins=num_bins, alpha=0.7, color='blue', 
+                                      edgecolor='black', linewidth=1.2, label=LABEL_PROCESSED_DATA if has_processed else 'Data')
+            
+            # Color-code bins by frequency
+            max_freq = n.max() if len(n) > 0 else 1
+            for i, (patch, freq) in enumerate(zip(patches, n)):
+                intensity = 0.3 + 0.7 * (freq / max_freq) if max_freq > 0 else 0.5
+                patch.set_facecolor(plt.cm.Blues(intensity))
+            
+            # Plot original data histogram if available (overlay)
+            if original is not None:
+                original_clean = self._convert_nulls_to_nan(original)
+                valid_original = original_clean[~np.isnan(original_clean) & np.isfinite(original_clean)]
+                
+                if len(valid_original) > 0:
+                    ax.hist(valid_original, bins=bins, alpha=0.4, color='red', 
+                           edgecolor='darkred', linestyle='--', 
+                           label=LABEL_ORIGINAL_DATA, histtype='step', linewidth=2)
+            
+            # Calculate and display statistics
+            mean_val = np.mean(valid_processed)
+            median_val = np.median(valid_processed)
+            std_val = np.std(valid_processed)
+            min_val = np.min(valid_processed)
+            max_val = np.max(valid_processed)
+            
+            # Add vertical lines for mean and median
+            ax.axvline(mean_val, color='green', linestyle='--', linewidth=2, label=f'Mean: {mean_val:.3f}')
+            ax.axvline(median_val, color='orange', linestyle='--', linewidth=2, label=f'Median: {median_val:.3f}')
+            
+            # Add normal distribution overlay if data appears normally distributed
+            if len(valid_processed) > 30:
+                from scipy import stats
+                try:
+                    if len(valid_processed) <= 5000:
+                        _, p_value = stats.shapiro(valid_processed[:5000])
+                        if p_value > 0.05:
+                            x_norm = np.linspace(valid_processed.min(), valid_processed.max(), 100)
+                            y_norm = stats.norm.pdf(x_norm, mean_val, std_val) * len(valid_processed) * (bins[1] - bins[0])
+                            ax.plot(x_norm, y_norm, 'r-', linewidth=2, alpha=0.6, label='Normal Distribution Fit')
+                except:
+                    pass
+            
+            # Add outlier detection visualization (IQR method)
+            q1 = np.percentile(valid_processed, 25)
+            q3 = np.percentile(valid_processed, 75)
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            outliers = valid_processed[(valid_processed < lower_bound) | (valid_processed > upper_bound)]
+            
+            if len(outliers) > 0:
+                ax.axvspan(lower_bound, upper_bound, alpha=0.1, color='green', label='Normal Range (IQR)')
+                ax.scatter(outliers, np.zeros_like(outliers) + max(n) * 0.05, 
+                          color='red', marker='x', s=50, alpha=0.7, zorder=5, label=f'Outliers ({len(outliers)})')
+            
+            # Professional styling
+            curve_unit = self.curve_info.get(curve, {}).get('unit', '')
+            ax.set_xlabel(f'{curve} ({curve_unit})', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Frequency', fontsize=12, fontweight='bold')
+            
+            if has_processed:
+                ax.set_title(f'Distribution Analysis: {curve} (Processed)', fontsize=14, fontweight='bold')
+            else:
+                ax.set_title(f'Distribution Analysis: {curve} (Original)', fontsize=14, fontweight='bold')
+            
+            # Add statistics text box
+            stats_text = f'Statistics:\n'
+            stats_text += f'Mean: {mean_val:.3f}\n'
+            stats_text += f'Median: {median_val:.3f}\n'
+            stats_text += f'Std Dev: {std_val:.3f}\n'
+            stats_text += f'Min: {min_val:.3f}\n'
+            stats_text += f'Max: {max_val:.3f}\n'
+            stats_text += f'Count: {len(valid_processed):,}\n'
+            if len(outliers) > 0:
+                stats_text += f'Outliers: {len(outliers)} ({len(outliers)/len(valid_processed)*100:.1f}%)'
+            
+            ax.text(0.98, 0.98, stats_text, transform=ax.transAxes, 
+                   verticalalignment='top', horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                   fontsize=10, family='monospace')
+            
+            ax.legend(loc=LABEL_UPPER_LEFT, fontsize=10)
+            ax.grid(True, alpha=0.3)
+            fig.tight_layout()
+            
+        except Exception as e:
+            ax = fig.add_subplot(111)
+            ax.text(0.5, 0.5, f"Error creating histogram: {str(e)}", 
+                   ha='center', va='center', fontsize=12)
+    
+    def _get_depth_array(self):
+        """Helper to get depth array for plotting (works with processed or current data)"""
+        try:
+            # Try processed data first, then current data
+            data_source = self.processed_data if self.processed_data is not None else self.current_data
+            
             if data_source is None:
-                return np.arange(100)  # Fallback for no data
-
-            # Search for depth column
+                return np.arange(100)  # Fallback if no data
+            
+            # Look for depth column
             for col in data_source.columns:
                 curve_type = self.curve_info.get(col, {}).get('curve_type', '')
-                col_upper = col.upper()
-                if (
-                    'DEPTH' in str(curve_type).upper()
-                    or 'DEPT' in col_upper
-                    or col_upper in ['DEPT', 'DEPTH', 'MD', 'TVD']
-                ):
-                    depth = data_source[col].values
-                    if len(depth) > 0:
-                        return depth
-
-            # Fallback to index-based depth
+                if 'DEPTH' in curve_type or col.upper() in ['DEPT', 'DEPTH', 'MD', 'TVD']:
+                    return data_source[col].values
+            
+            # No depth column found, use index
             return np.arange(len(data_source))
         except Exception as e:
-            self.log_processing(f"Warning: Error getting depth array: {e}")
-            return np.arange(100)  # Safe fallback
+            # Fallback with logging
+            import warnings
+            warnings.warn(f"Could not get depth array: {str(e)}. Using index as depth.", UserWarning)
+            return np.arange(100)
     
     def _get_depth_limits(self, depth: np.ndarray) -> Tuple[float, float]:
         """Get depth axis limits from depth array.
@@ -17997,7 +18744,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
                 '3d_visualization': (12, 10),
                 'multi_curve': (16, 10),
                 'unprocessed_curves': (14, 9),
-                'curve_comparison_all': (16, 10),
+                'histogram': (12, 9),
                 'uncertainty': (12, 9)
             }
             figsize = size_map.get(viz_type, (12, 9))
@@ -18009,8 +18756,21 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     well_name = self.well_info.get('well_name', '')
                     if well_name and well_name != 'UNKNOWN':
                         well_text = f" (Well: {well_name})"
-            except Exception:
-                pass
+            except (AttributeError, KeyError, TypeError) as well_info_error:
+                # Well info access failed - continue without well name in title
+                self.handle_graceful_degradation(
+                    well_info_error,
+                    "Well info access in visualization",
+                    "Continuing visualization without well name in title"
+                )
+            except Exception as well_info_error:
+                # Unexpected error accessing well info
+                self.handle_ui_error(
+                    well_info_error,
+                    "Well info access in visualization",
+                    "well_info",
+                    graceful_degradation=True
+                )
 
             title_curve = curve if curve else 'Multiple Curves'
             fig = plt.figure(figsize=figsize, num=f"{viz_type} - {title_curve}{well_text}")
@@ -18042,12 +18802,24 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     raise ValueError(f"Selected curve '{curve}' not found in available data")
                 ax.plot(data, depth, color=color, linewidth=2, label=status)
                 ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
-                ax.set_ylabel('Depth (m)')
+                ax.set_ylabel(LABEL_DEPTH_M)
                 ax.set_title(f"{curve} - {status}", fontsize=14, fontweight='bold')
                 ax.invert_yaxis()
                 ax.grid(True, alpha=0.3)
                 ax.legend()
                 fig.tight_layout()
+            elif viz_type == 'histogram':
+                self._plot_histogram_popup(fig, curve)
+            elif viz_type == 'uncertainty':
+                self._plot_uncertainty_popup(fig, curve)
+            elif viz_type == 'quality_metrics':
+                self._plot_quality_metrics_popup(fig)
+            elif viz_type == 'correlation_matrix':
+                self._plot_correlation_matrix_popup(fig)
+            elif viz_type == 'scatter_plot':
+                self._plot_scatter_plot_popup(fig, curve)
+            elif viz_type == '3d_visualization':
+                self._plot_3d_visualization_popup(fig, curve)
             else:
                 # Fallback: indicate unsupported popup type
                 ax = fig.add_subplot(111)
@@ -18060,7 +18832,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             plt.show()
 
         except Exception as e:
-            messagebox.showerror("Visualization Error", f"Failed to open popup visualization:\n{str(e)}")
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, f"Failed to open popup visualization:\n{str(e)}")
 
     # ============================================================================
     # ENHANCED VISUALIZATION CONTROLLER
@@ -18080,7 +18852,8 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             # Check if user wants popup window (professional workflow)
             if self.plot_in_new_window_var.get():
-                # Open in new matplotlib popup window
+                # Open in new Toplevel popup window
+                self.log_processing(f"Creating popup visualization: type={viz_type}, curve={curve}")
                 self._create_popup_visualization(viz_type, curve)
             else:
                 # Embedded display (original behavior)
@@ -18093,13 +18866,19 @@ This ensures consistent data interpretation and fixes depth validation issues.
                     self.plot_unprocessed_curves()  # Now includes canvas creation
                 elif viz_type == "quality_overview":
                     self.plot_curve_quality_overview()  # Verify this also creates canvas
+                elif viz_type == "histogram":
+                    self.plot_histogram(curve)  # Histogram requires curve parameter
                 elif viz_type == "curve_comparison_all":
-                    self.plot_curve_comparison_all()  # Verify this also creates canvas
+                    # Deprecated: Use multi_curve or quality_overview instead
+                    messagebox.showinfo("Visualization Update", 
+                                      "The 'curve_comparison_all' visualization has been replaced.\n"
+                                      "Please use 'multi_curve' for selected curves or 'quality_overview' for comprehensive analysis.")
+                    return
                 else:
                     # Use existing visualization methods
                     self.update_visualization()
         except Exception as e:
-            messagebox.showerror("Visualization Error", 
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, 
                                f"Failed to update visualization:\n{str(e)}")
             self.log_processing(f"Error in update_visualization_enhanced: {e}")
     
@@ -18114,7 +18893,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
         elif viz_type == "3d_visualization":
             self.multi_curve_frame.pack_forget()
             self.third_curve_frame.pack(fill='x', pady=5)
-        elif viz_type in ["unprocessed_curves", "quality_overview", "curve_comparison_all"]:
+        elif viz_type in ["unprocessed_curves", "quality_overview"]:
             # Hide multi-curve frame for these new types
             self.multi_curve_frame.pack_forget()
             self.third_curve_frame.pack_forget()
@@ -18152,7 +18931,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Update the visualization
             self.update_visualization_enhanced()
         except Exception as e:
-            messagebox.showerror("Visualization Error", 
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, 
                                f"Failed to display unprocessed curves:\n{str(e)}")
             self.log_processing(f"Error in quick_view_unprocessed: {e}")
     
@@ -18170,7 +18949,7 @@ This ensures consistent data interpretation and fixes depth validation issues.
             # Update the visualization
             self.update_visualization_enhanced()
         except Exception as e:
-            messagebox.showerror("Visualization Error", 
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, 
                                f"Failed to display quality overview:\n{str(e)}")
             self.log_processing(f"Error in quick_quality_overview: {e}")
     
@@ -18183,23 +18962,19 @@ This ensures consistent data interpretation and fixes depth validation issues.
             
             # Switch to visualization tab and set the visualization type
             self.notebook.select(2)  # Visualization tab (0-indexed)
-            self.viz_type_var.set("curve_comparison_all")
+            self.viz_type_var.set("histogram")
             
             # Update the visualization
             self.update_visualization_enhanced()
         except Exception as e:
-            messagebox.showerror("Visualization Error", 
+            messagebox.showerror(ERROR_TITLE_VISUALIZATION, 
                                f"Failed to compare curves:\n{str(e)}")
             self.log_processing(f"Error in quick_compare_all: {e}")
 
     def run(self):
         """Run the application"""
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        try:
-            self.root.mainloop()
-        except KeyboardInterrupt:
-            # Handle Ctrl+C gracefully - exit immediately without confirmation
-            self.root.destroy()
+        self.root.mainloop()
     
     def on_closing(self):
         """Handle application closing"""
@@ -18222,10 +18997,6 @@ def main():
         app = AdvancedPreprocessingApplication()
         app.run()
         
-    except KeyboardInterrupt:
-        # Handle Ctrl+C gracefully - exit silently
-        print("\nApplication interrupted by user. Exiting...")
-        sys.exit(0)
     except Exception as e:
         messagebox.showerror("Startup Error", f"Failed to start application:\n{str(e)}")
 
