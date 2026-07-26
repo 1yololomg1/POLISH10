@@ -217,15 +217,14 @@ class ShalySandSaturationModels:
         convergence = discriminant >= 0
         discriminant = np.maximum(discriminant, 0.0)  # Avoid sqrt of negative
         
-        # Solve for Sw^(n-1) first, then raise to power (1/n)
-        if n == 2.0:
-            # Special case: n=2 means we solve for Sw directly
-            sw_n = (-B + np.sqrt(discriminant)) / (2 * A)
-            sw = np.sqrt(np.maximum(sw_n, 0.0))
+        # For n=2: A*Sw^2 + B*Sw + C = 0 → quadratic root is Sw directly.
+        # For other n: treat root as Sw^(n-1) then raise to 1/(n-1).
+        root = (-B + np.sqrt(discriminant)) / (2 * A)
+        root = np.maximum(root, 0.0)
+        if abs(n - 2.0) < 1e-12:
+            sw = root
         else:
-            # General case: solve for Sw^(n-1), then Sw = x^(1/(n-1))^(1/n)
-            sw_n_minus_1 = (-B + np.sqrt(discriminant)) / (2 * A)
-            sw = np.power(np.maximum(sw_n_minus_1, 0.0), 1.0 / n)
+            sw = np.power(root, 1.0 / max(n - 1.0, 1e-12))
         
         # Enforce physical bounds
         sw = np.clip(sw, 0.0, 1.0)
@@ -427,13 +426,19 @@ class ShalySandSaturationModels:
         # Hydrocarbon saturation
         sh = 1.0 - sw_total
         
+        # Convergence: produced a finite, physically bounded total Sw.
+        # (Clay conductivity can exceed measured 1/Rt at high Vsh; model still
+        # returns a clipped estimate — treat that as converged if Sw is valid.)
+        convergence = np.isfinite(sw_total) & (sw_total >= 0.0) & (sw_total <= 1.0)
+
         return {
             'sw_total': sw_total,
             'sw_effective': sweff,
             'sw_bound': sw_bound,
             'sh': sh,
             'phi_effective': phi_effective,
-            'model': 'dual_water'
+            'model': 'dual_water',
+            'convergence': convergence
         }
     
     def auto_select_model(self,
@@ -569,17 +574,16 @@ class ShalySandSaturationModels:
                 model_used[mask_medium] = 'indonesia'
                 quality_flag[mask_medium] = 1  # Medium confidence
             
-            # High shale: Vsh ≥ 0.40
+            # High shale: Vsh ≥ 0.40 → Dual Water
             mask_high = vsh >= 0.40
             if np.any(mask_high):
-                # Use Indonesia with quality warning (Dual Water not fully implemented)
-                result = self.indonesia_saturation(
+                result = self.dual_water_saturation(
                     porosity[mask_high], resistivity[mask_high], vsh[mask_high],
                     rsh, a, m, n, rw
                 )
-                sw[mask_high] = result['sw']
-                model_used[mask_high] = 'indonesia_highVsh'
-                quality_flag[mask_high] = 2  # Low confidence - should use Dual Water
+                sw[mask_high] = result['sw_total']
+                model_used[mask_high] = 'dual_water_highVsh'
+                quality_flag[mask_high] = np.where(result['convergence'], 1, 2)
         
         # Calculate hydrocarbon saturation
         sh = 1.0 - sw

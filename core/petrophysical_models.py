@@ -291,10 +291,22 @@ class RelativeRockPropertiesModel:
     quantile mapping) and selects the best relation per curve pair. Provides
     helpers to apply relationships and to ensemble predictions during large-gap fill.
     """
+
+    # Separator that will not appear in LAS curve mnemonics (underscores do).
+    RELATION_SEP = "::"
     
     def __init__(self):
         self.property_relations = {}
         self.trained = False
+
+    def _relation_key(self, curve_a: str, curve_b: str) -> str:
+        """Canonical pairwise key with prop1=lexicographically smaller name."""
+        first, second = (curve_a, curve_b) if curve_a < curve_b else (curve_b, curve_a)
+        return f"{first}{self.RELATION_SEP}{second}"
+
+    def _relation_prop1(self, relation_key: str) -> str:
+        """Return the prop1 curve name stored in a relation key."""
+        return relation_key.split(self.RELATION_SEP, 1)[0]
     
     def train(self, data_dict, formation_info=None):
         """Train the relative rock properties model using available data
@@ -319,9 +331,11 @@ class RelativeRockPropertiesModel:
                     continue
                 
                 total_pairs += 1
-                relation_key = f"{curve1}_{curve2}"
+                # prop1/prop2 order must match _compute_property_relation axes
+                first, second = (curve1, curve2) if curve1 < curve2 else (curve2, curve1)
+                relation_key = self._relation_key(curve1, curve2)
                 relation = self._compute_property_relation(
-                    data_dict[curve1], data_dict[curve2]
+                    data_dict[first], data_dict[second]
                 )
                 self.property_relations[relation_key] = relation
                 
@@ -548,8 +562,8 @@ class RelativeRockPropertiesModel:
             if other_curve == curve_name:
                 continue
                 
-            # Check if this curve has data in the gap region
-            if other_data is None or len(other_data) <= gap_end:
+            # gap_end is exclusive (Python slice end); require length >= gap_end
+            if other_data is None or len(other_data) < gap_end:
                 continue
                 
             gap_region = other_data[gap_start:gap_end]
@@ -558,7 +572,7 @@ class RelativeRockPropertiesModel:
             
             if valid_percentage > PHYSICAL_CONSTANTS.CONFIDENCE_LEVELS["LOW"]:  # At least 50% valid data
                 # Also check if we have a relationship with this curve
-                relation_key = f"{curve_name}_{other_curve}" if curve_name < other_curve else f"{other_curve}_{curve_name}"
+                relation_key = self._relation_key(curve_name, other_curve)
                 if relation_key in self.property_relations:
                     reference_curves.append({
                         'name': other_curve,
@@ -582,8 +596,8 @@ class RelativeRockPropertiesModel:
             relation_key = ref['relation_key']
             relation = self.property_relations[relation_key]
             
-            # Check if we need to swap the relationship direction
-            swap_direction = relation_key.split('_')[0] != curve_name
+            # Relation was fit as prop2 = f(prop1). Invert when predicting prop1 from prop2.
+            swap_direction = self._relation_prop1(relation_key) == curve_name
             
             # Get reference data in gap region
             ref_data = ref['data'][gap_start:gap_end]
@@ -694,6 +708,84 @@ class RelativeRockPropertiesModel:
             'uncertainty': uncertainty,
             'confidence': confidence,
             'quality': np.mean(confidence)
+        }
+
+    def predict_missing_curve(self, curve_name, auxiliary_curves, existing_target=None):
+        """
+        Predict a missing (or sparsely sampled) curve from trained relationships.
+
+        Args:
+            curve_name: Target curve mnemonic to predict
+            auxiliary_curves: Dict of available reference curves (name -> array)
+            existing_target: Optional array with known samples; NaNs are filled.
+                If None, the entire curve is treated as missing.
+
+        Returns:
+            Dict with 'predicted', 'points_predicted', 'uncertainty', 'confidence',
+            or None if prediction is not possible.
+        """
+        if not self.trained or not auxiliary_curves:
+            return None
+
+        # Infer sample count from auxiliaries / existing target
+        lengths = [len(np.asarray(v)) for v in auxiliary_curves.values() if v is not None]
+        if existing_target is not None:
+            lengths.append(len(np.asarray(existing_target)))
+        if not lengths:
+            return None
+        n = max(lengths)
+
+        if existing_target is None:
+            predicted = np.full(n, np.nan, dtype=float)
+        else:
+            predicted = np.asarray(existing_target, dtype=float).copy()
+            if len(predicted) < n:
+                pad = np.full(n - len(predicted), np.nan)
+                predicted = np.concatenate([predicted, pad])
+
+        missing = np.isnan(predicted)
+        if not np.any(missing):
+            return {
+                'predicted': predicted,
+                'points_predicted': 0,
+                'uncertainty': np.zeros(n),
+                'confidence': np.ones(n),
+            }
+
+        # Fill each contiguous NaN run via the large-gap ensemble path
+        uncertainty = np.full(n, np.nan)
+        confidence = np.full(n, np.nan)
+        idx = 0
+        while idx < n:
+            if not missing[idx]:
+                idx += 1
+                continue
+            gap_start = idx
+            while idx < n and missing[idx]:
+                idx += 1
+            gap_end = idx
+            result = self.fill_large_gap(
+                curve_name, gap_start, gap_end, predicted, auxiliary_curves
+            )
+            if result is None:
+                continue
+            filled = result['values']
+            predicted[gap_start:gap_end] = filled
+            uncertainty[gap_start:gap_end] = result.get('uncertainty', np.nan)
+            confidence[gap_start:gap_end] = result.get('confidence', np.nan)
+
+        points_predicted = int(np.sum(~np.isnan(predicted) & missing))
+        # Count only originally-missing samples that are now finite
+        originally_missing = missing
+        points_predicted = int(np.sum(~np.isnan(predicted[originally_missing])))
+        if points_predicted == 0:
+            return None
+
+        return {
+            'predicted': predicted,
+            'points_predicted': points_predicted,
+            'uncertainty': uncertainty,
+            'confidence': confidence,
         }
     
     def _apply_relationship(self, reference_data, relation, swap_direction):

@@ -218,10 +218,12 @@ class EnvironmentalCorrectionsManager:
         # Hydrogen Index correction (matrix-dependent)
         # Most neutron tools are calibrated for limestone
         # Conversion factors from Schlumberger Chartbook Table 3.5-1
+        # Limestone-calibrated tools: sandstone reads ~4% low (add 0.04),
+        # dolomite reads ~6% high (subtract 0.06). Signs match chartbook HI offsets.
         hi_corrections = {
             'limestone': 0.0,      # Baseline (limestone matrix HI = 1.0)
-            'sandstone': -0.04,    # Sandstone reads 4% lower than limestone
-            'dolomite': 0.06       # Dolomite reads 6% higher than limestone
+            'sandstone': 0.04,     # Sandstone reads 4% low → add 0.04
+            'dolomite': -0.06      # Dolomite reads 6% high → subtract 0.06
         }
         delta_phi_matrix = hi_corrections.get(matrix_type.lower(), 0.0)
         
@@ -250,7 +252,7 @@ class EnvironmentalCorrectionsManager:
         Apply temperature corrections to measurements (primarily resistivity).
         
         SCIENTIFIC FORMULA - Arp's Formula (1953):
-        Rw@T = Rw@75F × (75 + 7) / (T + 7)
+        R@Tref = R@T × (T + 6.77) / (Tref + 6.77)
         
         This empirical formula accounts for:
         - Ion mobility increases with temperature
@@ -279,9 +281,10 @@ class EnvironmentalCorrectionsManager:
             raise ValueError("Curve and temperature arrays must have same length")
         
         if curve_type == 'resistivity':
-            # Arp's formula for resistivity temperature correction
-            # Correction brings all values to reference temperature
-            correction_factor = (reference_temp + 7.0) / (temperature + 7.0)
+            # Arp's formula: convert resistivity measured at T to reference temp.
+            # R@Tref = R@T × (T + 6.77) / (Tref + 6.77)
+            arp_c = 6.77
+            correction_factor = (temperature + arp_c) / (reference_temp + arp_c)
             corrected_data = curve_data * correction_factor
         else:
             # Most other measurements have negligible temperature effects
@@ -328,6 +331,10 @@ class EnvironmentalCorrectionsManager:
         
         return flags
     
+    def apply_environmental_corrections(self, *args, **kwargs) -> Dict[str, Dict]:
+        """Alias for apply_all_corrections (pipeline / public API name)."""
+        return self.apply_all_corrections(*args, **kwargs)
+
     def apply_all_corrections(self,
                             curve_dict: Dict[str, np.ndarray],
                             caliper: np.ndarray,
