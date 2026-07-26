@@ -12,7 +12,8 @@ Architecture overview
 - CurveIdentificationEngine: Matching pipeline (exact / Levenshtein fuzzy /
   unit+description context / pattern fallback) plus industry metadata APIs
   (wavelet, color, track scale, log-scale, family lookup) and duplicate
-  resolution.
+  resolution. Short mnemonics (len <= 2, including spectral K/U/TH) are
+  exact/whole-token only — never substring or fuzzy against longer names.
 
 Data provenance policy
 ----------------------
@@ -47,6 +48,42 @@ except Exception:  # pragma: no cover - optional during isolated unit tests
 
 
 OHM_M_UNITS = ['OHMM', 'ohm.m', 'OHM-M']
+
+# Short mnemonics (len <= 2) must never match via substring/partial/fuzzy inside longer
+# curve names. Explicit set covers spectral K/U/TH and other high-collision 1-2 char tokens.
+SHORT_MNEMONIC_MAX_LEN = 2
+EXACT_ONLY_MNEMONICS = frozenset({
+    'K', 'U', 'TH',  # spectral gamma components (TH is 2 chars; gated as exact-only)
+    'PE', 'MI', 'MN', 'SP', 'BS', 'MD', 'DF', 'KB', 'FP',
+    'C1', 'C2', 'C3', 'C4',
+})
+
+
+def _normalize_mnemonic_token(mnemonic: str) -> str:
+    """Uppercase and strip common separators for normalized exact comparison."""
+    return (
+        mnemonic.upper()
+        .strip()
+        .replace('.', '')
+        .replace('_', '')
+        .replace('-', '')
+        .replace(' ', '')
+    )
+
+
+def _is_short_or_exact_only_mnemonic(mnemonic: str) -> bool:
+    """
+    True when a database mnemonic must match only as a whole token / exact string.
+
+    Applies to all mnemonics with length <= SHORT_MNEMONIC_MAX_LEN and to the
+    explicit EXACT_ONLY_MNEMONICS set (spectral K/U/TH and other collision-prone tokens).
+    """
+    clean = mnemonic.upper().strip()
+    if not clean:
+        return False
+    if len(clean) <= SHORT_MNEMONIC_MAX_LEN:
+        return True
+    return clean in EXACT_ONLY_MNEMONICS
 
 
 @dataclass
@@ -565,7 +602,51 @@ class CurveIdentificationEngine:
 
         distance = self._levenshtein_distance(mnemonic_clean, known_clean)
         similarity = 1.0 - (distance / max_len)
+
+        # Short / exact-only DB mnemonics (K, U, TH, …): never fuzzy-match longer strings.
+        if _is_short_or_exact_only_mnemonic(known_clean):
+            return False, similarity
+        if _is_short_or_exact_only_mnemonic(mnemonic_clean):
+            return False, similarity
+
+        # Refuse containment-style "fuzzy" (e.g. STH~STHO, THOR~THORX): that is
+        # substring overlap, not a typo correction. Partial matching handles aliases.
+        if mnemonic_clean in known_clean or known_clean in mnemonic_clean:
+            return False, similarity
+
+        # Reject mapping long queries onto much shorter DB mnemonics even if
+        # absolute Levenshtein similarity clears the threshold.
+        shorter = min(len(mnemonic_clean), len(known_clean))
+        longer = max(len(mnemonic_clean), len(known_clean))
+        if shorter <= SHORT_MNEMONIC_MAX_LEN and longer > shorter:
+            return False, similarity
+        if longer >= shorter * 2 and shorter <= 3:
+            return False, similarity
+
         return similarity >= threshold, similarity
+
+    def _exact_or_token_match(self, mnemonic_clean: str, known_clean: str) -> bool:
+        """
+        Whole-string or whole-token match after normalize.
+
+        Short mnemonics only match when the full cleaned name equals the mnemonic
+        (optionally with separators that normalize away to the same token). Compound
+        names like GR_K must not match K via token presence alone.
+        """
+        if mnemonic_clean == known_clean:
+            return True
+
+        mnemonic_norm = _normalize_mnemonic_token(mnemonic_clean)
+        known_norm = _normalize_mnemonic_token(known_clean)
+        if not mnemonic_norm or not known_norm:
+            return False
+
+        if _is_short_or_exact_only_mnemonic(known_clean):
+            # Exact-only: normalized forms must be identical (e.g. "K" / "k"), not a
+            # compound that merely contains the short token.
+            return mnemonic_norm == known_norm and len(mnemonic_norm) == len(known_norm)
+
+        return mnemonic_norm == known_norm
 
     def _context_aware_recognition(
         self,
@@ -738,11 +819,10 @@ class CurveIdentificationEngine:
     ) -> Tuple[str, float, Dict[str, Any]]:
         """Identify curve type with confidence using the unified matching pipeline."""
         mnemonic_clean = mnemonic.upper().strip()
-        mnemonic_normalized = (
-            mnemonic_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
-        )
+        mnemonic_normalized = _normalize_mnemonic_token(mnemonic_clean)
         unit_clean = unit.upper().strip() if unit else ''
         desc_clean = description.upper().strip() if description else ''
+        query_is_short = _is_short_or_exact_only_mnemonic(mnemonic_clean)
 
         candidates: List[Dict[str, Any]] = []
 
@@ -755,15 +835,28 @@ class CurveIdentificationEngine:
                 confidence = 0.95
                 match_method = 'exact'
             else:
-                curve_normalized = [
-                    m.upper().replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
-                    for m in curve_data.get('mnemonics', [])
-                ]
-                if mnemonic_normalized in curve_normalized:
-                    confidence = 0.9
-                    match_method = 'normalized'
-                else:
+                # Normalized / token exact (short mnemonics require full-name equality only)
+                exact_token_hit = False
+                for known_mnemonic in curve_data.get('mnemonics', []):
+                    known_clean = known_mnemonic.upper().strip()
+                    if self._exact_or_token_match(mnemonic_clean, known_clean):
+                        # Short DB mnemonics: only when the query itself is that short token
+                        if _is_short_or_exact_only_mnemonic(known_clean) and not query_is_short:
+                            continue
+                        if mnemonic_clean == known_clean:
+                            confidence = 0.95
+                            match_method = 'exact'
+                        else:
+                            confidence = 0.9
+                            match_method = 'normalized'
+                        exact_token_hit = True
+                        break
+
+                if not exact_token_hit and not query_is_short:
                     for known_mnemonic in curve_data.get('mnemonics', []):
+                        # Skip fuzzy against short DB mnemonics (gated inside helper too)
+                        if _is_short_or_exact_only_mnemonic(known_mnemonic):
+                            continue
                         matched, similarity = self._fuzzy_match_mnemonic(
                             mnemonic_clean, known_mnemonic, threshold=0.7
                         )
@@ -797,21 +890,50 @@ class CurveIdentificationEngine:
             for curve_type, curve_data in self.mnemonic_database.items():
                 for known_mnemonic in curve_data.get('mnemonics', []):
                     known_clean = known_mnemonic.upper().strip()
-                    known_normalized = (
-                        known_clean.replace('.', '').replace('_', '').replace('-', '').replace(' ', '')
-                    )
+                    known_normalized = _normalize_mnemonic_token(known_clean)
+                    known_is_short = _is_short_or_exact_only_mnemonic(known_clean)
                     confidence = 0.0
-                    if mnemonic_clean == known_clean:
+
+                    # Short mnemonics: exact / normalized-exact only — never substring.
+                    if known_is_short or query_is_short:
+                        if mnemonic_clean == known_clean:
+                            confidence = 0.85
+                        elif (
+                            mnemonic_normalized == known_normalized
+                            and len(mnemonic_normalized) == len(known_normalized)
+                        ):
+                            confidence = 0.8
+                        else:
+                            continue
+                    elif mnemonic_clean == known_clean:
                         confidence = 0.85
                     elif mnemonic_normalized == known_normalized:
                         confidence = 0.8
-                    elif mnemonic_clean in known_clean and len(mnemonic_clean) >= 3:
+                    # Substring/partial only for longer mnemonics (len >= 4) to avoid
+                    # short-token collisions inside unrelated names.
+                    elif (
+                        len(mnemonic_clean) >= 4
+                        and len(known_clean) >= 4
+                        and mnemonic_clean in known_clean
+                    ):
                         confidence = 0.7
-                    elif known_clean in mnemonic_clean and len(known_clean) >= 3:
+                    elif (
+                        len(mnemonic_clean) >= 4
+                        and len(known_clean) >= 4
+                        and known_clean in mnemonic_clean
+                    ):
                         confidence = 0.7
-                    elif mnemonic_normalized in known_normalized and len(mnemonic_normalized) >= 3:
+                    elif (
+                        len(mnemonic_normalized) >= 4
+                        and len(known_normalized) >= 4
+                        and mnemonic_normalized in known_normalized
+                    ):
                         confidence = 0.65
-                    elif known_normalized in mnemonic_normalized and len(known_normalized) >= 3:
+                    elif (
+                        len(mnemonic_normalized) >= 4
+                        and len(known_normalized) >= 4
+                        and known_normalized in mnemonic_normalized
+                    ):
                         confidence = 0.65
                     else:
                         continue
@@ -821,7 +943,7 @@ class CurveIdentificationEngine:
                     candidates.append({
                         'curve_type': curve_type,
                         'confidence': confidence,
-                        'method': 'partial',
+                        'method': 'partial' if not known_is_short else 'exact',
                         'curve_data': curve_data.copy(),
                     })
                     break

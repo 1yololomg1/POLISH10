@@ -95,3 +95,94 @@ def test_metadata_apis_available():
     assert engine.get_optimal_wavelet_for_curve('RHOB') == 'db4'
     lo, hi = engine.get_track_scale_for_curve('NPHI')
     assert lo > hi  # reversed neutron scale
+
+
+def test_exact_short_spectral_mnemonics_identify():
+    """Full-mnemonic K / U / TH must still resolve to spectral components."""
+    engine = CurveIdentificationEngine()
+    expected = {
+        'K': 'POTASSIUM',
+        'U': 'URANIUM',
+        'TH': 'THORIUM',
+    }
+    for mnemonic, curve_type in expected.items():
+        identified, confidence, _ = engine.identify_curve(mnemonic)
+        assert identified == curve_type, f"{mnemonic} -> {identified}, expected {curve_type}"
+        assert confidence >= 0.9
+
+
+def test_short_spectral_mnemonics_do_not_substring_false_positive():
+    """
+    Longer names that merely contain K / U / TH characters or substrings must
+    not identify as spectral potassium/uranium/thorium solely due to short
+    mnemonic overlap.
+    """
+    engine = CurveIdentificationEngine()
+    spectral = {'POTASSIUM', 'URANIUM', 'THORIUM'}
+    probes = [
+        'ROCK',
+        'BULK',
+        'DEPTH',
+        'UNIT',
+        'UNKNOWN',
+        'THICK',
+        'THETA',
+        'AUTH',
+        'SOUTH',
+        'PATH',
+        'MYTH',
+        'GR_K',
+        'SGRK',
+        'CALK',
+        'RHOBK',
+        'STH',
+        'GTH',
+        'DTH',
+        'UK',
+        'KU',
+        'KT',
+        'THU',
+        'KTH',
+        'XK',
+        'XU',
+        'XTH',
+    ]
+    for name in probes:
+        identified, confidence, _ = engine.identify_curve(name)
+        assert identified not in spectral, (
+            f"{name} incorrectly identified as {identified} (conf={confidence:.3f}) "
+            f"via short-mnemonic overlap"
+        )
+
+
+def test_fuzzy_refuses_long_query_onto_short_mnemonic():
+    """Levenshtein path must not map long strings onto very short DB mnemonics."""
+    engine = CurveIdentificationEngine()
+    for query, short in [
+        ('ROCK', 'K'),
+        ('BULK', 'K'),
+        ('UNIT', 'U'),
+        ('DEPTH', 'TH'),
+        ('THICK', 'TH'),
+        ('CALK', 'K'),
+        ('MYTH', 'TH'),
+    ]:
+        matched, _ = engine._fuzzy_match_mnemonic(query, short, threshold=0.7)
+        assert matched is False, f"fuzzy unexpectedly matched {query!r} ~ {short!r}"
+
+
+def test_longer_spectral_aliases_still_identify():
+    """Non-short spectral aliases (POTA/URAN/THOR/HTHO/…) remain valid."""
+    engine = CurveIdentificationEngine()
+    expected = {
+        'POTA': 'POTASSIUM',
+        'HPOT': 'POTASSIUM',
+        'URAN': 'URANIUM',
+        'HURA': 'URANIUM',
+        'THOR': 'THORIUM',
+        'HTHO': 'THORIUM',
+    }
+    for mnemonic, curve_type in expected.items():
+        identified, confidence, _ = engine.identify_curve(mnemonic)
+        assert identified == curve_type, f"{mnemonic} -> {identified}, expected {curve_type}"
+        assert confidence >= 0.9
