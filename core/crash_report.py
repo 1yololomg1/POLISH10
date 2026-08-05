@@ -396,9 +396,10 @@ def install_global_handlers(tk_root=None):
 
         sys.excepthook = _handle_main
 
-        if hasattr(sys, "unraisablehook"):
-            import threading
+        import threading
 
+        # threading.excepthook exists on Python 3.8+; sys.unraisablehook is unrelated.
+        if hasattr(threading, "excepthook"):
             def _handle_thread(args):
                 write_crash_report(args.exc_type, args.exc_value, args.exc_traceback,
                                    context="worker thread")

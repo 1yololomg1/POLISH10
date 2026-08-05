@@ -49,21 +49,6 @@ QUALITY_THRESHOLD_LOW = 0.5
 QUALITY_THRESHOLD_MEDIUM = 0.7
 QUALITY_THRESHOLD_HIGH = 0.9
 
-# region agent log
-def _dbg(hyp, loc, msg, **data):
-    """Temporary debug instrumentation. Appends one NDJSON record per call."""
-    try:
-        import json as _j, time as _t, threading as _th, os as _os
-        _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "debug-a3a843.log")
-        with open(_p, "a", encoding="utf-8") as _f:
-            _f.write(_j.dumps({"sessionId": "a3a843", "runId": "post-fix", "hypothesisId": hyp,
-                               "location": loc, "message": msg, "data": data,
-                               "thread": _th.current_thread().name,
-                               "timestamp": int(_t.time() * 1000)}) + "\n")
-    except Exception:
-        pass
-# endregion
-
 # === UI EVENT / DIALOG CONSTANTS (canonical definitions in ui.constants) ===
 from ui.constants import (  # noqa: E402
     EVENT_CONFIGURE,
@@ -9604,34 +9589,7 @@ Your feedback contributes to software quality and reliability.
                     if decision == 'SKIP_INSUFFICIENT_DATA':
                         _skip_msg = f"Skipping {column}: insufficient valid data ({validity_ratio:.1%})"
                         self.log_processing(_skip_msg)
-                        # region agent log
-                        if not hasattr(self, '_viability_log_by_curve'):
-                            self._viability_log_by_curve = {}
-                        self._viability_log_by_curve[column] = {
-                            'decision': decision,
-                            'validity_ratio': float(validity_ratio),
-                            'skip_message': _skip_msg,
-                            'quality_summary': None,
-                        }
-                        _dbg("H6", "aps10.py:process_data", "viability skip",
-                             column=column, decision=decision,
-                             validity_ratio=float(validity_ratio), message=_skip_msg)
-                        # endregion
                         continue
-                    else:
-                        # region agent log
-                        if not hasattr(self, '_viability_log_by_curve'):
-                            self._viability_log_by_curve = {}
-                        self._viability_log_by_curve[column] = {
-                            'decision': decision,
-                            'validity_ratio': float(validity_ratio),
-                            'skip_message': None,
-                            'quality_summary': None,
-                        }
-                        _dbg("H6", "aps10.py:process_data", "viability decision",
-                             column=column, decision=decision,
-                             validity_ratio=float(validity_ratio))
-                        # endregion
                 except Exception:
                     # On error, proceed with processing rather than skipping
                     pass
@@ -9681,25 +9639,6 @@ Your feedback contributes to software quality and reliability.
                     f"{final_valid_count}/{total_count} valid points ({quality_percentage:.1f}%)"
                 )
                 self.log_processing(_quality_msg)
-                # region agent log
-                if not hasattr(self, '_viability_log_by_curve'):
-                    self._viability_log_by_curve = {}
-                _prev = self._viability_log_by_curve.get(column, {})
-                self._viability_log_by_curve[column] = {
-                    'decision': _prev.get('decision'),
-                    'validity_ratio': _prev.get('validity_ratio'),
-                    'skip_message': _prev.get('skip_message'),
-                    'quality_summary': _quality_msg,
-                    'final_valid_count': int(final_valid_count),
-                    'total_count': int(total_count),
-                    'quality_percentage': float(quality_percentage),
-                }
-                _dbg("H6", "aps10.py:process_data", "data quality summary",
-                     column=column, final_valid_count=int(final_valid_count),
-                     total_count=int(total_count),
-                     quality_percentage=float(quality_percentage),
-                     message=_quality_msg)
-                # endregion
                 
                 # Update the processed data with validated data (convert back to pandas Series)
                 self.processed_data[column] = pd.Series(data, index=self.processed_data.index)
@@ -12626,20 +12565,6 @@ Your feedback contributes to software quality and reliability.
             from matplotlib.figure import Figure
             fig = Figure(figsize=figsize, dpi=100)
             fig.patch.set_facecolor('white')
-            
-            # region agent log
-            _dbg("H0", "aps10.py:_create_popup_visualization", "routing to plot helper",
-                 viz_type=viz_type, curve=curve,
-                 current_rows=(0 if self.current_data is None else len(self.current_data)),
-                 processed_rows=(0 if self.processed_data is None else len(self.processed_data)),
-                 current_id=id(self.current_data), processed_id=id(self.processed_data),
-                 n_results=len(getattr(self, "processing_results", {}) or {}),
-                 is_processing=bool(getattr(self, "is_processing", False)),
-                 open_popups=len(getattr(self, "popup_windows", []) or []),
-                 active_well=getattr(self, "active_well_id", None),
-                 loaded_wells=list((getattr(self, "well_datasets", {}) or {}).keys()),
-                 well_info_name=(getattr(self, "well_info", {}) or {}).get("well_name"))
-            # endregion
 
             # Route to appropriate plotting method on the figure
             if viz_type == "single_curve":
@@ -12673,19 +12598,10 @@ Your feedback contributes to software quality and reliability.
                 ax = fig.add_subplot(111)
                 ax.text(0.5, 0.5, f"Popup visualization for '{viz_type}' not yet implemented.\nUse embedded mode.",
                        ha='center', va='center', fontsize=12)
-            
-            # region agent log
-            _dbg("H0", "aps10.py:_create_popup_visualization", "plot helper returned, about to draw canvas",
-                 viz_type=viz_type, n_axes=len(fig.axes))
-            # endregion
 
             # Embed figure in Toplevel window using FigureCanvasTkAgg
             canvas = FigureCanvasTkAgg(fig, master=popup)
             canvas.draw()
-
-            # region agent log
-            _dbg("H0", "aps10.py:_create_popup_visualization", "canvas.draw() completed", viz_type=viz_type)
-            # endregion
             
             # Add matplotlib navigation toolbar
             toolbar_frame = ttk.Frame(popup)
@@ -12804,99 +12720,16 @@ Your feedback contributes to software quality and reliability.
         # Plot original data
         original_data = self.current_data[curve].values
 
-        # region agent log
-        _dbg("H3", "aps10.py:_plot_single_curve_popup", "entry, about to plot original",
-             curve=curve, n_values=len(original_data), n_depth=len(original_depth),
-             lengths_agree=(len(original_data) == len(original_depth)),
-             source_frame_id=id(self.current_data),
-             active_well=getattr(self, "active_well_id", None),
-             n_nan=int(np.count_nonzero(np.isnan(np.asarray(original_data, dtype=float)))))
-        # endregion
-
         ax.plot(original_data, original_depth, color='red', linewidth=1.5, 
                alpha=0.7, label='Original', linestyle='-')
-
-        # region agent log
-        _dbg("H3", "aps10.py:_plot_single_curve_popup", "original plotted")
-        # endregion
         
         # Plot processed data if available
         if (self.processed_data is not None and curve in self.processed_data.columns):
             processed_depth = self._get_depth_for_frame(self.processed_data)
             processed_data = self.processed_data[curve].values
 
-            # region agent log
-            def _finite_depth_band_sc(values, depth_arr):
-                try:
-                    v = np.asarray(values, dtype=float)
-                    d = np.asarray(depth_arr, dtype=float)
-                    n = min(len(v), len(d))
-                    if n == 0:
-                        return None, None, 0
-                    mask = np.isfinite(v[:n]) & np.isfinite(d[:n])
-                    if not np.any(mask):
-                        return None, None, 0
-                    idxs = np.flatnonzero(mask)
-                    return float(d[idxs[0]]), float(d[idxs[-1]]), int(idxs.size)
-                except Exception:
-                    return None, None, 0
-
-            _sc_first_d, _sc_last_d, _sc_finite_n = _finite_depth_band_sc(
-                processed_data, processed_depth
-            )
-            _pr = (getattr(self, 'processing_results', {}) or {}).get(curve)
-            _pr_final = _pr.get('final_data') if isinstance(_pr, dict) else None
-            _pr_stats = None
-            if _pr_final is not None:
-                _prf = np.asarray(_pr_final, dtype=float)
-                _prf_first, _prf_last, _prf_n = _finite_depth_band_sc(_prf, processed_depth)
-                _pr_stats = {
-                    'len': int(len(_prf)),
-                    'n_finite': int(np.sum(np.isfinite(_prf))),
-                    'first_finite_depth': _prf_first,
-                    'last_finite_depth': _prf_last,
-                    'finite_span_n': _prf_n,
-                    'arrays_equal_nan_safe': bool(
-                        len(_prf) == len(np.asarray(processed_data))
-                        and np.array_equal(
-                            _prf,
-                            np.asarray(processed_data, dtype=float),
-                            equal_nan=True,
-                        )
-                    ),
-                }
-            _viability_sc = (getattr(self, '_viability_log_by_curve', {}) or {}).get(curve)
-            _dbg(
-                "H7",
-                "aps10.py:_plot_single_curve_popup",
-                "pre-plot processed_data depth band",
-                curve=curve,
-                source="processed_data",
-                len_original=int(len(original_data)),
-                len_processed=int(len(processed_data)),
-                len_depth=int(len(processed_depth)),
-                n_finite_original=int(np.sum(np.isfinite(np.asarray(original_data, dtype=float)))),
-                n_finite_processed=int(np.sum(np.isfinite(np.asarray(processed_data, dtype=float)))),
-                processed_first_finite_depth=_sc_first_d,
-                processed_last_finite_depth=_sc_last_d,
-                processed_finite_span_n=_sc_finite_n,
-                processing_results_final=_pr_stats,
-                viability_log=_viability_sc,
-                active_well=getattr(self, "active_well_id", None),
-                well_info_name=(getattr(self, "well_info", {}) or {}).get("well_name"),
-                processed_data_id=id(self.processed_data),
-            )
-            # endregion
-
             ax.plot(processed_data, processed_depth, color='blue', linewidth=2.0, 
                    label='Processed', linestyle='-')
-
-            # region agent log
-            _dbg("H3", "aps10.py:_plot_single_curve_popup", "processed plotted",
-                 n_values=len(processed_data), n_depth=len(processed_depth),
-                 lengths_agree=(len(processed_data) == len(processed_depth)),
-                 source_frame_id=id(self.processed_data))
-            # endregion
             
             # Add processing quality info if available
             if curve in self.processing_results:
@@ -12932,20 +12765,11 @@ Your feedback contributes to software quality and reliability.
             if len(gap_indices) > 0:
                 data_min = np.min(combined_data) if len(combined_data) > 0 else 0
 
-                # region agent log
-                _dbg("H2", "aps10.py:_plot_single_curve_popup", "about to scatter gap markers",
-                     n_gap_markers=len(gap_indices))
-                # endregion
-
                 # Gaps are detected in the original trace, so they are marked
                 # against the original frame's depth.
                 ax.scatter(np.full(len(gap_indices), data_min), 
                          original_depth[gap_indices], color='orange', s=10, alpha=0.5, 
                          label=LABEL_MISSING_DATA, zorder=1)
-
-                # region agent log
-                _dbg("H2", "aps10.py:_plot_single_curve_popup", "gap markers scattered")
-                # endregion
         
         # Set title and labels
         curve_info = self.curve_info.get(curve, {})
@@ -12956,21 +12780,9 @@ Your feedback contributes to software quality and reliability.
                     fontsize=14, fontweight='bold')
         ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
         ax.set_ylabel(LABEL_DEPTH_M, fontsize=12)
-        
-        # region agent log
-        import time as _time_dbg
-        _t_legend = _time_dbg.perf_counter()
-        _dbg("H1", "aps10.py:_plot_single_curve_popup", "about to place legend",
-             n_artists=len(ax.lines) + len(ax.collections))
-        # endregion
 
         # Add legend
         ax.legend(loc='best', fontsize=10)
-
-        # region agent log
-        _dbg("H1", "aps10.py:_plot_single_curve_popup", "legend placed",
-             elapsed_ms=round((_time_dbg.perf_counter() - _t_legend) * 1000, 1))
-        # endregion
         
         # Add grid
         ax.grid(True, alpha=0.3)
@@ -12993,10 +12805,6 @@ Your feedback contributes to software quality and reliability.
                    facecolor='lightblue', alpha=0.8), fontsize=9)
         
         fig.tight_layout()
-
-        # region agent log
-        _dbg("H4", "aps10.py:_plot_single_curve_popup", "tight_layout done, helper returning")
-        # endregion
     
     def _plot_single_curve_comparison_popup(self, fig):
         """Plot side-by-side comparison in popup"""
@@ -13046,76 +12854,6 @@ Your feedback contributes to software quality and reliability.
             depth = self._get_depth_for_frame(self.processed_data)
             original = self.processing_results[curve]['original_data']
             processed = self.processing_results[curve]['final_data']
-
-            # region agent log
-            def _finite_depth_band(values, depth_arr):
-                """Return first/last finite depth for values aligned with depth_arr."""
-                try:
-                    v = np.asarray(values, dtype=float)
-                    d = np.asarray(depth_arr, dtype=float)
-                    n = min(len(v), len(d))
-                    if n == 0:
-                        return None, None, 0
-                    mask = np.isfinite(v[:n]) & np.isfinite(d[:n])
-                    if not np.any(mask):
-                        return None, None, 0
-                    idxs = np.flatnonzero(mask)
-                    return float(d[idxs[0]]), float(d[idxs[-1]]), int(idxs.size)
-                except Exception:
-                    return None, None, 0
-
-            _orig_first_d, _orig_last_d, _orig_finite_n = _finite_depth_band(original, depth)
-            _proc_first_d, _proc_last_d, _proc_finite_n = _finite_depth_band(processed, depth)
-            _proc_frame = None
-            if self.processed_data is not None and curve in self.processed_data.columns:
-                _pf = np.asarray(self.processed_data[curve].values, dtype=float)
-                _pf_first_d, _pf_last_d, _pf_finite_n = _finite_depth_band(_pf, depth)
-                _proc_frame = {
-                    'len': int(len(_pf)),
-                    'n_finite': int(np.sum(np.isfinite(_pf))),
-                    'first_finite_depth': _pf_first_d,
-                    'last_finite_depth': _pf_last_d,
-                    'finite_span_n': _pf_finite_n,
-                    'same_object_as_final_data': (
-                        np.asarray(processed).ctypes.data == _pf.ctypes.data
-                        if hasattr(np.asarray(processed), 'ctypes') and hasattr(_pf, 'ctypes')
-                        else None
-                    ),
-                    'arrays_equal_nan_safe': bool(
-                        len(np.asarray(processed)) == len(_pf)
-                        and np.array_equal(
-                            np.asarray(processed, dtype=float),
-                            _pf,
-                            equal_nan=True,
-                        )
-                    ),
-                }
-            _viability = (getattr(self, '_viability_log_by_curve', {}) or {}).get(curve)
-            _dbg(
-                "H7",
-                "aps10.py:_plot_comparison_popup",
-                "pre-plot processing_results vs depth band",
-                curve=curve,
-                source="processing_results",
-                len_original=int(len(original)),
-                len_processed=int(len(processed)),
-                len_depth=int(len(depth)),
-                n_finite_original=int(np.sum(np.isfinite(np.asarray(original, dtype=float)))),
-                n_finite_processed=int(np.sum(np.isfinite(np.asarray(processed, dtype=float)))),
-                original_first_finite_depth=_orig_first_d,
-                original_last_finite_depth=_orig_last_d,
-                original_finite_span_n=_orig_finite_n,
-                processed_first_finite_depth=_proc_first_d,
-                processed_last_finite_depth=_proc_last_d,
-                processed_finite_span_n=_proc_finite_n,
-                processed_data_frame=_proc_frame,
-                viability_log=_viability,
-                active_well=getattr(self, "active_well_id", None),
-                well_info_name=(getattr(self, "well_info", {}) or {}).get("well_name"),
-                processed_data_id=id(self.processed_data) if self.processed_data is not None else None,
-                final_data_id=id(processed),
-            )
-            # endregion
 
             ax.plot(original, depth, 'r-', alpha=0.7, label='Original', linewidth=1)
             ax.plot(processed, depth, 'b-', alpha=0.9, label='Processed', linewidth=2)

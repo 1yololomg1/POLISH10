@@ -50,26 +50,6 @@ class SecureStatusManager:
             self._apply_status(display_message, message, progress)
             return
 
-        # region agent log
-        try:
-            _n = getattr(SecureStatusManager, "_dbg_offthread_count", 0) + 1
-            SecureStatusManager._dbg_offthread_count = _n
-            if _n <= 5 or _n % 250 == 0:
-                import json as _j, time as _t, os as _os
-                _p = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-                                   "debug-a3a843.log")
-                with open(_p, "a", encoding="utf-8") as _f:
-                    _f.write(_j.dumps({
-                        "sessionId": "a3a843", "runId": "post-fix", "hypothesisId": "H5",
-                        "location": "ui/status.py:update_status",
-                        "message": "off-thread status update marshalled to main thread",
-                        "data": {"call_count": _n, "marshalled": True, "held_lock": False},
-                        "thread": threading.current_thread().name,
-                        "timestamp": int(_t.time() * 1000)}) + "\n")
-        except Exception:
-            pass
-        # endregion
-
         if self._root is None:
             return
         try:
