@@ -137,10 +137,15 @@ class WellLoadingMixin:
             # Convert to DataFrame
             df = las.df()
             
-            # Add depth column if not present
-            if df.index.name is None and hasattr(las, 'depth'):
-                df.index.name = 'DEPT'
-                df = df.reset_index()
+            # lasio puts depth on the index (usually named DEPT). Promote it to a
+            # regular column so the rest of the pipeline can find a depth curve.
+            # The previous check only reset when index.name was None, which left
+            # named depth indexes stranded and dropped the depth channel entirely.
+            if 'DEPT' not in df.columns and 'DEPTH' not in df.columns:
+                if df.index.name is None and hasattr(las, 'depth'):
+                    df.index.name = 'DEPT'
+                if df.index.name is not None:
+                    df = df.reset_index()
             
             # Handle empty DataFrame
             if df.empty:

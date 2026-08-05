@@ -11,24 +11,95 @@ class SecureStatusManager:
         self.results_text = results_text_widget
         self.status_label = status_label_widget
         self.progress_bar = progress_bar_widget
-        self._lock = threading.Lock()
+        # Resolved once, here, because construction happens on the main thread.
+        # winfo_toplevel() is itself a Tk call, so looking the root up lazily
+        # from a worker would commit the very violation this class avoids.
+        self._root = self._resolve_root()
+
+    def _resolve_root(self):
+        """Find the Tk root so work can be scheduled onto the main thread.
+
+        The manager is constructed from widgets rather than from the root, so
+        the root is reached through whichever widget is still alive. Only call
+        this from the main thread.
+        """
+        for widget in (self.results_text, self.status_label, self.progress_bar):
+            if widget is None:
+                continue
+            try:
+                return widget.winfo_toplevel()
+            except (tk.TclError, RuntimeError, AttributeError):
+                continue
+        return None
 
     def update_status(self, message: str, progress: Optional[float] = None):
-        """Maintain original status update quality"""
-        with self._lock:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            display_message = f"[{timestamp}] {message}"
+        """Maintain original status update quality.
 
-            if hasattr(self, 'results_text') and self.results_text:
+        Tk is not thread safe, and background workers call this on every log
+        line. Widget writes are therefore scheduled onto the main thread rather
+        than performed in place. The previous implementation held a lock across
+        those writes and called update_idletasks(), which drove the Tcl
+        interpreter from the calling thread; a worker inside that call while the
+        main thread waited on the same lock produced a hard deadlock.
+        """
+        # The timestamp records when the event happened, not when the main
+        # thread gets round to drawing it, so it is taken on the calling thread.
+        display_message = f"[{datetime.now().strftime('%H:%M:%S')}] {message}"
+
+        if threading.current_thread() is threading.main_thread():
+            self._apply_status(display_message, message, progress)
+            return
+
+        # region agent log
+        try:
+            _n = getattr(SecureStatusManager, "_dbg_offthread_count", 0) + 1
+            SecureStatusManager._dbg_offthread_count = _n
+            if _n <= 5 or _n % 250 == 0:
+                import json as _j, time as _t, os as _os
+                _p = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                                   "debug-a3a843.log")
+                with open(_p, "a", encoding="utf-8") as _f:
+                    _f.write(_j.dumps({
+                        "sessionId": "a3a843", "runId": "post-fix", "hypothesisId": "H5",
+                        "location": "ui/status.py:update_status",
+                        "message": "off-thread status update marshalled to main thread",
+                        "data": {"call_count": _n, "marshalled": True, "held_lock": False},
+                        "thread": threading.current_thread().name,
+                        "timestamp": int(_t.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # endregion
+
+        if self._root is None:
+            return
+        try:
+            self._root.after(0, self._apply_status, display_message, message, progress)
+        except (tk.TclError, RuntimeError):
+            # The interpreter is shutting down or the widget tree is gone.
+            # Dropping a status line beats raising inside a worker thread.
+            pass
+
+    def _apply_status(self, display_message: str, message: str,
+                      progress: Optional[float] = None):
+        """Perform the widget writes. Must only run on the main thread.
+
+        No lock is taken: every caller now lands here via the event loop, which
+        is what serializes access. Taking a lock here would reintroduce the
+        cross-thread wait that caused the deadlock.
+        """
+        try:
+            if self.results_text:
                 self.results_text.insert(tk.END, display_message + "\n")
                 self.results_text.see(tk.END)
-                self.results_text.update_idletasks()
 
-            if hasattr(self, 'status_label') and self.status_label:
+            if self.status_label:
                 self.status_label.config(text=message)
 
-            if progress is not None and hasattr(self, 'progress_bar') and self.progress_bar:
+            if progress is not None and self.progress_bar:
                 self.progress_bar['value'] = progress
+        except tk.TclError:
+            # Widget destroyed between scheduling and execution.
+            pass
 
     def log_processing_step(self, curve_name: str, step: str, details: Optional[Dict] = None):
         """Maintain detailed processing feedback like original"""

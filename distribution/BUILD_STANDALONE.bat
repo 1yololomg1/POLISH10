@@ -1,16 +1,25 @@
 @echo off
-REM Build script to create standalone executable with Python bundled
-REM This creates a .exe file that users can run without Python installed
+REM ============================================================
+REM Build the standalone POLISH distribution for Windows.
+REM
+REM All build settings live in WirelinePreprocessing.spec. This script only
+REM invokes it. Do not duplicate PyInstaller flags here: a previous version of
+REM this script carried its own copy of the options, drifted out of sync with
+REM the spec, and shipped a build that crashed on launch because of a stale
+REM --optimize=2 flag.
+REM
+REM Output: dist\WirelinePreprocessing\  (a folder, not a single .exe)
+REM         plus WirelinePreprocessing-windows.zip ready to send to a user.
+REM ============================================================
+
+setlocal
+cd /d "%~dp0.."
 
 echo ============================================
-echo Building Standalone Executable
+echo Building POLISH standalone distribution
 echo ============================================
 echo.
-echo This will create an .exe file with Python bundled.
-echo Users won't need to install Python separately!
-echo.
 
-REM Check if PyInstaller is installed
 python -c "import PyInstaller" 2>nul
 if errorlevel 1 (
     echo Installing PyInstaller...
@@ -22,60 +31,56 @@ if errorlevel 1 (
     )
 )
 
-echo.
-echo Building executable...
-echo This may take several minutes...
+echo Building. This takes roughly 15-20 minutes.
 echo.
 
-REM Change to parent directory to build from project root
-cd ..
-
-REM Build with PyInstaller - Code is compiled to bytecode (not source .py files)
-REM Users will NOT have access to readable source code
-pyinstaller --name="WirelinePreprocessing" ^
-    --onefile ^
-    --console ^
-    --add-data "core;core" ^
-    --add-data "ui;ui" ^
-    --add-data "petrophysics;petrophysics" ^
-    --hidden-import=numpy ^
-    --hidden-import=pandas ^
-    --hidden-import=matplotlib ^
-    --hidden-import=tkinter ^
-    --hidden-import=lasio ^
-    --hidden-import=scipy ^
-    --hidden-import=sklearn ^
-    --hidden-import=pywt ^
-    --hidden-import=psutil ^
-    --hidden-import=platform ^
-    --collect-all=matplotlib ^
-    --collect-all=numpy ^
-    --collect-all=pandas ^
-    --optimize=2 ^
-    advanced_preprocessing_system10.py
-
-REM Move output to distribution folder
-if exist "dist\WirelinePreprocessing.exe" (
-    if not exist "distribution\dist" mkdir "distribution\dist"
-    move /Y "dist\WirelinePreprocessing.exe" "distribution\dist\WirelinePreprocessing.exe"
-    echo Moved executable to distribution\dist\
-)
+python -m PyInstaller --noconfirm --clean ^
+    --distpath "distribution\dist" ^
+    --workpath "build" ^
+    "distribution\WirelinePreprocessing.spec"
 
 if errorlevel 1 (
     echo.
-    echo ERROR: Build failed!
+    echo ERROR: Build failed.
     pause
     exit /b 1
 )
 
+if not exist "distribution\dist\WirelinePreprocessing\WirelinePreprocessing.exe" (
+    echo.
+    echo ERROR: Expected executable was not produced.
+    pause
+    exit /b 1
+)
+
+REM Ship the end-user instructions inside the folder the recipient extracts,
+REM so the log location and privacy statement travel with the application.
+copy /Y "distribution\README_FIRST.txt" "distribution\dist\WirelinePreprocessing\README_FIRST.txt" >nul
+
+echo.
+echo Packaging distribution archive...
+powershell -NoProfile -Command ^
+    "Compress-Archive -Path 'distribution\dist\WirelinePreprocessing\*' -DestinationPath 'distribution\dist\WirelinePreprocessing-windows.zip' -Force"
+
+REM The work directory is intermediate output that --clean regenerates on every
+REM run, so keeping it only wastes disk. Removing it here stops build artifacts
+REM accumulating across repeated builds.
+if exist "build" rmdir /S /Q "build"
+
 echo.
 echo ============================================
-echo Build Complete!
+echo Build complete
 echo ============================================
 echo.
-echo The executable is in: dist\WirelinePreprocessing.exe
+echo Folder:  distribution\dist\WirelinePreprocessing\
+echo Archive: distribution\dist\WirelinePreprocessing-windows.zip
 echo.
-echo You can now distribute this .exe file - users don't need Python!
+echo Send the .zip. The recipient extracts it once, then runs
+echo WirelinePreprocessing.exe from inside the extracted folder.
+echo.
+echo IMPORTANT: Always launch the produced .exe once on this machine before
+echo sending it. A packaged build can fail on launch for reasons that never
+echo occur when running from source.
 echo.
 pause
-
+endlocal

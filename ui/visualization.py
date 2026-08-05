@@ -6,7 +6,17 @@ import numpy as np
 import tkinter as tk  # noqa: F401 - used via matplotlib backends
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 - required to register 3D
+
+# The 3D toolkit is optional: importing it only registers the "3d" projection.
+# A partial or damaged matplotlib installation must not prevent the whole
+# application from starting, which is what an unguarded import here caused.
+try:
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 - registers 3D projection
+    AXES3D_AVAILABLE = True
+except Exception:
+    Axes3D = None
+    AXES3D_AVAILABLE = False
+
 import matplotlib.pyplot as plt
 import warnings
 

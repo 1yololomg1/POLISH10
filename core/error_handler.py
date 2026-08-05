@@ -1,4 +1,4 @@
-﻿"""
+"""
 Centralized Error Handling System
 
 Professional, thread-safe error handling optimized for UI/UX.

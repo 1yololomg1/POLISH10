@@ -113,6 +113,7 @@ class GapClassificationResult:
         self.confidence = confidence
         self.reason = reason
 
+@dataclass
 class GapFillingParameters:
     """Advanced gap filling parameters"""
     max_gap_size: int = 100

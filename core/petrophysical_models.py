@@ -295,9 +295,14 @@ class RelativeRockPropertiesModel:
     # Separator that will not appear in LAS curve mnemonics (underscores do).
     RELATION_SEP = "::"
     
-    def __init__(self):
+    def __init__(self, log_processing=None):
         self.property_relations = {}
         self.trained = False
+        # The model reports training and prediction diagnostics through this
+        # callback, which the application injects so messages reach the
+        # processing log. It defaults to a no-op so the model stays usable
+        # standalone; without it every diagnostic call raises AttributeError.
+        self.log_processing = log_processing if log_processing is not None else (lambda *args, **kwargs: None)
 
     def _relation_key(self, curve_a: str, curve_b: str) -> str:
         """Canonical pairwise key with prop1=lexicographically smaller name."""

@@ -1,3 +1,15 @@
+# === CRASH DIAGNOSTICS ===
+# Installed before the scientific stack is imported. The failure mode this
+# guards against is an exception raised while importing numpy/matplotlib in a
+# packaged build, which happens before any application code runs and which a
+# windowed executable can otherwise only report as an unreadable dialog.
+# The reporter depends on the standard library alone, so it cannot itself be a
+# casualty of a broken dependency. It writes locally and never uses the network.
+from core import crash_report  # noqa: E402
+
+crash_report.write_startup_record()
+crash_report.install_global_handlers()
+
 # === CONSTANTS FOR DUPLICATED LITERALS ===
 OHM_M_UNITS = ['OHMM', 'ohm.m', 'OHM-M']
 
@@ -25,8 +37,8 @@ LABEL_MISSING_DATA = "Missing Data"
 LABEL_SIGNIFICANT_CHANGES = "Significant Changes"
 LABEL_OFFSET_POINTS = "Offset Points"
 LABEL_NUMBER_OF_CURVES = "Number of Curves"
-LABEL_UPPER_RIGHT = "Upper Right"
-LABEL_UPPER_LEFT = "Upper Left"
+LABEL_UPPER_RIGHT = "upper right"
+LABEL_UPPER_LEFT = "upper left"
 
 # === PROCESSING THRESHOLD CONSTANTS ===
 GAP_THRESHOLD_GEOLOGICAL = 200  # Points for geological gap classification
@@ -36,6 +48,21 @@ MEMORY_LIMIT_DEFAULT_MB = 2048  # Default memory limit in MB
 QUALITY_THRESHOLD_LOW = 0.5
 QUALITY_THRESHOLD_MEDIUM = 0.7
 QUALITY_THRESHOLD_HIGH = 0.9
+
+# region agent log
+def _dbg(hyp, loc, msg, **data):
+    """Temporary debug instrumentation. Appends one NDJSON record per call."""
+    try:
+        import json as _j, time as _t, threading as _th, os as _os
+        _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "debug-a3a843.log")
+        with open(_p, "a", encoding="utf-8") as _f:
+            _f.write(_j.dumps({"sessionId": "a3a843", "runId": "post-fix", "hypothesisId": hyp,
+                               "location": loc, "message": msg, "data": data,
+                               "thread": _th.current_thread().name,
+                               "timestamp": int(_t.time() * 1000)}) + "\n")
+    except Exception:
+        pass
+# endregion
 
 # === UI EVENT / DIALOG CONSTANTS (canonical definitions in ui.constants) ===
 from ui.constants import (  # noqa: E402
@@ -2970,8 +2997,7 @@ class AdvancedPreprocessingApplication(WellLoadingMixin, AppUIMixin):
                         chk = ttk.Checkbutton(
                             checkbox_frame,
                             text=f"{i}. {curve_name}",
-                            variable=conversion_vars[curve_name],
-                            font=('TkDefaultFont', 9, 'bold')
+                            variable=conversion_vars[curve_name]
                         )
                         chk.pack(side='left', anchor='w')
                         checkboxes[curve_name] = chk
@@ -8729,30 +8755,6 @@ Your feedback contributes to software quality and reliability.
     
             # This is not a critical error - just means we don't have automatic formation detection
 
-    def _update_window_title_with_well_info(self):
-        """Update main window title with well identification.
-        
-        CRITICAL for safety - user always knows which well they're working on.
-        """
-        try:
-            if hasattr(self, 'well_info') and self.well_info:
-                well_name = self.well_info.get('well_name', 'UNKNOWN')
-                field = self.well_info.get('field', 'UNKNOWN')
-                
-                title = "Advanced Wireline Data Preprocessing"
-                
-                if well_name != 'UNKNOWN':
-                    title += f" - Well: {well_name}"
-                
-                if field != 'UNKNOWN':
-                    title += f" - Field: {field}"
-                
-                self.root.title(title)
-            else:
-                self.root.title("Advanced Wireline Data Preprocessing System")
-        except Exception as e:
-            self.log_processing(f"Error updating window title: {e}")
-    
     
     
     def _get_null_value(self) -> float:
@@ -9600,8 +9602,36 @@ Your feedback contributes to software quality and reliability.
                 try:
                     decision, validity_ratio = self.evaluate_curve_viability(column, data)
                     if decision == 'SKIP_INSUFFICIENT_DATA':
-                        self.log_processing(f"Skipping {column}: insufficient valid data ({validity_ratio:.1%})")
+                        _skip_msg = f"Skipping {column}: insufficient valid data ({validity_ratio:.1%})"
+                        self.log_processing(_skip_msg)
+                        # region agent log
+                        if not hasattr(self, '_viability_log_by_curve'):
+                            self._viability_log_by_curve = {}
+                        self._viability_log_by_curve[column] = {
+                            'decision': decision,
+                            'validity_ratio': float(validity_ratio),
+                            'skip_message': _skip_msg,
+                            'quality_summary': None,
+                        }
+                        _dbg("H6", "aps10.py:process_data", "viability skip",
+                             column=column, decision=decision,
+                             validity_ratio=float(validity_ratio), message=_skip_msg)
+                        # endregion
                         continue
+                    else:
+                        # region agent log
+                        if not hasattr(self, '_viability_log_by_curve'):
+                            self._viability_log_by_curve = {}
+                        self._viability_log_by_curve[column] = {
+                            'decision': decision,
+                            'validity_ratio': float(validity_ratio),
+                            'skip_message': None,
+                            'quality_summary': None,
+                        }
+                        _dbg("H6", "aps10.py:process_data", "viability decision",
+                             column=column, decision=decision,
+                             validity_ratio=float(validity_ratio))
+                        # endregion
                 except Exception:
                     # On error, proceed with processing rather than skipping
                     pass
@@ -9646,7 +9676,30 @@ Your feedback contributes to software quality and reliability.
                 final_valid_count = np.sum(~np.isnan(data))
                 total_count = len(data)
                 quality_percentage = (final_valid_count / total_count) * 100 if total_count > 0 else 0
-                self.log_processing(f"Data quality summary for {column}: {final_valid_count}/{total_count} valid points ({quality_percentage:.1f}%)")
+                _quality_msg = (
+                    f"Data quality summary for {column}: "
+                    f"{final_valid_count}/{total_count} valid points ({quality_percentage:.1f}%)"
+                )
+                self.log_processing(_quality_msg)
+                # region agent log
+                if not hasattr(self, '_viability_log_by_curve'):
+                    self._viability_log_by_curve = {}
+                _prev = self._viability_log_by_curve.get(column, {})
+                self._viability_log_by_curve[column] = {
+                    'decision': _prev.get('decision'),
+                    'validity_ratio': _prev.get('validity_ratio'),
+                    'skip_message': _prev.get('skip_message'),
+                    'quality_summary': _quality_msg,
+                    'final_valid_count': int(final_valid_count),
+                    'total_count': int(total_count),
+                    'quality_percentage': float(quality_percentage),
+                }
+                _dbg("H6", "aps10.py:process_data", "data quality summary",
+                     column=column, final_valid_count=int(final_valid_count),
+                     total_count=int(total_count),
+                     quality_percentage=float(quality_percentage),
+                     message=_quality_msg)
+                # endregion
                 
                 # Update the processed data with validated data (convert back to pandas Series)
                 self.processed_data[column] = pd.Series(data, index=self.processed_data.index)
@@ -11210,7 +11263,7 @@ Your feedback contributes to software quality and reliability.
         """
         try:
             # Use existing validation method
-            validation_result = self.validate_curve_range(curve_name, data)
+            validation_result = self.curve_identifier.validate_curve_range(curve_name, data)
             
             if not validation_result['valid']:
                 # If range is invalid, apply tolerance-based cleaning
@@ -12574,6 +12627,20 @@ Your feedback contributes to software quality and reliability.
             fig = Figure(figsize=figsize, dpi=100)
             fig.patch.set_facecolor('white')
             
+            # region agent log
+            _dbg("H0", "aps10.py:_create_popup_visualization", "routing to plot helper",
+                 viz_type=viz_type, curve=curve,
+                 current_rows=(0 if self.current_data is None else len(self.current_data)),
+                 processed_rows=(0 if self.processed_data is None else len(self.processed_data)),
+                 current_id=id(self.current_data), processed_id=id(self.processed_data),
+                 n_results=len(getattr(self, "processing_results", {}) or {}),
+                 is_processing=bool(getattr(self, "is_processing", False)),
+                 open_popups=len(getattr(self, "popup_windows", []) or []),
+                 active_well=getattr(self, "active_well_id", None),
+                 loaded_wells=list((getattr(self, "well_datasets", {}) or {}).keys()),
+                 well_info_name=(getattr(self, "well_info", {}) or {}).get("well_name"))
+            # endregion
+
             # Route to appropriate plotting method on the figure
             if viz_type == "single_curve":
                 self._plot_single_curve_popup(fig, curve)
@@ -12607,9 +12674,18 @@ Your feedback contributes to software quality and reliability.
                 ax.text(0.5, 0.5, f"Popup visualization for '{viz_type}' not yet implemented.\nUse embedded mode.",
                        ha='center', va='center', fontsize=12)
             
+            # region agent log
+            _dbg("H0", "aps10.py:_create_popup_visualization", "plot helper returned, about to draw canvas",
+                 viz_type=viz_type, n_axes=len(fig.axes))
+            # endregion
+
             # Embed figure in Toplevel window using FigureCanvasTkAgg
             canvas = FigureCanvasTkAgg(fig, master=popup)
             canvas.draw()
+
+            # region agent log
+            _dbg("H0", "aps10.py:_create_popup_visualization", "canvas.draw() completed", viz_type=viz_type)
+            # endregion
             
             # Add matplotlib navigation toolbar
             toolbar_frame = ttk.Frame(popup)
@@ -12692,20 +12768,20 @@ Your feedback contributes to software quality and reliability.
             self.log_processing(f"Opened {viz_type} visualization in Toplevel window (proper memory management)")
             
         except Exception as e:
+            # Build the message now and pass it by default argument. Python
+            # unbinds `e` when the except block exits, while root.after defers
+            # the callback into the event loop, so a lambda closing over `e`
+            # would raise NameError there and the dialog would never appear.
+            error_message = (
+                f"Failed to open visualization in new window:\n{str(e)}\n\n"
+                f"Details: Check that data is loaded and processed.\n"
+                f"Try unchecking 'Open in new window' to use embedded mode."
+            )
             try:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Popup Visualization Error",
-                    f"Failed to open visualization in new window:\n{str(e)}\n\n"
-                    f"Details: Check that data is loaded and processed.\n"
-                    f"Try unchecking 'Open in new window' to use embedded mode."
-                ))
+                self.root.after(0, lambda msg=error_message: messagebox.showerror(
+                    "Popup Visualization Error", msg))
             except Exception:
-                messagebox.showerror(
-                    "Popup Visualization Error",
-                    f"Failed to open visualization in new window:\n{str(e)}\n\n"
-                    f"Details: Check that data is loaded and processed.\n"
-                    f"Try unchecking 'Open in new window' to use embedded mode."
-                )
+                messagebox.showerror("Popup Visualization Error", error_message)
             self.log_processing(f"Error creating popup visualization: {e}")
             import traceback
             self.log_processing(f"Traceback: {traceback.format_exc()}")
@@ -12721,18 +12797,106 @@ Your feedback contributes to software quality and reliability.
                    ha='center', va='center', fontsize=12)
             return
         
-        depth = self._get_depth_array()
+        # Each trace is drawn against the depth channel of its own frame, because
+        # resampling can leave processed_data on a different grid to current_data.
+        original_depth = self._get_depth_for_frame(self.current_data)
         
         # Plot original data
         original_data = self.current_data[curve].values
-        ax.plot(original_data, depth, color='red', linewidth=1.5, 
+
+        # region agent log
+        _dbg("H3", "aps10.py:_plot_single_curve_popup", "entry, about to plot original",
+             curve=curve, n_values=len(original_data), n_depth=len(original_depth),
+             lengths_agree=(len(original_data) == len(original_depth)),
+             source_frame_id=id(self.current_data),
+             active_well=getattr(self, "active_well_id", None),
+             n_nan=int(np.count_nonzero(np.isnan(np.asarray(original_data, dtype=float)))))
+        # endregion
+
+        ax.plot(original_data, original_depth, color='red', linewidth=1.5, 
                alpha=0.7, label='Original', linestyle='-')
+
+        # region agent log
+        _dbg("H3", "aps10.py:_plot_single_curve_popup", "original plotted")
+        # endregion
         
         # Plot processed data if available
         if (self.processed_data is not None and curve in self.processed_data.columns):
+            processed_depth = self._get_depth_for_frame(self.processed_data)
             processed_data = self.processed_data[curve].values
-            ax.plot(processed_data, depth, color='blue', linewidth=2.0, 
+
+            # region agent log
+            def _finite_depth_band_sc(values, depth_arr):
+                try:
+                    v = np.asarray(values, dtype=float)
+                    d = np.asarray(depth_arr, dtype=float)
+                    n = min(len(v), len(d))
+                    if n == 0:
+                        return None, None, 0
+                    mask = np.isfinite(v[:n]) & np.isfinite(d[:n])
+                    if not np.any(mask):
+                        return None, None, 0
+                    idxs = np.flatnonzero(mask)
+                    return float(d[idxs[0]]), float(d[idxs[-1]]), int(idxs.size)
+                except Exception:
+                    return None, None, 0
+
+            _sc_first_d, _sc_last_d, _sc_finite_n = _finite_depth_band_sc(
+                processed_data, processed_depth
+            )
+            _pr = (getattr(self, 'processing_results', {}) or {}).get(curve)
+            _pr_final = _pr.get('final_data') if isinstance(_pr, dict) else None
+            _pr_stats = None
+            if _pr_final is not None:
+                _prf = np.asarray(_pr_final, dtype=float)
+                _prf_first, _prf_last, _prf_n = _finite_depth_band_sc(_prf, processed_depth)
+                _pr_stats = {
+                    'len': int(len(_prf)),
+                    'n_finite': int(np.sum(np.isfinite(_prf))),
+                    'first_finite_depth': _prf_first,
+                    'last_finite_depth': _prf_last,
+                    'finite_span_n': _prf_n,
+                    'arrays_equal_nan_safe': bool(
+                        len(_prf) == len(np.asarray(processed_data))
+                        and np.array_equal(
+                            _prf,
+                            np.asarray(processed_data, dtype=float),
+                            equal_nan=True,
+                        )
+                    ),
+                }
+            _viability_sc = (getattr(self, '_viability_log_by_curve', {}) or {}).get(curve)
+            _dbg(
+                "H7",
+                "aps10.py:_plot_single_curve_popup",
+                "pre-plot processed_data depth band",
+                curve=curve,
+                source="processed_data",
+                len_original=int(len(original_data)),
+                len_processed=int(len(processed_data)),
+                len_depth=int(len(processed_depth)),
+                n_finite_original=int(np.sum(np.isfinite(np.asarray(original_data, dtype=float)))),
+                n_finite_processed=int(np.sum(np.isfinite(np.asarray(processed_data, dtype=float)))),
+                processed_first_finite_depth=_sc_first_d,
+                processed_last_finite_depth=_sc_last_d,
+                processed_finite_span_n=_sc_finite_n,
+                processing_results_final=_pr_stats,
+                viability_log=_viability_sc,
+                active_well=getattr(self, "active_well_id", None),
+                well_info_name=(getattr(self, "well_info", {}) or {}).get("well_name"),
+                processed_data_id=id(self.processed_data),
+            )
+            # endregion
+
+            ax.plot(processed_data, processed_depth, color='blue', linewidth=2.0, 
                    label='Processed', linestyle='-')
+
+            # region agent log
+            _dbg("H3", "aps10.py:_plot_single_curve_popup", "processed plotted",
+                 n_values=len(processed_data), n_depth=len(processed_depth),
+                 lengths_agree=(len(processed_data) == len(processed_depth)),
+                 source_frame_id=id(self.processed_data))
+            # endregion
             
             # Add processing quality info if available
             if curve in self.processing_results:
@@ -12767,9 +12931,21 @@ Your feedback contributes to software quality and reliability.
             gap_indices = np.where(gap_mask)[0]
             if len(gap_indices) > 0:
                 data_min = np.min(combined_data) if len(combined_data) > 0 else 0
+
+                # region agent log
+                _dbg("H2", "aps10.py:_plot_single_curve_popup", "about to scatter gap markers",
+                     n_gap_markers=len(gap_indices))
+                # endregion
+
+                # Gaps are detected in the original trace, so they are marked
+                # against the original frame's depth.
                 ax.scatter(np.full(len(gap_indices), data_min), 
-                         depth[gap_indices], color='orange', s=10, alpha=0.5, 
+                         original_depth[gap_indices], color='orange', s=10, alpha=0.5, 
                          label=LABEL_MISSING_DATA, zorder=1)
+
+                # region agent log
+                _dbg("H2", "aps10.py:_plot_single_curve_popup", "gap markers scattered")
+                # endregion
         
         # Set title and labels
         curve_info = self.curve_info.get(curve, {})
@@ -12781,8 +12957,20 @@ Your feedback contributes to software quality and reliability.
         ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
         ax.set_ylabel(LABEL_DEPTH_M, fontsize=12)
         
+        # region agent log
+        import time as _time_dbg
+        _t_legend = _time_dbg.perf_counter()
+        _dbg("H1", "aps10.py:_plot_single_curve_popup", "about to place legend",
+             n_artists=len(ax.lines) + len(ax.collections))
+        # endregion
+
         # Add legend
         ax.legend(loc='best', fontsize=10)
+
+        # region agent log
+        _dbg("H1", "aps10.py:_plot_single_curve_popup", "legend placed",
+             elapsed_ms=round((_time_dbg.perf_counter() - _t_legend) * 1000, 1))
+        # endregion
         
         # Add grid
         ax.grid(True, alpha=0.3)
@@ -12805,6 +12993,10 @@ Your feedback contributes to software quality and reliability.
                    facecolor='lightblue', alpha=0.8), fontsize=9)
         
         fig.tight_layout()
+
+        # region agent log
+        _dbg("H4", "aps10.py:_plot_single_curve_popup", "tight_layout done, helper returning")
+        # endregion
     
     def _plot_single_curve_comparison_popup(self, fig):
         """Plot side-by-side comparison in popup"""
@@ -12814,11 +13006,18 @@ Your feedback contributes to software quality and reliability.
         ax1 = fig.add_subplot(121)
         ax2 = fig.add_subplot(122, sharey=ax1)
         
-        depth = self._get_depth_array()
+        # processing_results arrays are produced from processed_data and share its
+        # grid, while the fallback reads current_data. Depth follows the source
+        # actually used, since the two frames can differ after resampling.
+        processed_depth = self._get_depth_for_frame(self.processed_data)
+        original_depth = self._get_depth_for_frame(self.current_data)
         
         # Plot curve 1
-        data1 = self.processing_results.get(curve1, {}).get('final_data', self.current_data[curve1].values)
-        ax1.plot(data1, depth, 'b-', linewidth=2)
+        if curve1 in self.processing_results and 'final_data' in self.processing_results[curve1]:
+            data1, depth1 = self.processing_results[curve1]['final_data'], processed_depth
+        else:
+            data1, depth1 = self.current_data[curve1].values, original_depth
+        ax1.plot(data1, depth1, 'b-', linewidth=2)
         ax1.set_title(curve1, fontsize=12, fontweight='bold')
         ax1.set_xlabel(f"{curve1}")
         ax1.set_ylabel(LABEL_DEPTH_M)
@@ -12826,8 +13025,11 @@ Your feedback contributes to software quality and reliability.
         ax1.grid(True, alpha=0.3)
         
         # Plot curve 2
-        data2 = self.processing_results.get(curve2, {}).get('final_data', self.current_data[curve2].values)
-        ax2.plot(data2, depth, 'r-', linewidth=2)
+        if curve2 in self.processing_results and 'final_data' in self.processing_results[curve2]:
+            data2, depth2 = self.processing_results[curve2]['final_data'], processed_depth
+        else:
+            data2, depth2 = self.current_data[curve2].values, original_depth
+        ax2.plot(data2, depth2, 'r-', linewidth=2)
         ax2.set_title(curve2, fontsize=12, fontweight='bold')
         ax2.set_xlabel(f"{curve2}")
         ax2.grid(True, alpha=0.3)
@@ -12838,14 +13040,87 @@ Your feedback contributes to software quality and reliability.
     def _plot_comparison_popup(self, fig, curve):
         """Plot original vs processed comparison in popup"""
         ax = fig.add_subplot(111)
-        depth = self._get_depth_array()
         
         if curve in self.processing_results:
+            # Both arrays were captured from processed_data and share its grid.
+            depth = self._get_depth_for_frame(self.processed_data)
             original = self.processing_results[curve]['original_data']
             processed = self.processing_results[curve]['final_data']
+
+            # region agent log
+            def _finite_depth_band(values, depth_arr):
+                """Return first/last finite depth for values aligned with depth_arr."""
+                try:
+                    v = np.asarray(values, dtype=float)
+                    d = np.asarray(depth_arr, dtype=float)
+                    n = min(len(v), len(d))
+                    if n == 0:
+                        return None, None, 0
+                    mask = np.isfinite(v[:n]) & np.isfinite(d[:n])
+                    if not np.any(mask):
+                        return None, None, 0
+                    idxs = np.flatnonzero(mask)
+                    return float(d[idxs[0]]), float(d[idxs[-1]]), int(idxs.size)
+                except Exception:
+                    return None, None, 0
+
+            _orig_first_d, _orig_last_d, _orig_finite_n = _finite_depth_band(original, depth)
+            _proc_first_d, _proc_last_d, _proc_finite_n = _finite_depth_band(processed, depth)
+            _proc_frame = None
+            if self.processed_data is not None and curve in self.processed_data.columns:
+                _pf = np.asarray(self.processed_data[curve].values, dtype=float)
+                _pf_first_d, _pf_last_d, _pf_finite_n = _finite_depth_band(_pf, depth)
+                _proc_frame = {
+                    'len': int(len(_pf)),
+                    'n_finite': int(np.sum(np.isfinite(_pf))),
+                    'first_finite_depth': _pf_first_d,
+                    'last_finite_depth': _pf_last_d,
+                    'finite_span_n': _pf_finite_n,
+                    'same_object_as_final_data': (
+                        np.asarray(processed).ctypes.data == _pf.ctypes.data
+                        if hasattr(np.asarray(processed), 'ctypes') and hasattr(_pf, 'ctypes')
+                        else None
+                    ),
+                    'arrays_equal_nan_safe': bool(
+                        len(np.asarray(processed)) == len(_pf)
+                        and np.array_equal(
+                            np.asarray(processed, dtype=float),
+                            _pf,
+                            equal_nan=True,
+                        )
+                    ),
+                }
+            _viability = (getattr(self, '_viability_log_by_curve', {}) or {}).get(curve)
+            _dbg(
+                "H7",
+                "aps10.py:_plot_comparison_popup",
+                "pre-plot processing_results vs depth band",
+                curve=curve,
+                source="processing_results",
+                len_original=int(len(original)),
+                len_processed=int(len(processed)),
+                len_depth=int(len(depth)),
+                n_finite_original=int(np.sum(np.isfinite(np.asarray(original, dtype=float)))),
+                n_finite_processed=int(np.sum(np.isfinite(np.asarray(processed, dtype=float)))),
+                original_first_finite_depth=_orig_first_d,
+                original_last_finite_depth=_orig_last_d,
+                original_finite_span_n=_orig_finite_n,
+                processed_first_finite_depth=_proc_first_d,
+                processed_last_finite_depth=_proc_last_d,
+                processed_finite_span_n=_proc_finite_n,
+                processed_data_frame=_proc_frame,
+                viability_log=_viability,
+                active_well=getattr(self, "active_well_id", None),
+                well_info_name=(getattr(self, "well_info", {}) or {}).get("well_name"),
+                processed_data_id=id(self.processed_data) if self.processed_data is not None else None,
+                final_data_id=id(processed),
+            )
+            # endregion
+
             ax.plot(original, depth, 'r-', alpha=0.7, label='Original', linewidth=1)
             ax.plot(processed, depth, 'b-', alpha=0.9, label='Processed', linewidth=2)
         else:
+            depth = self._get_depth_for_frame(self.current_data)
             data = self.current_data[curve].values
             ax.plot(data, depth, 'r-', label='Original', linewidth=1.5)
         
@@ -12864,7 +13139,8 @@ Your feedback contributes to software quality and reliability.
             return
         
         selected_curves = [self.curve_listbox.get(i) for i in selected_indices]
-        depth = self._get_depth_array()
+        # Values are read from current_data below, so depth comes from the same frame.
+        depth = self._get_depth_for_frame(self.current_data)
         
         ax = fig.add_subplot(111)
         for i, curve in enumerate(selected_curves[:10]):  # Limit to 10 curves
@@ -12899,8 +13175,9 @@ Your feedback contributes to software quality and reliability.
         """Plot unprocessed curves in popup with proper null handling and depth range"""
         ax = fig.add_subplot(111)
         
-        # Get depth array and actual range
-        depth = self._get_depth_array()
+        # Get depth array and actual range. Every curve below is read from
+        # current_data, so depth is taken from that same frame.
+        depth = self._get_depth_for_frame(self.current_data)
         depth_min, depth_max = self._get_depth_limits(depth)
         
         # Get depth column name for detection
@@ -13024,8 +13301,11 @@ Your feedback contributes to software quality and reliability.
                            c=depth[valid_mask], cmap='viridis', 
                            alpha=0.7, s=20, edgecolors='none')
         
-        # Add colorbar for depth reference
-        cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
+        # Add colorbar for depth reference. Use the figure's own method rather
+        # than plt.colorbar: this figure is a bare Figure that pyplot does not
+        # track, so plt.colorbar would fall back to gcf() and create a stray
+        # pyplot figure that is never released.
+        cbar = fig.colorbar(scatter, ax=ax, shrink=0.8)
         cbar.set_label(LABEL_DEPTH_M, rotation=270, labelpad=20)
         
         # Set proper axis limits
@@ -13173,7 +13453,9 @@ Your feedback contributes to software quality and reliability.
             return
         
         result = self.processing_results[curve]
-        depth = self._get_depth_array()
+        # The processed trace and its uncertainty band come from processing_results,
+        # which shares the processed_data grid.
+        depth = self._get_depth_for_frame(self.processed_data)
         
         # Get processed data and uncertainty estimates
         if 'final_data' in result:
@@ -13188,11 +13470,13 @@ Your feedback contributes to software quality and reliability.
                 ax.fill_betweenx(depth, data - uncertainty, data + uncertainty,
                                alpha=0.3, color='blue', label='±1σ Uncertainty')
             
-            # Add original data for comparison if available
+            # Add original data for comparison if available. This trace belongs
+            # to current_data, so it needs that frame's own depth reference.
             if (self.current_data is not None and 
                 curve in self.current_data.columns):
+                original_depth = self._get_depth_for_frame(self.current_data)
                 original_data = self.current_data[curve].values
-                ax.plot(original_data, depth, color='red', alpha=0.7, 
+                ax.plot(original_data, original_depth, color='red', alpha=0.7, 
                        linewidth=1, label=f'{curve} (original)')
             
             # Set proper axis limits
@@ -13341,21 +13625,30 @@ Your feedback contributes to software quality and reliability.
             ax.text(0.5, 0.5, f"Error creating histogram: {str(e)}", 
                    ha='center', va='center', fontsize=12)
     
-    def _get_depth_array(self):
-        """Helper to get depth array for plotting (works with processed or current data)"""
+    def _get_depth_for_frame(self, data_source):
+        """Return the depth channel belonging to one specific DataFrame.
+
+        Each frame carries its own depth reference. `current_data` holds the file
+        as loaded, while `processed_data` may have been placed on a uniform grid
+        by resample_to_standard_spacing, so the two frames can differ in both
+        sample count and sample positions.
+
+        Depth must therefore be taken from the same frame as the values being
+        plotted. Sharing a single axis across frames raises a shape error when
+        the lengths differ and, worse, plots every sample at the wrong depth when
+        the lengths happen to coincide. Depth placement is the core correctness
+        guarantee of a log plot, so this is resolved per frame rather than once.
+        """
         try:
-            # Try processed data first, then current data
-            data_source = self.processed_data if self.processed_data is not None else self.current_data
-            
             if data_source is None:
                 return np.arange(100)  # Fallback if no data
-            
+
             # Look for depth column
             for col in data_source.columns:
                 curve_type = self.curve_info.get(col, {}).get('curve_type', '')
                 if 'DEPTH' in curve_type or col.upper() in ['DEPT', 'DEPTH', 'MD', 'TVD']:
                     return data_source[col].values
-            
+
             # No depth column found, use index
             return np.arange(len(data_source))
         except Exception as e:
@@ -13363,6 +13656,13 @@ Your feedback contributes to software quality and reliability.
             import warnings
             warnings.warn(f"Could not get depth array: {str(e)}. Using index as depth.", UserWarning)
             return np.arange(100)
+
+    def _get_depth_array(self):
+        """Helper to get depth array for plotting (works with processed or current data)"""
+        # Preferring processed data preserves the behaviour of every existing
+        # caller; helpers that mix frames resolve depth per frame instead.
+        data_source = self.processed_data if self.processed_data is not None else self.current_data
+        return self._get_depth_for_frame(data_source)
     
     def _get_depth_limits(self, depth: np.ndarray) -> Tuple[float, float]:
         """Get depth axis limits from depth array.
@@ -13393,116 +13693,6 @@ Your feedback contributes to software quality and reliability.
             self.log_processing(f"Warning: Error calculating depth limits: {e}")
             return (0.0, 100.0)  # Safe fallback
     
-    def _create_popup_visualization(self, viz_type, curve):
-        """Open the requested visualization in a separate matplotlib popup window.
-
-        Routes to the appropriate popup plotting helper and shows the figure.
-        """
-        try:
-            import matplotlib.pyplot as plt
-
-            # Choose a reasonable default figure size per viz type
-            size_map = {
-                'single_curve': (12, 9),
-                'single_curve_comparison': (14, 9),
-                'comparison': (12, 9),
-                'log_display': (16, 9),
-                'quality_overview': (14, 10),
-                'correlation_matrix': (12, 12),
-                'scatter_plot': (12, 9),
-                '3d_visualization': (12, 10),
-                'multi_curve': (16, 10),
-                'unprocessed_curves': (14, 9),
-                'histogram': (12, 9),
-                'uncertainty': (12, 9)
-            }
-            figsize = size_map.get(viz_type, (12, 9))
-
-            # Add well identification to window title for safety
-            well_text = ""
-            try:
-                if hasattr(self, 'well_info') and self.well_info:
-                    well_name = self.well_info.get('well_name', '')
-                    if well_name and well_name != 'UNKNOWN':
-                        well_text = f" (Well: {well_name})"
-            except (AttributeError, KeyError, TypeError) as well_info_error:
-                # Well info access failed - continue without well name in title
-                self.handle_graceful_degradation(
-                    well_info_error,
-                    "Well info access in visualization",
-                    "Continuing visualization without well name in title"
-                )
-            except Exception as well_info_error:
-                # Unexpected error accessing well info
-                self.handle_ui_error(
-                    well_info_error,
-                    "Well info access in visualization",
-                    "well_info",
-                    graceful_degradation=True
-                )
-
-            title_curve = curve if curve else 'Multiple Curves'
-            fig = plt.figure(figsize=figsize, num=f"{viz_type} - {title_curve}{well_text}")
-
-            # Route to appropriate popup plot helper
-            if viz_type == 'single_curve_comparison':
-                self._plot_single_curve_comparison_popup(fig)
-            elif viz_type == 'comparison':
-                self._plot_comparison_popup(fig, curve)
-            elif viz_type == 'multi_curve':
-                self._plot_multi_curve_popup(fig)
-            elif viz_type == 'log_display':
-                self._plot_log_display_popup(fig)
-            elif viz_type == 'quality_overview':
-                self._plot_quality_overview_popup(fig)
-            elif viz_type == 'unprocessed_curves':
-                self._plot_unprocessed_curves_popup(fig)
-            elif viz_type == 'single_curve':
-                # Minimal single-curve popup using current/processed data
-                ax = fig.add_subplot(111)
-                depth = self._get_depth_array()
-                if curve in getattr(self, 'processing_results', {}) and 'final_data' in self.processing_results[curve]:
-                    data = self.processing_results[curve]['final_data']
-                    color, status = 'blue', 'Processed'
-                elif hasattr(self, 'current_data') and self.current_data is not None and curve in self.current_data.columns:
-                    data = self.current_data[curve].values
-                    color, status = 'red', 'Original'
-                else:
-                    raise ValueError(f"Selected curve '{curve}' not found in available data")
-                ax.plot(data, depth, color=color, linewidth=2, label=status)
-                ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
-                ax.set_ylabel(LABEL_DEPTH_M)
-                ax.set_title(f"{curve} - {status}", fontsize=14, fontweight='bold')
-                ax.invert_yaxis()
-                ax.grid(True, alpha=0.3)
-                ax.legend()
-                fig.tight_layout()
-            elif viz_type == 'histogram':
-                self._plot_histogram_popup(fig, curve)
-            elif viz_type == 'uncertainty':
-                self._plot_uncertainty_popup(fig, curve)
-            elif viz_type == 'quality_metrics':
-                self._plot_quality_metrics_popup(fig)
-            elif viz_type == 'correlation_matrix':
-                self._plot_correlation_matrix_popup(fig)
-            elif viz_type == 'scatter_plot':
-                self._plot_scatter_plot_popup(fig, curve)
-            elif viz_type == '3d_visualization':
-                self._plot_3d_visualization_popup(fig, curve)
-            else:
-                # Fallback: indicate unsupported popup type
-                ax = fig.add_subplot(111)
-                ax.text(0.5, 0.5, f"Popup not implemented for '{viz_type}'. Use embedded mode.",
-                        ha='center', va='center')
-                ax.axis('off')
-                fig.tight_layout()
-
-            # Display popup window
-            plt.show()
-
-        except Exception as e:
-            messagebox.showerror(ERROR_TITLE_VISUALIZATION, f"Failed to open popup visualization:\n{str(e)}")
-
     # ============================================================================
     # ENHANCED VISUALIZATION CONTROLLER
     # ============================================================================
@@ -13652,22 +13842,49 @@ Your feedback contributes to software quality and reliability.
             self.root.destroy()
 
 def main():
-    """Main application entry point"""
-    try:
-        # Set up logging
+    """Main application entry point.
 
-        
+    Diagnostics are installed before anything else so that a failure during
+    application construction still produces a readable local report. A packaged
+    windowed build has no console, so without this an early failure is visible
+    to the user only as a generic dialog or as nothing happening at all.
+    """
+    # The launch is already recorded at module import time, which is earlier
+    # than this point and therefore survives an import-time failure. Only the
+    # handlers are refreshed here.
+    crash_report.install_global_handlers()
+
+    try:
         # Check for advanced libraries - log to console instead of popup
         if not ADVANCED_LIBS:
             print("INFO: Some advanced features may not be available due to missing libraries.")
             print("      For full functionality, install: scipy, scikit-learn, pywavelets")
-        
+
         # Create and run application
         app = AdvancedPreprocessingApplication()
+
+        # Tk swallows exceptions raised inside widget callbacks, so the handler
+        # can only be attached once the root window exists.
+        crash_report.install_global_handlers(tk_root=getattr(app, 'root', None))
+
         app.run()
-        
+
     except Exception as e:
-        messagebox.showerror("Startup Error", f"Failed to start application:\n{str(e)}")
+        report_path = crash_report.write_crash_report(
+            type(e), e, e.__traceback__, context="startup")
+
+        message = f"Failed to start application:\n{str(e)}"
+        if report_path:
+            # Naming the file lets the user attach it to a support request
+            # without needing to reproduce the fault or send a screenshot.
+            message += (f"\n\nA diagnostic report was saved to:\n{report_path}"
+                        "\n\nIt contains technical details only, no well data, "
+                        "and was not sent anywhere.")
+        try:
+            messagebox.showerror("Startup Error", message)
+        except Exception:
+            # Tk itself may be what failed, so fall back to standard error.
+            print(message, file=sys.stderr)
 
 if __name__ == "__main__":
     main()

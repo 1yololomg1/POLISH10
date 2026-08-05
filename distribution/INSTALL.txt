@@ -3,8 +3,12 @@ INSTALLATION INSTRUCTIONS
 
 Advanced Wireline Data Preprocessing System
 
-⚠️ IMPORTANT: Python is NOT included with this package!
+IMPORTANT: Python is NOT included with this package.
 You must install Python separately before running this application.
+
+If you received a WirelinePreprocessing-windows.zip instead, you do not need
+any of the steps below. Extract that folder and run the .exe inside it; see
+README_FIRST.txt in the extracted folder.
 
 QUICK INSTALL (4 steps)
 ------------------------
