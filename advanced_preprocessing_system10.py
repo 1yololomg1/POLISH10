@@ -11546,7 +11546,11 @@ Your feedback contributes to software quality and reliability.
 
                 s = pd.Series(series[valid].values, index=idx[valid].values)
                 s = s.groupby(level=0).mean().sort_index()
-                s_interp = s.reindex(s.index.union(new_depth)).interpolate(method='index', limit_direction='both')
+                # limit_area='inside' confines interpolation to gaps bracketed by real
+                # samples. Without it, a curve logged over only part of the well (e.g.
+                # a density tool run 4250-5326 ft in a 0-5359 ft hole) gets extrapolated
+                # to a fabricated value at every depth in the grid.
+                s_interp = s.reindex(s.index.union(new_depth)).interpolate(method='index', limit_area='inside')
                 resampled_df[col] = s_interp.reindex(new_depth).values
 
             self.processed_data = resampled_df
