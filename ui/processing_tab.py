@@ -90,13 +90,17 @@ class ProcessingTabMixin:
         ttk.Checkbutton(uniformization_tab, text="Rename Curves to Standard Mnemonics", 
                        variable=self.rename_curves_var).pack(anchor='w', pady=5, padx=10)
         
-        # Standard null value handling
+        # Standard null value handling (default until a file's LAS NULL is applied on load)
         ttk.Label(uniformization_tab, text="Standard Null Value:", style='Card.TLabel').pack(anchor='w', pady=(10, 5), padx=10)
         self.null_value_var = tk.StringVar(value="-999.25")
-        null_combo = ttk.Combobox(uniformization_tab, textvariable=self.null_value_var, 
-                                 values=["-999.25", "-999", "-9999", "NaN"], 
-                                 state='readonly', width=15)
-        null_combo.pack(anchor='w', pady=5, padx=10)
+        self.null_value_combo = ttk.Combobox(
+            uniformization_tab,
+            textvariable=self.null_value_var,
+            values=["-999.25", "-999", "-9999", "NaN"],
+            state='readonly',
+            width=15,
+        )
+        self.null_value_combo.pack(anchor='w', pady=5, padx=10)
         
         # Standardize units
         self.standardize_units_var = tk.BooleanVar(value=True)

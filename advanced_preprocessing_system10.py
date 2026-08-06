@@ -5249,6 +5249,8 @@ Your feedback contributes to software quality and reliability.
             if first_well_id:
                 self.set_active_well(first_well_id)
             self.update_well_list_display()
+            # After all wells are in well_datasets, sync NULL (prompt only on conflict)
+            self._reconcile_null_value_convention(allow_prompt=True)
         except Exception as e:
             if self.error_handler:
                 context = self.error_handler.create_context(
@@ -8654,6 +8656,9 @@ Your feedback contributes to software quality and reliability.
                 self.active_well_id = well_id
                 # Update the well listbox to show the loaded well
                 self.update_well_list_display()
+
+            # Apply LAS-declared NULL (prompt only if multiple loaded wells disagree)
+            self._reconcile_null_value_convention(allow_prompt=True)
             
             self.progress_bar['value'] = 50
             self.status_label.config(text="Analyzing curves...")
@@ -8729,6 +8734,8 @@ Your feedback contributes to software quality and reliability.
         else:
             raise ValueError(f"Unsupported file format: {ext}")
         self.processed_data = self.current_data.copy() if self.current_data is not None else None
+        # Headless: adopt file NULL without UI prompts
+        self._reconcile_null_value_convention(allow_prompt=False)
         if hasattr(self, 'analyze_curves'):
             try:
                 self.analyze_curves()
@@ -8742,6 +8749,206 @@ Your feedback contributes to software quality and reliability.
 
     
     
+    def _format_null_value_for_ui(self, raw: Any) -> Optional[str]:
+        """Normalize a LAS/well NULL declaration to a Combobox-friendly string.
+
+        Returns None when the well did not declare a usable NULL (CSV/Excel stubs,
+        missing header, UNKNOWN placeholders).
+        """
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text or text.upper() in ('UNKNOWN', 'N/A', 'NONE', 'NULL'):
+            # Missing / placeholder declarations are not usable sentinels.
+            return None
+        if text.upper() in ('NAN', 'NA'):
+            return 'NaN'
+        try:
+            value = float(text)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(value):
+            return 'NaN'
+        # Prefer the Combobox's canonical labels for common LAS sentinels.
+        known = (
+            (-999.25, '-999.25'),
+            (-999.0, '-999'),
+            (-9999.0, '-9999'),
+            (99999.0, '99999'),
+            (-99999.0, '-99999'),
+        )
+        for target, label in known:
+            if abs(value - target) < 1e-9:
+                return label
+        # Preserve other declared numerics without scientific noise.
+        if float(value).is_integer():
+            return str(int(value))
+        return format(value, 'g')
+
+    def _null_value_strings_agree(self, a: str, b: str) -> bool:
+        """True when two UI null strings represent the same convention."""
+        if a == b:
+            return True
+        if a == 'NaN' or b == 'NaN':
+            return a == b
+        try:
+            return abs(float(a) - float(b)) < 1e-9
+        except (TypeError, ValueError):
+            return False
+
+    def _set_null_value_var(self, ui_value: str, *, source: str = '') -> None:
+        """Apply a null convention to the session variable and Combobox options."""
+        if not hasattr(self, 'null_value_var'):
+            return
+        if hasattr(self, 'null_value_combo') and self.null_value_combo is not None:
+            try:
+                options = list(self.null_value_combo.cget('values') or ())
+                if ui_value not in options:
+                    options.append(ui_value)
+                    self.null_value_combo.configure(values=options)
+            except (tk.TclError, AttributeError):
+                pass
+        try:
+            self.null_value_var.set(ui_value)
+        except (tk.TclError, AttributeError):
+            return
+        if source:
+            self.log_processing(f"Using declared NULL value {ui_value} ({source})")
+        else:
+            self.log_processing(f"Using declared NULL value {ui_value}")
+
+    def _collect_declared_nulls_by_well(self) -> Dict[str, str]:
+        """Map well_id -> formatted NULL for wells that declare one."""
+        declared: Dict[str, str] = {}
+        datasets = getattr(self, 'well_datasets', None) or {}
+        for well_id, dataset in datasets.items():
+            well_info = (dataset or {}).get('well_info') or {}
+            formatted = self._format_null_value_for_ui(well_info.get('null_value'))
+            if formatted is not None:
+                declared[well_id] = formatted
+        # Fall back to current well_info when datasets are empty (headless load_data).
+        if not declared and getattr(self, 'well_info', None):
+            formatted = self._format_null_value_for_ui(self.well_info.get('null_value'))
+            if formatted is not None:
+                label = str(self.well_info.get('well_name') or self.well_info.get('uwi') or 'active')
+                declared[label] = formatted
+        return declared
+
+    def _prompt_null_value_conflict(self, declared_by_well: Dict[str, str]) -> Optional[str]:
+        """Ask the user to pick a NULL when loaded wells disagree. Returns UI string or None."""
+        # Group wells by equivalent null convention.
+        groups: List[Tuple[str, List[str]]] = []
+        for well_id, ui_null in declared_by_well.items():
+            placed = False
+            for canonical, wells in groups:
+                if self._null_value_strings_agree(canonical, ui_null):
+                    wells.append(well_id)
+                    placed = True
+                    break
+            if not placed:
+                groups.append((ui_null, [well_id]))
+
+        if len(groups) <= 1:
+            return groups[0][0] if groups else None
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Null Value Conflict")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.geometry("520x360")
+
+        ttk.Label(
+            dialog,
+            text=(
+                "Loaded wells declare different NULL values.\n"
+                "Choose which convention to use for processing and export."
+            ),
+            wraplength=480,
+            justify='left',
+        ).pack(anchor='w', padx=12, pady=(12, 8))
+
+        choice = tk.StringVar(value=groups[0][0])
+        for ui_null, wells in groups:
+            well_list = ', '.join(wells[:6])
+            if len(wells) > 6:
+                well_list += f', … (+{len(wells) - 6} more)'
+            ttk.Radiobutton(
+                dialog,
+                text=f"{ui_null}  —  {well_list}",
+                variable=choice,
+                value=ui_null,
+            ).pack(anchor='w', padx=20, pady=3)
+
+        result: Dict[str, Optional[str]] = {'value': None}
+
+        def on_ok() -> None:
+            result['value'] = choice.get()
+            dialog.destroy()
+
+        def on_cancel() -> None:
+            result['value'] = None
+            dialog.destroy()
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill='x', pady=12, padx=12)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side='left')
+        ttk.Button(button_frame, text="Use Selected NULL", command=on_ok).pack(side='right')
+
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        self.root.wait_window(dialog)
+        return result['value']
+
+    def _reconcile_null_value_convention(self, *, allow_prompt: bool = True) -> None:
+        """Set null_value_var from declared LAS NULL values; prompt only on conflict.
+
+        - Single file / all wells agree → apply silently.
+        - Multiple wells with disagreeing NULL → prompt (unless allow_prompt=False).
+        - No declared NULL → leave the current session value unchanged.
+        """
+        declared = self._collect_declared_nulls_by_well()
+        if not declared:
+            self.log_processing(
+                "No LAS-declared NULL value found; keeping session null "
+                f"{self.null_value_var.get() if hasattr(self, 'null_value_var') else '-999.25'}"
+            )
+            return
+
+        unique: List[str] = []
+        for ui_null in declared.values():
+            if not any(self._null_value_strings_agree(ui_null, existing) for existing in unique):
+                unique.append(ui_null)
+
+        if len(unique) == 1:
+            wells = ', '.join(list(declared.keys())[:4])
+            self._set_null_value_var(unique[0], source=f"from {wells}")
+            return
+
+        self.log_processing(
+            "NULL conflict across loaded wells: "
+            + '; '.join(f"{wid}={val}" for wid, val in declared.items())
+        )
+        if allow_prompt:
+            chosen = self._prompt_null_value_conflict(declared)
+            if chosen is not None:
+                self._set_null_value_var(chosen, source='user selection after conflict')
+                return
+            self.log_processing(
+                "NULL conflict dialog cancelled; keeping session null "
+                f"{self.null_value_var.get()}"
+            )
+            return
+
+        # Headless / non-interactive: prefer the active well, else first seen.
+        active = getattr(self, 'active_well_id', None)
+        if active and active in declared:
+            self._set_null_value_var(declared[active], source=f'active well {active} (no prompt)')
+        else:
+            first_well, first_val = next(iter(declared.items()))
+            self._set_null_value_var(first_val, source=f'{first_well} (no prompt)')
+
     def _get_null_value(self) -> float:
         """Get the configured null value with proper error handling.
         
@@ -11380,21 +11587,46 @@ Your feedback contributes to software quality and reliability.
             if self.processed_data is None:
                 return
             
-            # Standardize null values
+            # Standardize null values using the session/file-declared convention
+            session_null_label = (
+                self.null_value_var.get()
+                if hasattr(self, 'null_value_var') and self.null_value_var.get()
+                else '-999.25'
+            )
+            use_nan_representation = (session_null_label == 'NaN')
             null_value = self._get_null_value()
             
-            # Replace various null representations with standard null
+            # Defensive net for curves that use a different sentinel than the
+            # file's own header declares. Hits are logged, not silent.
             null_patterns = [-999.25, -999, -9999, 99999, -99999]
             
             for curve in self.processed_data.columns:
                 data = self.processed_data[curve]
+                numeric = pd.to_numeric(data, errors='coerce')
                 
-                # Replace null patterns with NaN first
                 for pattern in null_patterns:
+                    # The declared session null is not an "alternate" sentinel.
+                    if (
+                        not use_nan_representation
+                        and np.isfinite(null_value)
+                        and abs(float(pattern) - float(null_value)) < 1e-9
+                    ):
+                        continue
+                    try:
+                        hit_count = int((numeric == pattern).sum())
+                    except Exception:
+                        hit_count = 0
+                    if hit_count > 0:
+                        self.log_processing(
+                            f"NULL safety net: {curve} had {hit_count} value(s) equal to "
+                            f"{pattern} (session NULL is {session_null_label}); "
+                            f"treating as missing"
+                        )
                     data = data.replace(pattern, np.nan)
+                    numeric = pd.to_numeric(data, errors='coerce')
                 
                 # Apply final null value representation
-                if self.null_value_var.get() != "NaN":
+                if not use_nan_representation:
                     data = data.fillna(null_value)
                 
                 self.processed_data[curve] = data
