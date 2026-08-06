@@ -8361,17 +8361,20 @@ Your feedback contributes to software quality and reliability.
             sp = str(validated_path)
             sp_lower = sp.lower()
             export_df = self._dataframe_with_uncertainty_bands(self.processed_data)
+            # Missing data is held as NaN internally, so the sentinel is
+            # written here at the export boundary. Without na_rep the tabular
+            # writers would emit empty cells instead of the declared null.
+            null_value = self.null_value_var.get() if hasattr(self, 'null_value_var') else "-999.25"
             if sp_lower.endswith('.csv'):
-                export_df.to_csv(sp, index=False)
+                export_df.to_csv(sp, index=False, na_rep=str(null_value))
             elif sp_lower.endswith('.xlsx'):
                 try:
-                    export_df.to_excel(sp, index=False)
+                    export_df.to_excel(sp, index=False, na_rep=str(null_value))
                 except Exception as ex:
                     messagebox.showerror("Export", f"Excel export failed: {ex}")
                     return
             else:
                 # Default to LAS
-                null_value = self.null_value_var.get() if hasattr(self, 'null_value_var') else "-999.25"
                 # Merge uncertainty into curve_info for LAS headers when present
                 export_info = dict(self.curve_info or {})
                 for col in export_df.columns:
@@ -11580,54 +11583,61 @@ Your feedback contributes to software quality and reliability.
             pass
 
     def finalize_uniformization(self):
-        """Apply final uniformization steps"""
+        """Apply final uniformization steps.
+
+        NaN is the single internal representation for missing data. This step
+        normalises every null sentinel found in the working frame to NaN,
+        including the sentinel the file's own header declares, so that
+        `processed_data` and the per-curve arrays in `processing_results`
+        express missingness the same way. Consumers that count gaps, compute
+        correlations or plot can therefore trust `isna`/`isnan` without each
+        having to know the session's null convention.
+
+        The sentinel is re-emitted only at the export boundary, where the LAS
+        and CSV formats require a numeric placeholder.
+        """
         try:
             self.log_processing("Applying final uniformization...")
             
             if self.processed_data is None:
                 return
             
-            # Standardize null values using the session/file-declared convention
+            # Retained only for the log message; the declared convention no
+            # longer changes how missing data is stored internally.
             session_null_label = (
                 self.null_value_var.get()
                 if hasattr(self, 'null_value_var') and self.null_value_var.get()
                 else '-999.25'
             )
-            use_nan_representation = (session_null_label == 'NaN')
             null_value = self._get_null_value()
             
-            # Defensive net for curves that use a different sentinel than the
-            # file's own header declares. Hits are logged, not silent.
+            # The declared sentinel is normalised alongside the common
+            # alternates, because a curve may carry a sentinel that its own
+            # header never declared. Hits are logged, not silent.
             null_patterns = [-999.25, -999, -9999, 99999, -99999]
+            if np.isfinite(null_value) and not any(
+                abs(float(pattern) - float(null_value)) < 1e-9
+                for pattern in null_patterns
+            ):
+                null_patterns.append(float(null_value))
             
             for curve in self.processed_data.columns:
                 data = self.processed_data[curve]
                 numeric = pd.to_numeric(data, errors='coerce')
                 
                 for pattern in null_patterns:
-                    # The declared session null is not an "alternate" sentinel.
-                    if (
-                        not use_nan_representation
-                        and np.isfinite(null_value)
-                        and abs(float(pattern) - float(null_value)) < 1e-9
-                    ):
-                        continue
                     try:
                         hit_count = int((numeric == pattern).sum())
                     except Exception:
                         hit_count = 0
                     if hit_count > 0:
                         self.log_processing(
-                            f"NULL safety net: {curve} had {hit_count} value(s) equal to "
+                            f"NULL normalisation: {curve} had {hit_count} value(s) equal to "
                             f"{pattern} (session NULL is {session_null_label}); "
-                            f"treating as missing"
+                            f"converting to NaN"
                         )
                     data = data.replace(pattern, np.nan)
                     numeric = pd.to_numeric(data, errors='coerce')
-                
-                # Apply final null value representation
-                if not use_nan_representation:
-                    data = data.fillna(null_value)
                 
                 self.processed_data[curve] = data
             
