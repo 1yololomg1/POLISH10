@@ -2385,7 +2385,25 @@ class AdvancedPreprocessingApplication(WellLoadingMixin, AppUIMixin):
         self.depth_spacing_var = tk.DoubleVar(value=0.1)
         self.rename_curves_var = tk.BooleanVar(value=True)
         self.null_value_var = tk.StringVar(value="-999.25")
-        self.standardize_units_var = tk.BooleanVar(value=True)
+        # Phase 0 item 2 (see POLISH_pipeline_contracts.md sections 6 and 8): unit
+        # standardization is OFF by default. Converting on load is what breaks an
+        # imperial well. On KEOUGH #12-34 the chain is:
+        #   DEPT FT -> M (x0.3048), so 0-5359.5 ft becomes 0-1633.678 m; but
+        #   depth_spacing_var was already fixed at 0.5 by _sync_depth_spacing_default
+        #   while the unit was still FT. The resampler then reads that 0.5 as metres.
+        #   1633.678 / 0.5 + 1 = 3268 rows out of 10720. That is the C4 violation:
+        #   a parameter derived under "unit is FT" survived the unit changing.
+        #   RHOB G/CC -> KG/M3 (x1000) gives ~2000-2700, but BULK_DENSITY carries a
+        #   single 'range': [1.0, 3.5] for both G/CC and KG/M3 inputs
+        #   (core/curve_identification.py), so range validation empties the curve.
+        #   That is the C1 violation.
+        # Leaving an already-imperial well alone sidesteps both: DEPT stays FT, 0.5 ft
+        # spacing is then correct, 10720 rows survive, and RHOB passes its own range.
+        # This defaults the transformation off (C6); it does not repair C1 or C4
+        # themselves. Those are Phase 2, and the trap is still live for any user who
+        # ticks the box. Whether metric wells are processed at all is an open question
+        # (contracts section 9) -- deliberately not assumed either way here.
+        self.standardize_units_var = tk.BooleanVar(value=False)
         
         # === NEW PRODUCTION-READY FEATURE VARIABLES ===
         # Environmental Corrections (Priority 1.1)
@@ -11541,6 +11559,24 @@ Your feedback contributes to software quality and reliability.
                     self.processed_data = self.current_data
                 finally:
                     self.current_data = original_current_data
+            else:
+                # Skipping is a logged, visible outcome, not a silent pass. State the
+                # units the data is actually carrying forward, because every later
+                # stage that compares against a reference range assumes some unit and
+                # currently has no way to declare which (C1 is not implemented yet).
+                try:
+                    declared = sorted({
+                        str(self.curve_info.get(col, {}).get('unit', '')).strip()
+                        for col in self.processed_data.columns
+                    } - {''})
+                    self.log_processing(
+                        "Unit standardization is OFF (default). Values and declared "
+                        "units are carried through as loaded; no conversion applied.")
+                    if declared:
+                        self.log_processing(
+                            f"  Units in play: {', '.join(declared)}")
+                except Exception:
+                    pass
         except Exception as e:
             try:
                 self.log_processing(f"ERROR: Uniformization failed: {e}")

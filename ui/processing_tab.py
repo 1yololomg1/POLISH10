@@ -103,7 +103,10 @@ class ProcessingTabMixin:
         self.null_value_combo.pack(anchor='w', pady=5, padx=10)
         
         # Standardize units
-        self.standardize_units_var = tk.BooleanVar(value=True)
+        # Off by default: see the Phase 0 item 2 note on the same variable in
+        # advanced_preprocessing_system10.py. Converting units on an imperial well
+        # invalidates the derived depth spacing (C4) and the density range (C1).
+        self.standardize_units_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(uniformization_tab, text="Standardize Units", 
                        variable=self.standardize_units_var).pack(anchor='w', pady=5, padx=10)
 
