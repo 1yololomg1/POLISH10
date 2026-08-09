@@ -13,7 +13,25 @@ rather than a traceback, which means a manual click-through can silently look
 like it "worked" while a helper actually errored. This harness intercepts those
 dialogs, so a swallowed failure becomes an assertable result.
 
-It also verifies the two properties that manual clicking cannot show:
+It verifies two independent kinds of invariant.
+
+The first is CRUDE: drive every route and assert only that it does not raise.
+This exists because the orientation assertion below inspects axes that already
+exist, so a route that throws before creating an axis contributes no axis and is
+silently skipped. That is how a dead plot_log_display, which raised NameError on
+every invocation, sat inside a 19-of-19 green report. Each route is driven both
+before and after the processing pipeline state is present, because frame-mixing
+defects only appear once processing_results exists on a different grid to
+current_data.
+
+The popup helpers are called directly on a bare Figure for this check rather
+than through _create_popup_visualization, which converts any exception into a
+messagebox and would hide the raise. The set of helpers driven is cross-checked
+against the dispatch table in the application source, so a route added there
+without a harness case is reported rather than going quietly uncovered.
+
+The second kind is SPECIFIC, and covers the three properties that manual
+clicking cannot show:
 
   1. Cleanup. The promoted Toplevel implementation registers each window in
      self.popup_windows / self.popup_figures and drains them in its on_close
@@ -26,6 +44,17 @@ It also verifies the two properties that manual clicking cannot show:
      is direct evidence the leak is gone rather than an eyeball check of Task
      Manager.
 
+  3. Depth axis orientation. Wireline display requires depth increasing
+     downward, which matplotlib expresses as ylim bottom > top. Several plot
+     helpers used to call set_ylim(depth_max, depth_min) and then
+     invert_yaxis(), a double flip that silently rendered depth upward. The
+     orientation is invisible in a smoke test that only asks "did a window
+     open", so every depth-labelled axis is asserted explicitly.
+
+     Four of the affected helpers draw into the embedded canvas rather than a
+     popup, so the popup routes alone do not reach them. They are driven
+     directly by check_embedded_depth_plots().
+
 It deliberately does NOT judge whether a plot looks scientifically correct. That
 still needs a human eye on a few representative plots.
 
@@ -33,17 +62,33 @@ STRUCTURE
 ---------
 build_synthetic_well()      Deterministic wireline dataset (DataFrame + curve_info).
 build_processing_results()  Per-curve original/final arrays the helpers read.
+resample_frame()            Puts a frame on a different grid, as resampling does.
 DialogCapture               Context manager intercepting messagebox calls.
 CheckResult                 Outcome record for a single visualization route.
+RaiseCheck                  Outcome record for the crude does-not-raise invariant.
 find_toolbar()              Recursively locates a matplotlib navigation toolbar.
 stray_toplevels()           Detects orphan windows left by a failed route.
+is_colorbar_axes()          Distinguishes colorbar axes from data axes.
+depth_axis_violations()     Asserts depth-labelled axes are inverted.
 check_popup()               Opens, validates and closes one popup.
-prepare_application()       Instantiates the app and injects the synthetic state.
+embedded_depth_cases()      Builds the direct-call cases for embedded helpers.
+check_embedded_depth_plots() Drives embedded helpers and checks orientation.
+popup_helper_cases()        Direct-call cases for every popup dispatch branch.
+dispatched_viz_types()      Reads the dispatch table out of the app source.
+coverage_gaps()             Reports dispatch branches with no harness case.
+check_routes_raise()        Drives every route and records only raises.
+prepare_application()       Instantiates the app in the pre-processing state.
+apply_processed_state()     Adds the state the processing pipeline leaves behind.
 main()                      Orchestration, reporting, process exit code.
 
 USAGE
 -----
     python popup_smoke_check.py
+    python popup_smoke_check.py --mismatched-grid
+
+With --mismatched-grid the post-processing state places processed_data on a
+coarser grid than current_data, reproducing the row-count change that
+resample_to_standard_spacing introduces in a real session.
 
 Requires a desktop session because it creates real Tk windows. Windows are
 created and destroyed quickly; the main application window stays hidden.
@@ -65,6 +110,12 @@ DEPTH_MNEMONIC = "DEPT"
 
 # Each entry is (viz_type, curve). A curve of None means the route derives its
 # own subject, either from the Tk selection variables or from the curve listbox.
+# Any axis whose Y label names depth is asserted to be inverted. Matching on the
+# label rather than a hardcoded route list means a depth axis added to a new plot
+# is covered automatically, and non-depth plots (histogram, crossplot,
+# correlation matrix) are skipped without needing to be enumerated.
+DEPTH_LABEL_HINT = "depth"
+
 VIZ_ROUTES: List[Tuple[str, Optional[str]]] = [
     ("single_curve", "GR"),
     ("single_curve_comparison", None),
@@ -131,15 +182,23 @@ def build_synthetic_well(n_samples: int = 1200,
     for mnemonic, start, length in (("RHOB", 300, 40), ("NPHI", 305, 35), ("DT", 700, 25)):
         frame.loc[start:start + length, mnemonic] = np.nan
 
+    # These are the fully qualified curve type names the application's own
+    # display code keys off: _setup_log_display_figure looks up
+    # 'DEPTH_MEASURED', and the four tracks look up 'GAMMA_RAY_TOTAL',
+    # 'SPONTANEOUS_POTENTIAL', 'CALIPER_SINGLE', 'RESISTIVITY_DEEP',
+    # 'NEUTRON_POROSITY', 'BULK_DENSITY' and 'SONIC_COMPRESSIONAL'. Shorter
+    # aliases such as 'GAMMA_RAY' match nothing there, which would leave every
+    # track empty and stop the log display from exercising its own curve
+    # selection, crossover shading and QC-indicator code at all.
     curve_info: Dict[str, Dict[str, str]] = {
-        DEPTH_MNEMONIC: {"curve_type": "DEPTH", "unit": "M"},
-        "GR": {"curve_type": "GAMMA_RAY", "unit": "GAPI"},
-        "RHOB": {"curve_type": "DENSITY", "unit": "G/C3"},
-        "NPHI": {"curve_type": "NEUTRON", "unit": "V/V"},
-        "RT": {"curve_type": "RESISTIVITY", "unit": "OHMM"},
-        "DT": {"curve_type": "SONIC", "unit": "US/F"},
-        "CALI": {"curve_type": "CALIPER", "unit": "IN"},
-        "SP": {"curve_type": "SP", "unit": "MV"},
+        DEPTH_MNEMONIC: {"curve_type": "DEPTH_MEASURED", "unit": "M"},
+        "GR": {"curve_type": "GAMMA_RAY_TOTAL", "unit": "GAPI"},
+        "RHOB": {"curve_type": "BULK_DENSITY", "unit": "G/C3"},
+        "NPHI": {"curve_type": "NEUTRON_POROSITY", "unit": "V/V"},
+        "RT": {"curve_type": "RESISTIVITY_DEEP", "unit": "OHMM"},
+        "DT": {"curve_type": "SONIC_COMPRESSIONAL", "unit": "US/F"},
+        "CALI": {"curve_type": "CALIPER_SINGLE", "unit": "IN"},
+        "SP": {"curve_type": "SPONTANEOUS_POTENTIAL", "unit": "MV"},
     }
     return frame, curve_info
 
@@ -223,6 +282,28 @@ class CheckResult:
         return "PASS" if self.passed else "FAIL"
 
 
+@dataclass
+class RaiseCheck:
+    """Outcome of driving one route purely to see whether it raises.
+
+    Deliberately records nothing about what was drawn. The value of this check is
+    that it cannot be satisfied by a route that produces no axes, which is the
+    blind spot in every other assertion in this harness.
+    """
+
+    route: str
+    phase: str
+    error: Optional[str] = None
+
+    @property
+    def passed(self) -> bool:
+        return self.error is None
+
+    @property
+    def status(self) -> str:
+        return "PASS" if self.passed else "FAIL"
+
+
 def find_toolbar(widget: Any) -> bool:
     """Recursively search a window for a matplotlib navigation toolbar.
 
@@ -264,6 +345,254 @@ def stray_toplevels(root: Any, known: List[Any]) -> List[Any]:
     except Exception:
         pass
     return orphans
+
+
+def is_colorbar_axes(ax: Any) -> bool:
+    """Report whether an Axes is a colorbar rather than a data axes.
+
+    matplotlib tags the axes it creates for a colorbar with the label
+    '<colorbar>' and attaches the Colorbar back-reference to it. Both are
+    checked because the attribute is private and the label is the more stable
+    of the two across versions.
+    """
+    if getattr(ax, "_colorbar", None) is not None:
+        return True
+    return (ax.get_label() or "") == "<colorbar>"
+
+
+def depth_axis_violations(fig: Any, context: str,
+                          require_depth_axis: bool = False) -> List[str]:
+    """Return a message for every depth-labelled axis that is not inverted.
+
+    matplotlib reports limits as (bottom, top). Depth increases downward only
+    when bottom > top, so that ordering is the assertion. Twin axes created with
+    twinx share the parent's Y axis and usually carry no label of their own,
+    which is why an unlabelled axis is skipped rather than failed.
+
+    Colorbar axes are excluded. A scatter coloured by depth carries the label
+    'Depth (m)' on its colorbar, but a colour scale reads low at the bottom and
+    is correct un-inverted, so including it would report a false failure.
+
+    With require_depth_axis set, a figure containing no depth-labelled axis at
+    all is itself reported. That guards against a silent pass caused by a
+    renamed label or a helper that bailed out before plotting.
+    """
+    problems: List[str] = []
+    found = 0
+
+    for index, ax in enumerate(fig.axes):
+        if is_colorbar_axes(ax):
+            continue
+        label = (ax.get_ylabel() or "").strip()
+        if DEPTH_LABEL_HINT not in label.lower():
+            continue
+        found += 1
+        bottom, top = ax.get_ylim()
+        if bottom <= top:
+            problems.append(
+                "{}: axes[{}] labelled {!r} not inverted "
+                "(ylim bottom={:.4f}, top={:.4f})".format(
+                    context, index, label, bottom, top))
+
+    if require_depth_axis and found == 0:
+        problems.append("{}: no depth-labelled axis found to check".format(context))
+
+    return problems
+
+
+def embedded_depth_cases(app: Any, module: Any) -> List[Tuple[str, Callable[[], Any]]]:
+    """Build the direct-call cases for depth helpers that bypass the popup routes.
+
+    Each entry returns the Figure to inspect. These helpers draw into the
+    embedded canvas, so nothing in VIZ_ROUTES exercises them; without this list
+    the orientation assertion would cover only two of the six affected sites.
+    """
+    colors = module.PHYSICAL_CONSTANTS.LOG_COLORS
+    with_depth = [DEPTH_MNEMONIC, "GR", "RHOB"]
+    without_depth = ["GR", "RHOB"]
+
+    def on_fresh_axis(plot_call: Callable[[Any], None]) -> Any:
+        app.ensure_figure_exists()
+        ax = app.fig.add_subplot(111)
+        plot_call(ax)
+        return app.fig
+
+    def depth_based_with_depth() -> Any:
+        return on_fresh_axis(
+            lambda ax: app._plot_depth_based_curves(ax, with_depth, colors))
+
+    def depth_based_index_fallback() -> Any:
+        # No curve in this list carries a DEPTH curve_type, so the helper falls
+        # back to the row index. This is the branch that relies on invert_yaxis
+        # rather than set_ylim, and it must still come out inverted.
+        return on_fresh_axis(
+            lambda ax: app._plot_depth_based_curves(ax, without_depth, colors))
+
+    def unprocessed_depth_based() -> Any:
+        return on_fresh_axis(
+            lambda ax: app._plot_unprocessed_depth_based_curves(ax, with_depth, colors))
+
+    def unprocessed_on_axis() -> Any:
+        depth_data = app.current_data[DEPTH_MNEMONIC].values
+        return on_fresh_axis(
+            lambda ax: app._plot_unprocessed_curves_on_axis(
+                ax, without_depth, depth_data, "Depth (m)"))
+
+    def comparison_embedded() -> Any:
+        # Covers both set_ylim blocks in plot_comparison. The first block's axes
+        # is removed and re-created on a GridSpec partway through, so only the
+        # second block's axes survives to be inspected here.
+        app.plot_comparison("GR")
+        return app.fig
+
+    def uncertainty_embedded() -> Any:
+        app.plot_uncertainty("GR")
+        return app.fig
+
+    def log_display_embedded() -> Any:
+        # The four-track display builds and manages its own figure, so it is not
+        # wrapped in on_fresh_axis. Its four tracks share one Y axis, which makes
+        # the orientation check here worth more than on a single-axes plot: a
+        # per-track flip is a no-op only at an even track count.
+        app.plot_log_display()
+        return app.fig
+
+    return [
+        ("_plot_depth_based_curves", depth_based_with_depth),
+        ("_plot_depth_based_curves (index fallback)", depth_based_index_fallback),
+        ("_plot_unprocessed_depth_based_curves", unprocessed_depth_based),
+        ("_plot_unprocessed_curves_on_axis", unprocessed_on_axis),
+        ("plot_comparison (embedded)", comparison_embedded),
+        ("plot_uncertainty (embedded)", uncertainty_embedded),
+        ("plot_log_display (embedded)", log_display_embedded),
+    ]
+
+
+def popup_helper_cases(app: Any, curve: str = "GR") -> List[Tuple[str, Callable[[], Any]]]:
+    """Build a direct-call case for every branch of the popup dispatch table.
+
+    Each case builds its own bare Figure and calls the plot helper on it. Going
+    through _create_popup_visualization instead would defeat the purpose: that
+    method wraps the whole dispatch in try/except and turns any exception into a
+    messagebox, so a raising helper would look like a captured dialog rather than
+    a raise. Here the exception propagates to the caller and is recorded verbatim.
+
+    No Toplevel is created, so these cases are also cheap enough to run in both
+    the pre- and post-processing phases.
+    """
+    from matplotlib.figure import Figure
+
+    def bare(plot_call: Callable[[Any], None]) -> Callable[[], Any]:
+        def invoke() -> Any:
+            fig = Figure(figsize=(10, 8), dpi=100)
+            plot_call(fig)
+            return fig
+        return invoke
+
+    return [
+        ("single_curve", bare(lambda fig: app._plot_single_curve_popup(fig, curve))),
+        ("single_curve_comparison", bare(app._plot_single_curve_comparison_popup)),
+        ("comparison", bare(lambda fig: app._plot_comparison_popup(fig, curve))),
+        ("multi_curve", bare(app._plot_multi_curve_popup)),
+        ("log_display", bare(app._plot_log_display_popup)),
+        ("quality_overview", bare(app._plot_quality_overview_popup)),
+        ("unprocessed_curves", bare(app._plot_unprocessed_curves_popup)),
+        ("correlation_matrix", bare(app._plot_correlation_matrix_popup)),
+        ("scatter_plot", bare(lambda fig: app._plot_scatter_plot_popup(fig, curve))),
+        ("3d_visualization", bare(lambda fig: app._plot_3d_visualization_popup(fig, curve))),
+        ("quality_metrics", bare(app._plot_quality_metrics_popup)),
+        ("uncertainty", bare(lambda fig: app._plot_uncertainty_popup(fig, curve))),
+        ("histogram", bare(lambda fig: app._plot_histogram_popup(fig, curve))),
+    ]
+
+
+def dispatched_viz_types(module: Any) -> List[str]:
+    """Return the viz_type values routed by _create_popup_visualization.
+
+    Read out of the application source rather than hardcoded here. A viz_type
+    added to the dispatch table but not to popup_helper_cases would otherwise go
+    uncovered without anything saying so, which is the same class of silent gap
+    this whole invariant exists to close.
+    """
+    import inspect
+    import re
+
+    try:
+        source = inspect.getsource(
+            module.AdvancedPreprocessingApplication._create_popup_visualization)
+    except (OSError, TypeError, AttributeError) as exc:
+        print("WARNING: could not read the popup dispatch table: {}".format(exc))
+        return []
+
+    return re.findall(r"""viz_type\s*==\s*["']([A-Za-z0-9_]+)["']""", source)
+
+
+def coverage_gaps(module: Any, covered: List[str]) -> List[str]:
+    """Return dispatch-table viz_types that no harness case drives."""
+    dispatched = dispatched_viz_types(module)
+    if not dispatched:
+        return []
+    return [name for name in dispatched if name not in set(covered)]
+
+
+def check_routes_raise(cases: List[Tuple[str, Callable[[], Any]]],
+                       phase: str) -> List[RaiseCheck]:
+    """Drive each route and record whether it raised. Nothing is swallowed.
+
+    Exceptions are caught only so that one broken route does not stop the
+    remaining routes from being driven; every one caught is reported as a
+    failure. A route that returns without raising passes regardless of what, if
+    anything, it drew, because judging the drawing is the other checks' job.
+    """
+    checks: List[RaiseCheck] = []
+
+    for name, invoke in cases:
+        check = RaiseCheck(route=name, phase=phase)
+        try:
+            invoke()
+        except Exception as exc:
+            check.error = "{}: {}".format(type(exc).__name__, exc)
+        checks.append(check)
+
+    return checks
+
+
+def check_embedded_depth_plots(app: Any, capture: DialogCapture,
+                               module: Any) -> List[CheckResult]:
+    """Drive each embedded depth helper and assert its axis orientation.
+
+    These helpers open no window, so the window and toolbar fields of
+    CheckResult do not apply and are marked satisfied. The orientation check is
+    the whole point of the case.
+    """
+    results: List[CheckResult] = []
+
+    for name, invoke in embedded_depth_cases(app, module):
+        capture.reset()
+        result = CheckResult(viz_type=name, curve=None)
+        # Not window-based routes; these two fields are not meaningful here.
+        result.opened = True
+        result.has_toolbar = True
+        result.closed_cleanly = True
+
+        try:
+            fig = invoke()
+        except Exception as exc:
+            result.notes.append("raised {}: {}".format(type(exc).__name__, exc))
+            results.append(result)
+            continue
+
+        if capture.errors:
+            result.notes.append("error dialog -> " + capture.errors[0].replace("\n", " ")[:160])
+
+        if fig is None:
+            result.notes.append("helper produced no figure")
+        else:
+            result.notes.extend(depth_axis_violations(fig, name, require_depth_axis=True))
+
+        results.append(result)
+
+    return results
 
 
 def check_popup(app: Any, capture: DialogCapture, viz_type: str,
@@ -313,6 +642,11 @@ def check_popup(app: Any, capture: DialogCapture, viz_type: str,
     result.has_toolbar = find_toolbar(popup)
     if not result.has_toolbar:
         result.notes.append("no navigation toolbar found in window")
+
+    # Routes without a depth axis (histogram, crossplot, correlation matrix)
+    # simply contribute no labelled axis and are skipped by the check.
+    if app.popup_figures:
+        result.notes.extend(depth_axis_violations(app.popup_figures[-1], viz_type))
 
     leaked = set(plt.get_fignums()) - fignums_before
     if leaked:
@@ -366,17 +700,17 @@ def resample_frame(frame: pd.DataFrame, factor: float) -> pd.DataFrame:
     return resampled
 
 
-def prepare_application(module: Any, mismatched_grid: bool = False) -> Any:
-    """Instantiate the application and inject the synthetic well state.
+def prepare_application(module: Any) -> Any:
+    """Instantiate the application in the state a freshly loaded file leaves.
 
     The real constructor is used rather than a stub so the harness exercises the
     same widget tree, Tk variables and instance attributes the application uses
     in production. The main window is withdrawn because only the popups matter.
 
-    With mismatched_grid set, processed_data is placed on a coarser grid than
-    current_data. That reproduces a real session where resampling to standard
-    depth spacing changes the row count, which is the condition that made the
-    popups plot one frame's values against another frame's depth axis.
+    processed_data and processing_results are left empty here on purpose. That is
+    what the application looks like between loading a file and pressing the
+    process button, and every route is reachable from the UI in that state. Call
+    apply_processed_state() to move the app to the post-processing state.
     """
     import tkinter as tk
 
@@ -385,12 +719,10 @@ def prepare_application(module: Any, mismatched_grid: bool = False) -> Any:
     app = module.AdvancedPreprocessingApplication()
     app.root.withdraw()
 
-    processed = resample_frame(frame, 0.305) if mismatched_grid else frame.copy()
-
     app.current_data = frame
-    app.processed_data = processed
+    app.processed_data = None
     app.curve_info = curve_info
-    app.processing_results = build_processing_results(processed)
+    app.processing_results = {}
     app.well_info = {"well_name": "SMOKE-TEST-1", "field": "SYNTHETIC"}
 
     plottable = [c for c in frame.columns if c != DEPTH_MNEMONIC]
@@ -416,6 +748,26 @@ def prepare_application(module: Any, mismatched_grid: bool = False) -> Any:
     return app
 
 
+def apply_processed_state(app: Any, mismatched_grid: bool = False) -> None:
+    """Move the application into the state the processing pipeline leaves behind.
+
+    The pipeline itself runs on a background thread and depends on a long list of
+    Tk option variables, so this injects its output rather than invoking it:
+    processed_data as a second frame, and processing_results holding per-curve
+    original/final arrays taken from that frame. Those two attributes are the
+    entire post-processing contract the plot helpers read.
+
+    With mismatched_grid set, processed_data is placed on a coarser grid than
+    current_data. That reproduces a real session where resampling to standard
+    depth spacing changes the row count, which is the condition that makes a
+    helper plot one frame's values against another frame's depth axis.
+    """
+    processed = (resample_frame(app.current_data, 0.305)
+                 if mismatched_grid else app.current_data.copy())
+    app.processed_data = processed
+    app.processing_results = build_processing_results(processed)
+
+
 def main() -> int:
     """Run every route and print a report. Returns a process exit code."""
     # Import here rather than at module scope so an import failure is reported
@@ -432,7 +784,7 @@ def main() -> int:
     mismatched = "--mismatched-grid" in sys.argv
 
     try:
-        app = prepare_application(polish, mismatched_grid=mismatched)
+        app = prepare_application(polish)
     except Exception:
         print("FATAL: could not construct the application")
         traceback.print_exc()
@@ -441,20 +793,63 @@ def main() -> int:
     print("POLISH popup visualization smoke check")
     print("Synthetic well: SMOKE-TEST-1, {} curves, {} samples".format(
         len(app.current_data.columns) - 1, len(app.current_data)))
-    print("Grid mode: {}".format(
-        "MISMATCHED - current_data {} rows vs processed_data {} rows".format(
-            len(app.current_data), len(app.processed_data))
-        if mismatched else "matched - both frames {} rows".format(len(app.current_data))))
+    print()
+
+    # Phase 1: crude does-not-raise invariant, driven in both processing states.
+    # Every route is reachable from the UI before processing has run, so a route
+    # that only survives a populated processing_results is a real defect.
+    raise_checks: List[RaiseCheck] = []
+    covered = [name for name, _ in popup_helper_cases(app)]
+    gaps = coverage_gaps(polish, covered)
+
+    print("Route-level does-not-raise invariant")
+    print("-" * 78)
+    for phase in ("pre-processing", "post-processing"):
+        if phase == "post-processing":
+            apply_processed_state(app, mismatched_grid=mismatched)
+            print("  grid: {}".format(
+                "MISMATCHED - current_data {} rows vs processed_data {} rows".format(
+                    len(app.current_data), len(app.processed_data))
+                if mismatched
+                else "matched - both frames {} rows".format(len(app.current_data))))
+
+        cases = popup_helper_cases(app) + embedded_depth_cases(app, polish)
+        with DialogCapture(polish):
+            phase_checks = check_routes_raise(cases, phase)
+        raise_checks.extend(phase_checks)
+
+        failures = [c for c in phase_checks if not c.passed]
+        print("  {:16s} {} of {} routes did not raise".format(
+            phase, len(phase_checks) - len(failures), len(phase_checks)))
+        for check in failures:
+            print("      [FAIL] {:44s} {}".format(check.route, check.error))
+    if gaps:
+        print("  dispatch branches with no harness case: {}".format(", ".join(gaps)))
+    print()
+
+    # Phase 2: the specific invariants - window lifecycle, pyplot leak and depth
+    # axis orientation - which need a rendered figure to inspect.
     print("Exercising {} visualization routes".format(len(VIZ_ROUTES)))
     print()
 
     results: List[CheckResult] = []
+    embedded_results: List[CheckResult] = []
     with DialogCapture(polish) as capture:
         for viz_type, curve in VIZ_ROUTES:
             outcome = check_popup(app, capture, viz_type, curve)
             results.append(outcome)
             print("  [{}] {:26s} {}".format(
                 outcome.status, viz_type, "; ".join(outcome.notes) if outcome.notes else ""))
+
+        print()
+        print("Exercising {} embedded depth-axis helpers".format(
+            len(embedded_depth_cases(app, polish))))
+        print()
+        embedded_results = check_embedded_depth_plots(app, capture, polish)
+        for outcome in embedded_results:
+            print("  [{}] {:42s} {}".format(
+                outcome.status, outcome.viz_type,
+                "; ".join(outcome.notes) if outcome.notes else ""))
 
     print()
     print("=" * 78)
@@ -467,10 +862,17 @@ def main() -> int:
             "yes" if outcome.has_toolbar else "no",
             "yes" if outcome.closed_cleanly else "no",
             outcome.status))
+    print("-" * 78)
+    print("{:<44} {}".format("EMBEDDED DEPTH HELPER", "RESULT"))
+    print("-" * 78)
+    for outcome in embedded_results:
+        print("{:<44} {}".format(outcome.viz_type, outcome.status))
     print("=" * 78)
 
-    passed = sum(1 for r in results if r.passed)
-    failed = [r for r in results if not r.passed]
+    all_results = results + embedded_results
+    passed = sum(1 for r in all_results if r.passed)
+    failed = [r for r in all_results if not r.passed]
+    raise_failed = [c for c in raise_checks if not c.passed]
 
     # Global leak assertions. These are the evidence that promoting the Toplevel
     # implementation actually removed the pyplot leak, rather than an inference
@@ -490,7 +892,9 @@ def main() -> int:
     print("  leak check              : {}".format("PASS" if leak_clean else "FAIL"))
 
     print()
-    print("{} of {} routes passed".format(passed, len(results)))
+    print("{} of {} route/orientation checks passed".format(passed, len(all_results)))
+    print("{} of {} does-not-raise checks passed".format(
+        len(raise_checks) - len(raise_failed), len(raise_checks)))
     if failed:
         print()
         print("Failing routes:")
@@ -498,13 +902,22 @@ def main() -> int:
             print("  {}".format(outcome.viz_type))
             for note in outcome.notes:
                 print("      {}".format(note))
+    if raise_failed:
+        print()
+        print("Routes that raised:")
+        for check in raise_failed:
+            print("  {} [{}]".format(check.route, check.phase))
+            print("      {}".format(check.error))
+    if gaps:
+        print()
+        print("Dispatch branches with no harness case: {}".format(", ".join(gaps)))
 
     try:
         app.root.destroy()
     except Exception:
         pass
 
-    return 0 if (not failed and leak_clean) else 1
+    return 0 if (not failed and not raise_failed and not gaps and leak_clean) else 1
 
 
 if __name__ == "__main__":

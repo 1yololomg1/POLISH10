@@ -628,6 +628,29 @@ class DepthValidationResult:
         
         return message
 
+
+@dataclass
+class LithologyTrackCurves:
+    """The GR and SP traces drawn into Track 1 of the industry log display.
+
+    plot_log_display attaches QC indicators to the GR and SP traces only after
+    all four tracks have been drawn, but the curve selection and the
+    null-sentinel-to-NaN conversion both happen inside _plot_lithology_track.
+    Returning the resolved names alongside the converted arrays lets the caller
+    reuse exactly what was plotted. Recomputing them at the call site would
+    duplicate the selection and conversion logic and allow the QC indicators to
+    describe an array that differs from the rendered trace.
+
+    An absent curve is reported as an empty name list with a None array, which
+    is the condition the caller tests before adding indicators.
+    """
+
+    gr_curves: List[str] = field(default_factory=list)
+    gr_data: Optional[np.ndarray] = None
+    sp_curves: List[str] = field(default_factory=list)
+    sp_data: Optional[np.ndarray] = None
+
+
 #=============================================================================
 # ADVANCED SIGNAL PROCESSING - DENOISING & SMOOTHING
 #=============================================================================
@@ -6493,91 +6516,107 @@ Your feedback contributes to software quality and reliability.
         self.fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     def _plot_depth_based_curves(self, ax, curves, industry_colors):
-        """Plot curves in petroleum industry standard with depth on Y-axis"""
-        # Find depth curve if available
+        """Plot curves in petroleum industry standard with depth on Y-axis.
+
+        Depth is resolved per curve from the same frame that supplied that
+        curve's values. processing_results arrays share processed_data's grid;
+        current_data may still sit on the as-loaded grid after resampling, so a
+        single depth array taken from current_data cannot be shared across the
+        three-way value fallback below.
+        """
+        # Identify a depth mnemonic only to exclude it from the value list and
+        # to choose the axis-limit branch (set_ylim vs invert_yaxis). The depth
+        # ordinate itself is resolved per curve after the value source is known.
         depth_curve = None
         for curve in curves:
             curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
             if 'DEPTH' in curve_type:
                 depth_curve = curve
                 break
-        
-        # If no explicit depth curve, use index
-        if depth_curve:
-            # Use current_data as primary source
-            data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
-            # Validate data_source and depth_curve before access
-            if data_source is None or not isinstance(data_source, pd.DataFrame):
-                raise ValueError("No valid data source available for plotting")
-            if depth_curve not in data_source.columns:
-                raise ValueError(f"Depth curve '{depth_curve}' not found in data columns")
-            depth = data_source[depth_curve].values
-            # Remove depth from plotting curves
-            plot_curves = [c for c in curves if c != depth_curve]
-        else:
-            # Use row index as depth
-            data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
-            if data_source is None or not isinstance(data_source, pd.DataFrame):
-                raise ValueError("No valid data source available for plotting")
-            depth = np.arange(len(data_source))
-            plot_curves = curves
-        
+
+        plot_curves = [c for c in curves if c != depth_curve] if depth_curve else list(curves)
+
         # Create twin axes for different scales if needed
         twin_axes = []
-        
+        depth_min = None
+        depth_max = None
+
         # Plot each curve with appropriate styling
         for i, curve in enumerate(plot_curves):
-            # Get curve data with proper validation
+            # Get curve data with proper validation; depth follows the winning frame
             curve_data = None
             curve_status = 'unknown'
-            
+            depth = None
+
             try:
                 if hasattr(self, 'processing_results') and self.processing_results and curve in self.processing_results:
                     curve_data = self.processing_results[curve]['final_data']
                     curve_status = 'processed'
+                    depth = self._get_depth_for_frame(self.processed_data)
                 elif hasattr(self, 'processed_data') and self.processed_data is not None and curve in self.processed_data.columns:
                     curve_data = self.processed_data[curve].values
                     curve_status = 'unprocessed'
+                    depth = self._get_depth_for_frame(self.processed_data)
                 elif hasattr(self, 'current_data') and self.current_data is not None and curve in self.current_data.columns:
                     curve_data = self.current_data[curve].values
                     curve_status = 'original'
+                    depth = self._get_depth_for_frame(self.current_data)
                 else:
                     warnings.warn(f"Curve '{curve}' not found in any data source", UserWarning)
                     continue
-                    
+
                 # Validate curve data
                 if curve_data is None or len(curve_data) == 0:
                     warnings.warn(f"Curve '{curve}' has no valid data", UserWarning)
                     continue
-                
+
+                # Index-fallback path: when the caller did not pass a depth
+                # mnemonic in `curves`, preserve the historical behaviour of
+                # plotting against row index rather than looking up DEPT from
+                # the frame. _get_depth_for_frame would otherwise return the
+                # real depth column and change the ordinate silently.
+                if depth_curve is None:
+                    depth = np.arange(len(curve_data))
+
+                if depth is None or len(depth) != len(curve_data):
+                    warnings.warn(
+                        f"Depth length {0 if depth is None else len(depth)} does not "
+                        f"match curve '{curve}' length {len(curve_data)}",
+                        UserWarning)
+                    continue
+
                 # Convert null values to NaN for proper line breaking (for visualization only)
                 # Uses helper method to ensure consistent null detection
                 curve_data = self._convert_nulls_to_nan(curve_data)
-                    
+
             except Exception as e:
                 warnings.warn(f"Error accessing curve '{curve}': {e}", UserWarning)
                 continue
-            
-            # Get actual depth range for proper axis limits (once per function call)
-            if i == 0:  # Only calculate once for all curves (shared Y-axis)
-                depth_min, depth_max = self._get_depth_limits(depth)
-            
+
+            # Expand shared Y limits across every frame that contributed a curve
+            c_min, c_max = self._get_depth_limits(depth)
+            if depth_min is None:
+                depth_min, depth_max = c_min, c_max
+            else:
+                depth_min = min(depth_min, c_min)
+                depth_max = max(depth_max, c_max)
+
             curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
             curve_family = curve_type.split('_')[0] if '_' in curve_type else curve_type
-            
+
             # Determine if this curve should use log scale
             use_log_scale = False
             log_scale_families = ['RESISTIVITY', 'PERMEABILITY']
             if curve_family in log_scale_families:
                 use_log_scale = True
-                
+
             # Determine color based on industry standards
             if curve_family in industry_colors:
                 color = industry_colors[curve_family]
             else:
                 # Use a color cycle for non-standard curves
                 color = plt.cm.tab10.colors[i % len(plt.cm.tab10.colors)]
-            
+
             # Determine line style and width based on processing status
             if curve_status == 'processed':
                 line_style = '-'
@@ -6588,7 +6627,7 @@ Your feedback contributes to software quality and reliability.
             else:  # original
                 line_style = ':'
                 line_width = 1.0
-            
+
             # For multiple curves with different scales, create twin axes
             if i > 0 and use_log_scale != (ax.get_xscale() == 'log'):
                 twin_ax = ax.twiny()
@@ -6599,7 +6638,7 @@ Your feedback contributes to software quality and reliability.
                 current_ax.xaxis.set_label_position('top')
             else:
                 current_ax = ax
-            
+
             # Set appropriate scale for logarithmic curves
             if use_log_scale:
                 # Handle zeros and negatives for log scale
@@ -6613,38 +6652,34 @@ Your feedback contributes to software quality and reliability.
                     else:
                         # Fallback to reasonable log bounds
                         current_ax.set_xlim([min_val * 0.5, np.max(valid_data) * 2])
-            
+
             # Handle missing data (NaN values break lines properly)
             valid_mask = ~np.isnan(curve_data) & np.isfinite(curve_data)
             if np.any(valid_mask):
                 valid_data = curve_data[valid_mask]
                 valid_depth = depth[valid_mask]
-                
+
                 # Plot with depth on Y-axis (inverted)
                 legend_label = f"{curve} ({curve_status})"
-                current_ax.plot(valid_data, valid_depth, color=color, linestyle=line_style, 
+                current_ax.plot(valid_data, valid_depth, color=color, linestyle=line_style,
                               linewidth=line_width, label=legend_label)
-            
+
             # Add gridlines
             current_ax.grid(True, alpha=0.3, which='both')
-            
+
             # Set labels
             unit = self.curve_info.get(curve, {}).get('unit', '')
             current_ax.set_xlabel(f'{curve} ({unit})')
-        
-        # CRITICAL: Set axis limits to ACTUAL data range (once for shared Y-axis)
-        if depth_curve:  # Only if we have actual depth data
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
-        
-        # Invert Y-axis to show increasing depth downward (industry standard)
-        ax.invert_yaxis()
 
-        # Set Y label for depth
-        if depth_curve:
-            depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
-            ax.set_ylabel(f'Depth ({depth_unit})')
-        else:
-            ax.set_ylabel('Depth (index)')
+        # CRITICAL: Set axis limits to ACTUAL data range (once for shared Y-axis).
+        # apply_depth_axis encodes downward depth via set_ylim alone; never pair
+        # that with invert_yaxis.
+        if depth_min is not None:
+            label = (
+                f'Depth ({self.curve_info.get(depth_curve, {}).get("unit", "m")})'
+                if depth_curve else 'Depth (index)'
+            )
+            self.apply_depth_axis(ax, np.array([depth_min, depth_max]), label=label)
 
         # Optional: draw formation tops and zone shading
         try:
@@ -6860,23 +6895,27 @@ Your feedback contributes to software quality and reliability.
         if depth_curves:
             depth = data_source[depth_curves[0]].values
             depth_unit = self.curve_info.get(depth_curves[0], {}).get('unit', 'm')
-            # Get actual depth range for proper axis limits
-            depth_min, depth_max = self._get_depth_limits(depth)
         else:
             depth = np.arange(len(data_source))
             depth_unit = 'index'
-            depth_min, depth_max = self._get_depth_limits(depth)
         
-        # CRITICAL: Set depth axis limits for all tracks (shared Y-axis)
-        for ax in axes:
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+        # Shared Y-axis: apply limits once and label only the first track.
+        self.apply_depth_axis_shared(
+            axes, depth, label=f'Depth ({depth_unit})')
         
         return axes, depth, depth_unit, curve_by_type, null_value
     
     def _plot_lithology_track(self, ax: Any, data_source: pd.DataFrame, depth: np.ndarray, 
-                              curve_by_type: Dict[str, List[str]], null_value: float) -> None:
-        """Plot Track 1: GR, SP, Caliper (Lithology Track)."""
+                              curve_by_type: Dict[str, List[str]],
+                              null_value: float) -> LithologyTrackCurves:
+        """Plot Track 1: GR, SP, Caliper (Lithology Track).
+        
+        Returns the GR and SP curve names and their null-converted arrays so the
+        caller can attach QC indicators to the same data that was plotted. See
+        LithologyTrackCurves for why this is returned rather than recomputed.
+        """
         ax.set_title('Track 1: GR/SP/CAL', fontsize=12, fontweight='bold')
+        track_curves = LithologyTrackCurves()
         
         # GR with industry-standard zone shading
         gr_curves = curve_by_type.get('GAMMA_RAY_TOTAL', [])
@@ -6884,6 +6923,8 @@ Your feedback contributes to software quality and reliability.
             gr_curve_name = gr_curves[0]
             gr_data = data_source[gr_curve_name].values
             gr_data = self._convert_nulls_to_nan(gr_data)
+            track_curves.gr_curves = gr_curves
+            track_curves.gr_data = gr_data
             gr_color = self._get_industry_color('GAMMA_RAY_TOTAL', gr_curve_name)
             
             ax.plot(gr_data, depth, color=gr_color, linewidth=1.5, label=gr_curve_name, zorder=3)
@@ -6911,6 +6952,8 @@ Your feedback contributes to software quality and reliability.
             sp_color = self._get_industry_color('SPONTANEOUS_POTENTIAL', sp_curve_name)
             twin1 = ax.twiny()
             sp_data = self._convert_nulls_to_nan(data_source[sp_curve_name].values, null_value)
+            track_curves.sp_curves = sp_curves
+            track_curves.sp_data = sp_data
             twin1.plot(sp_data, depth, color=sp_color, linewidth=1.5, label=sp_curve_name, zorder=2)
             twin1.set_xlim([-100, 100])
             twin1.xaxis.set_ticks_position('top')
@@ -6926,6 +6969,8 @@ Your feedback contributes to software quality and reliability.
             twin1_2.plot(cal_data, depth, color=cal_color, linewidth=1.5, label=cal_curve_name, zorder=2)
             twin1_2.xaxis.set_ticks_position('top')
             twin1_2.spines['top'].set_position(('outward', 40))
+        
+        return track_curves
     
     def plot_log_display(self):
         """Create a standard industry log display with multiple tracks"""
@@ -6937,8 +6982,9 @@ Your feedback contributes to software quality and reliability.
         data_source = self.current_data
         axes, depth, depth_unit, curve_by_type, null_value = self._setup_log_display_figure(data_source)
         
-        axes[0].set_ylabel(f'Depth ({depth_unit})', fontsize=10, fontweight='bold')
-        self._plot_lithology_track(axes[0], data_source, depth, curve_by_type, null_value)
+        # Track 1 is drawn by a helper; the QC-indicator and badge blocks below
+        # need the curves it selected, so they are carried back explicitly.
+        track1 = self._plot_lithology_track(axes[0], data_source, depth, curve_by_type, null_value)
         
         # Track 2: Resistivity curves (log scale, industry standard)
         ax2 = axes[1]
@@ -7072,11 +7118,11 @@ Your feedback contributes to software quality and reliability.
                     transform=ax4.transAxes, ha='center', va='center',
                     fontsize=11, style='italic', color='gray')
         
-        # Common settings for all tracks
+        # Common settings for all tracks. Depth orientation and the shared Y
+        # label were applied once in _setup_log_display_figure; do not flip
+        # each sharey track here (even track counts would cancel the flip).
         for ax in axes:
-            ax.invert_yaxis()  # Depth increases downward (industry standard)
             ax.grid(True, alpha=0.3)
-            ax.set_ylabel(f'Depth ({depth_unit})')
             
             # Enhanced formation tops with labels
             try:
@@ -7115,14 +7161,14 @@ Your feedback contributes to software quality and reliability.
         
         # Add QC indicators to curves in each track
         # Track 1: GR, SP, Caliper
-        if gr_curves:
-            badges = self._add_qc_indicators(ax1, gr_curves[0], gr_data, depth)
+        if track1.gr_curves:
+            badges = self._add_qc_indicators(axes[0], track1.gr_curves[0], track1.gr_data, depth)
             if badges:
-                all_processing_badges[gr_curves[0]] = badges
-        if sp_curves:
-            badges = self._add_qc_indicators(ax1, sp_curves[0], sp_data, depth)
+                all_processing_badges[track1.gr_curves[0]] = badges
+        if track1.sp_curves:
+            badges = self._add_qc_indicators(axes[0], track1.sp_curves[0], track1.sp_data, depth)
             if badges:
-                all_processing_badges[sp_curves[0]] = badges
+                all_processing_badges[track1.sp_curves[0]] = badges
         
         # Track 2: Resistivity
         for res_curve_name, res_data in resistivity_curves_data.items():
@@ -7168,10 +7214,10 @@ Your feedback contributes to software quality and reliability.
             curve_names_on_axis = []
             # Determine which curves are on this axis
             if i == 0:  # Track 1
-                if gr_curves:
-                    curve_names_on_axis.append(gr_curves[0])
-                if sp_curves:
-                    curve_names_on_axis.append(sp_curves[0])
+                if track1.gr_curves:
+                    curve_names_on_axis.append(track1.gr_curves[0])
+                if track1.sp_curves:
+                    curve_names_on_axis.append(track1.sp_curves[0])
             elif i == 1:  # Track 2
                 for res_type in res_types:
                     res_curves_list = curve_by_type.get(res_type, [])
@@ -7481,9 +7527,8 @@ Your feedback contributes to software quality and reliability.
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='gray'))
         
         ax.set_xlabel(f'{curve_name} ({self.curve_info.get(curve_name, {}).get("unit", "UNIT")})', fontsize=11)
-        ax.set_ylabel(f'Depth ({depth_unit})', fontsize=11)
         ax.grid(True, alpha=0.3)
-        ax.invert_yaxis()
+        self.apply_depth_axis(ax, depth, label=f'Depth ({depth_unit})')
         ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10)
         
         self.fig.tight_layout()
@@ -7579,15 +7624,13 @@ Your feedback contributes to software quality and reliability.
         # Set labels and title
         unit = self.curve_info.get(curve, {}).get('unit', '')
         ax.set_xlabel(f'{curve} ({unit})')
-        ax.set_ylabel(y_label)
         ax.set_title(f'Unprocessed Data: {curve}', fontsize=14, fontweight='bold')
         
         # Add grid and legend
         ax.grid(True, alpha=0.3)
         ax.legend()
         
-        # Invert Y-axis to show increasing depth downward (industry standard)
-        ax.invert_yaxis()
+        self.apply_depth_axis(ax, depth, label=y_label)
         
         # Create canvas and display
         self._create_visualization_canvas("Note: Displaying unprocessed data. Run processing to see enhanced results.")
@@ -7748,18 +7791,13 @@ Your feedback contributes to software quality and reliability.
                 unit = self.curve_info.get(curve, {}).get('unit', '')
                 current_ax.set_xlabel(f'{curve} ({unit})')
         
-        # CRITICAL: Set axis limits to ACTUAL data range (not default range)
-        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
-        
-        # Invert Y-axis to show increasing depth downward (industry standard)
-        ax.invert_yaxis()
-        
-        # Set Y label for depth
+        # CRITICAL: Set axis limits to ACTUAL data range (not default range).
         if depth_curve:
             depth_unit = 'm'  # Default unit
-            ax.set_ylabel(f'Depth ({depth_unit})')
+            label = f'Depth ({depth_unit})'
         else:
-            ax.set_ylabel('Depth (index)')
+            label = 'Depth (index)'
+        self.apply_depth_axis(ax, depth, label=label)
         
         # Add legends
         handles, labels = ax.get_legend_handles_labels()
@@ -7921,14 +7959,12 @@ Your feedback contributes to software quality and reliability.
                                                       color=base_color, alpha=0.6))
             
             # CRITICAL: Set axis limits to ACTUAL data range
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             # Configure axes
             ax.set_title(f'Processing Comparison: {curve} (Click legend to toggle)', fontsize=14, fontweight='bold', pad=10)
             ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
-            ax.set_ylabel(y_label, fontsize=11)
             ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()  # Industry standard: depth increases downward
             
             # Legend with toggle capability
             legend = ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10, framealpha=0.9)
@@ -8035,12 +8071,10 @@ Your feedback contributes to software quality and reliability.
             
             ax.set_title(f'Processing Comparison: {curve} (Click legend to toggle)', fontsize=14, fontweight='bold', pad=10)
             # CRITICAL: Set axis limits to ACTUAL data range
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
-            ax.set_ylabel(y_label, fontsize=11)
             ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()
             
             legend = ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10, framealpha=0.9)
             self.fig._comparison_legend = legend
@@ -8094,10 +8128,9 @@ Your feedback contributes to software quality and reliability.
             ax.plot(original, depth, color=base_color, alpha=0.7, label=LABEL_ORIGINAL_DATA, linewidth=2)
             ax.set_title(f'Original Data: {curve} (Not Yet Processed)', fontsize=14, fontweight='bold')
             ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
-            ax.set_ylabel(y_label, fontsize=11)
             ax.legend(loc='best', fontsize=10)
             ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             # Statistics box
             valid_orig = original[~np.isnan(original)]
@@ -11732,8 +11765,10 @@ Your feedback contributes to software quality and reliability.
             # Plot main curve
             ax.plot(processed_plot, depth, 'b-', linewidth=2, label=LABEL_PROCESSED_DATA)
             
-            # CRITICAL: Set axis limits to ACTUAL data range
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+            # CRITICAL: Set axis limits to ACTUAL data range before fills/scatters.
+            # set_ylim also disables y autoscaling, so the fill and scatter added
+            # below cannot widen these limits.
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             # Plot uncertainty bands (also convert nulls in bounds)
             upper_bound = processed_plot + uncertainty
@@ -11759,10 +11794,8 @@ Your feedback contributes to software quality and reliability.
             else:
                 ax.set_title(f'Uncertainty Analysis: {curve} (Not Yet Processed)', fontsize=14, fontweight='bold')
             ax.set_xlabel(f'{curve} ({self.curve_info[curve]["unit"]})')
-            ax.set_ylabel(y_label)
             ax.legend()
             ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()
             
             self.fig.tight_layout()
             
@@ -12210,9 +12243,6 @@ Your feedback contributes to software quality and reliability.
         # Use industry-standard colors
         industry_colors = PHYSICAL_CONSTANTS.LOG_COLORS
         
-        # Get actual depth range for proper axis limits
-        depth_min, depth_max = self._get_depth_limits(depth_data)
-        
         # Create twin axes for different scales
         twin_axes = []
         current_ax = ax
@@ -12313,12 +12343,10 @@ Your feedback contributes to software quality and reliability.
             # Reset current_ax to main axis for next iteration
             current_ax = ax
         
-        # CRITICAL: Set axis limits to ACTUAL data range (not default range)
-        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+        # CRITICAL: Set axis limits to ACTUAL data range (not default range).
+        self.apply_depth_axis(ax, depth_data, label=y_label)
         
         # Set axis properties
-        ax.invert_yaxis()  # Industry standard: depth increases downward
-        ax.set_ylabel(y_label)
         ax.grid(True, alpha=0.3)
         
         # Add legend
@@ -12587,7 +12615,6 @@ Your feedback contributes to software quality and reliability.
             ax.set_title(f'{curve} - {curve_type}\nOriginal vs Processed Comparison', 
                         fontsize=14, fontweight='bold')
             ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
-            ax.set_ylabel(y_label, fontsize=12)
             
             # Add legend
             ax.legend(loc='best', fontsize=10)
@@ -12595,8 +12622,7 @@ Your feedback contributes to software quality and reliability.
             # Add grid
             ax.grid(True, alpha=0.3)
             
-            # Invert Y-axis (industry standard)
-            ax.invert_yaxis()
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             # Add processing statistics if available
             if curve in self.processing_results:
@@ -12681,9 +12707,8 @@ Your feedback contributes to software quality and reliability.
             ax1.plot(data1, depth, color=color1, linewidth=2, label=status1)
             ax1.set_title(f'{curve1}\n({status1})', fontsize=12, fontweight='bold')
             ax1.set_xlabel(f'{curve1} ({self.curve_info.get(curve1, {}).get("unit", "")})', fontsize=11)
-            ax1.set_ylabel(y_label, fontsize=11)
             ax1.grid(True, alpha=0.3)
-            ax1.invert_yaxis()
+            self.apply_depth_axis(ax1, depth, label=y_label)
             ax1.legend(loc='best')
             
             # Add statistics for curve 1
@@ -13025,7 +13050,6 @@ Your feedback contributes to software quality and reliability.
         ax.set_title(f'{curve} - {curve_type}\nOriginal vs Processed Comparison', 
                     fontsize=14, fontweight='bold')
         ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
-        ax.set_ylabel(LABEL_DEPTH_M, fontsize=12)
 
         # Add legend
         ax.legend(loc='best', fontsize=10)
@@ -13033,8 +13057,13 @@ Your feedback contributes to software quality and reliability.
         # Add grid
         ax.grid(True, alpha=0.3)
         
-        # Invert Y-axis (industry standard)
-        ax.invert_yaxis()
+        # Span every frame that contributed a trace so a resampled processed
+        # grid cannot clip the original (or the reverse).
+        depth_for_axis = original_depth
+        if (self.processed_data is not None and curve in self.processed_data.columns):
+            depth_for_axis = np.concatenate([
+                original_depth, self._get_depth_for_frame(self.processed_data)])
+        self.apply_depth_axis(ax, depth_for_axis, label=LABEL_DEPTH_M)
         
         # Add processing statistics if available
         if curve in self.processing_results:
@@ -13074,9 +13103,8 @@ Your feedback contributes to software quality and reliability.
         ax1.plot(data1, depth1, 'b-', linewidth=2)
         ax1.set_title(curve1, fontsize=12, fontweight='bold')
         ax1.set_xlabel(f"{curve1}")
-        ax1.set_ylabel(LABEL_DEPTH_M)
-        ax1.invert_yaxis()
         ax1.grid(True, alpha=0.3)
+        self.apply_depth_axis(ax1, depth1, label=LABEL_DEPTH_M)
         
         # Plot curve 2
         if curve2 in self.processing_results and 'final_data' in self.processing_results[curve2]:
@@ -13098,20 +13126,36 @@ Your feedback contributes to software quality and reliability.
         if curve in self.processing_results:
             # Both arrays were captured from processed_data and share its grid.
             depth = self._get_depth_for_frame(self.processed_data)
-            original = self.processing_results[curve]['original_data']
-            processed = self.processing_results[curve]['final_data']
+            # Null sentinels are converted to NaN so matplotlib breaks the line at
+            # gaps rather than drawing a spike to -999.25, which would also drag
+            # the value-axis autoscale far outside the real measurement range.
+            # to_numeric coerces non-numeric entries to NaN rather than raising,
+            # and yields the float dtype _convert_nulls_to_nan needs to assign NaN.
+            # The Series wrapper is required because to_numeric returns a bare
+            # ndarray for ndarray input, which has no to_numpy method.
+            original = self._convert_nulls_to_nan(
+                pd.to_numeric(pd.Series(self.processing_results[curve]['original_data']),
+                              errors='coerce').to_numpy(dtype=float))
+            processed = self._convert_nulls_to_nan(
+                pd.to_numeric(pd.Series(self.processing_results[curve]['final_data']),
+                              errors='coerce').to_numpy(dtype=float))
 
             ax.plot(original, depth, 'r-', alpha=0.7, label='Original', linewidth=1)
             ax.plot(processed, depth, 'b-', alpha=0.9, label='Processed', linewidth=2)
         else:
             depth = self._get_depth_for_frame(self.current_data)
-            data = self.current_data[curve].values
+            data = self._convert_nulls_to_nan(
+                pd.to_numeric(self.current_data[curve],
+                              errors='coerce').to_numpy(dtype=float))
             ax.plot(data, depth, 'r-', label='Original', linewidth=1.5)
-        
+
+        # The depth axis spans the full grid of the frame being plotted. Without
+        # this, autoscale collapses onto the interval where the curve happens to
+        # hold finite values, hiding where that interval sits in the well.
+        self.apply_depth_axis(ax, depth, label=LABEL_DEPTH_M)
+
         ax.set_title(f"Comparison: {curve}", fontsize=14, fontweight='bold')
         ax.set_xlabel(f"{curve}")
-        ax.set_ylabel(LABEL_DEPTH_M)
-        ax.invert_yaxis()
         ax.grid(True, alpha=0.3)
         ax.legend()
         fig.tight_layout()
@@ -13132,9 +13176,8 @@ Your feedback contributes to software quality and reliability.
                 data = self.current_data[curve].values
                 ax.plot(data, depth, label=curve, linewidth=1.5, alpha=0.8)
         
-        ax.set_ylabel(LABEL_DEPTH_M)
         ax.set_title("Multi-Curve Display", fontsize=14, fontweight='bold')
-        ax.invert_yaxis()
+        self.apply_depth_axis(ax, depth, label=LABEL_DEPTH_M)
         ax.grid(True, alpha=0.3)
         ax.legend(bbox_to_anchor=(1.05, 1), loc=LABEL_UPPER_LEFT)
         fig.tight_layout()
@@ -13212,11 +13255,10 @@ Your feedback contributes to software quality and reliability.
             curves_plotted += 1
         
         # CRITICAL: Set axis limits to ACTUAL data range (not 0-5000 default)
-        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+        self.apply_depth_axis(ax, depth, label=f'Depth ({depth_unit})')
         
         # Labels and formatting
         ax.set_xlabel('Curve Values', fontsize=12)
-        ax.set_ylabel(f'Depth ({depth_unit})', fontsize=12, fontweight='bold')
         ax.set_title("Unprocessed Curves - Gaps Indicate Missing Data", 
                     fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3, which='both', linestyle='--', linewidth=0.5)
@@ -13299,9 +13341,8 @@ Your feedback contributes to software quality and reliability.
             ax.set_xlim(data_min - padding, data_max + padding)
         
         ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
-        ax.set_ylabel(LABEL_DEPTH_M)
         ax.set_title(f'{curve} vs Depth Scatter Plot', fontsize=14, fontweight='bold')
-        ax.invert_yaxis()  # Industry standard: depth downward
+        self.apply_depth_axis(ax, depth, label=LABEL_DEPTH_M)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
     
@@ -13470,9 +13511,12 @@ Your feedback contributes to software quality and reliability.
                 ax.set_xlim(data_min - padding, data_max + padding)
             
             ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
-            ax.set_ylabel(LABEL_DEPTH_M)
             ax.set_title(f'{curve} - Uncertainty Analysis', fontsize=14, fontweight='bold')
-            ax.invert_yaxis()  # Industry standard: depth downward
+            depth_for_axis = depth
+            if (self.current_data is not None and curve in self.current_data.columns):
+                depth_for_axis = np.concatenate([
+                    depth, self._get_depth_for_frame(self.current_data)])
+            self.apply_depth_axis(ax, depth_for_axis, label=LABEL_DEPTH_M)
             ax.grid(True, alpha=0.3)
             ax.legend()
         else:
@@ -13676,6 +13720,39 @@ Your feedback contributes to software quality and reliability.
         except Exception as e:
             self.log_processing(f"Warning: Error calculating depth limits: {e}")
             return (0.0, 100.0)  # Safe fallback
+
+    def apply_depth_axis(self, ax, depth, *, label: str) -> Tuple[float, float]:
+        """Apply the wireline depth convention to one axis and return limits.
+
+        Depth increases downward. That is expressed solely as
+        ``set_ylim(depth_max, depth_min)``. This method never calls
+        ``invert_yaxis``: mixing the two is a double flip that silently
+        renders depth upward.
+
+        ``label`` is required because the smoke harness matches depth axes on
+        the Y label; an optional label would let a caller silently opt out of
+        the orientation guard.
+        """
+        depth_min, depth_max = self._get_depth_limits(depth)
+        ax.set_ylim(depth_max, depth_min)
+        ax.set_ylabel(label)
+        return depth_min, depth_max
+
+    def apply_depth_axis_shared(self, axes, depth, *, label: str) -> Tuple[float, float]:
+        """Apply depth convention once across a sharey axis group.
+
+        Limits are set on the first axis and propagate through sharey. Only the
+        first axis receives the depth label. Calling invert_yaxis on every
+        sharey track is a no-op only at even track counts, so the four-track
+        log display was previously correct by accident under that pattern.
+        """
+        axis_list = list(axes)
+        if not axis_list:
+            raise ValueError("apply_depth_axis_shared requires at least one axis")
+        depth_min, depth_max = self.apply_depth_axis(axis_list[0], depth, label=label)
+        for sibling in axis_list[1:]:
+            sibling.set_ylabel('')
+        return depth_min, depth_max
     
     # ============================================================================
     # ENHANCED VISUALIZATION CONTROLLER
