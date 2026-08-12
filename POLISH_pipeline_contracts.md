@@ -202,14 +202,14 @@ Contract work does not start until the pipeline produces correct output once.
 
 **Phase 0 — repair (do first, in this order)**
 
-1. Add `limit` to the resample interpolation. **Before** fixing range validation — otherwise output goes from obviously empty to plausibly wrong.
-2. Gate the unit conversion. Highest-leverage single change: an already-imperial well left alone keeps DEPT in FT, makes the 0.5 spacing correct, preserves 10720 rows, and lets RHOB pass its own range. Fixes C1 and C4 symptoms in one edit.
+1. Add `limit` to the resample interpolation. **Before** fixing range validation — otherwise output goes from obviously empty to plausibly wrong. **Done** (`c126a62`, `limit_area='inside'`).
+2. Gate the unit conversion. Highest-leverage single change: an already-imperial well left alone keeps DEPT in FT, makes the 0.5 spacing correct, preserves 10720 rows, and lets RHOB pass its own range. Sidesteps C1 and C4 symptoms; does not repair them. **Done as default-off** (`3e0372a`): standardization defaults off at all three definition sites; skip logs units carried forward. Ticking the box still reproduces 3268 rows / empty RHOB.
 3. Unknown mnemonic → skip validation, log warning. Never validate against a fallback range.
 4. Per-curve outlier strategy. GR should not receive blanket IQR.
 
 **Phase 1 — golden files**
 
-Process KEOUGH. Expect 10720 rows, RHOB populated only over 4250–5326 ft. Capture output as the reference. Add two or three more wells with different unit systems and curve sets.
+Process KEOUGH. Expect 10720 rows (with units off), RHOB populated only over the density-tool interval. Header `BLI1` says 5326 ft; the density tool on this file reads 4250–**5334** ft — resolve the eight-foot discrepancy before freezing the golden file. Capture output as the reference. Add two or three more wells with different unit systems and curve sets.
 
 **Phase 2 — contracts**
 
@@ -229,8 +229,8 @@ C7 constrains this choice. Overlaying ~10720 raw against ~3268 processed points 
 
 ## 9. Open questions
 
-- Are metric wells processed at all? Determines whether the C6 gate is "never convert" or "convert only when source ≠ target."
-- What populates the mnemonic database, and how are entries added? C3 makes unrecognised curves visible; something has to resolve them.
+- ~~Are metric wells processed at all? Determines whether the C6 gate is "never convert" or "convert only when source ≠ target."~~ **Partly moot.** `apply_unit_standardization` already guards every conversion with `if current_unit != target_unit:` — that option was always the behaviour and never sufficient. The real fork is: (a) conversion opt-in vs forced (Phase 0 item 2 chose opt-in / default-off), and (b) when conversion *is* on, whether C1 (unit-aware ranges) and C4 (invalidate `depth_spacing` after the depth unit changes) hold. Both remain live for any user who ticks the box. Whether metric wells are processed at all is still open, but it no longer defines the C6 gate wording.
+- What populates the mnemonic database, and how are entries added? C3 makes unrecognised curves visible; something has to resolve them. Known trap: `BULK_DENSITY` lists both `G/CC` and `KG/M3` as valid units but carries a single `'range': [1.0, 3.5]` (`curve_identification.py`).
 - GR minimum drops from 4.03 to **0** across `fill_gaps`. Zero GAPI is not physically achievable. Mechanism unidentified.
 - The environmental-corrections error dialog fires on every run and is being dismissed. Contents unknown.
 - TBHV collapses to 3.1e-05 in scale-aware denoising. Downstream of Phase 0 items 2 and 3 — recheck after, do not chase now.
