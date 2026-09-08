@@ -13140,7 +13140,6 @@ Your feedback contributes to software quality and reliability.
         ax1.set_title(curve1, fontsize=12, fontweight='bold')
         ax1.set_xlabel(f"{curve1}")
         ax1.grid(True, alpha=0.3)
-        self.apply_depth_axis(ax1, depth1, label=LABEL_DEPTH_M)
         
         # Plot curve 2
         if curve2 in self.processing_results and 'final_data' in self.processing_results[curve2]:
@@ -13151,6 +13150,17 @@ Your feedback contributes to software quality and reliability.
         ax2.set_title(curve2, fontsize=12, fontweight='bold')
         ax2.set_xlabel(f"{curve2}")
         ax2.grid(True, alpha=0.3)
+
+        # sharey=ax1 means explicit ylim from depth1 alone would freeze ax2 as
+        # well, silently truncating a coarser/shorter/offset second grid.
+        # Match _plot_single_curve_popup: span every frame that contributed a
+        # trace before apply_depth_axis. Limits still go on ax1 only so the
+        # shared axis stays inverted via set_ylim, not invert_yaxis.
+        depth_for_axis = np.concatenate([
+            np.asarray(depth1, dtype=float),
+            np.asarray(depth2, dtype=float),
+        ])
+        self.apply_depth_axis(ax1, depth_for_axis, label=LABEL_DEPTH_M)
         
         fig.suptitle(f"Comparison: {curve1} vs {curve2}", fontsize=14, fontweight='bold')
         fig.tight_layout()
