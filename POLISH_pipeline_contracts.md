@@ -25,7 +25,7 @@ Additionally, and most dangerously:
 
 ---
 
-## 2. The six contracts
+## 2. The seven contracts
 
 ### C1 — Units travel with data
 
@@ -213,7 +213,7 @@ Process KEOUGH. Expect 10720 rows (with units off), RHOB populated only over the
 
 **Phase 2 — contracts**
 
-Implement C1–C6 and the assertions, validating continuously against the golden files.
+Implement C1–C7 and the assertions, validating continuously against the golden files.
 
 **Phase 3 — extraction**
 
