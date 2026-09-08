@@ -558,6 +558,7 @@ from core.curve_identification import (
     ComprehensiveMnemonicLibrary,
     ComprehensiveCurveManager,
     build_mnemonic_database,
+    allowed_range_from_typical,
 )
 
 from core.reporting import StandardizationReporter
@@ -2385,6 +2386,9 @@ class AdvancedPreprocessingApplication(WellLoadingMixin, AppUIMixin):
         self.depth_spacing_var = tk.DoubleVar(value=0.1)
         self.rename_curves_var = tk.BooleanVar(value=True)
         self.null_value_var = tk.StringVar(value="-999.25")
+        # Counted range-validation outcomes (skip / pass / clip / error).
+        # Skipping is a logged result, not a silent pass (contract C3).
+        self.range_validation_outcomes: List[Dict[str, Any]] = []
         # Phase 0 item 2 (see POLISH_pipeline_contracts.md sections 6 and 8): unit
         # standardization is OFF by default. Converting on load is what breaks an
         # imperial well. On KEOUGH #12-34 the chain is:
@@ -9514,6 +9518,7 @@ Your feedback contributes to software quality and reliability.
         # Initialize processed data
         self.processed_data = self.current_data.copy()
         self.processing_results = {}
+        self.range_validation_outcomes = []
         
         # Save initial state for undo/redo
         self.processing_history.save_state(
@@ -9882,7 +9887,7 @@ Your feedback contributes to software quality and reliability.
                 
                 # Step 2: Outlier detection using IQR method
                 if self.outlier_detection_var.get():
-                    outlier_mask = self.detect_outliers_iqr(data)
+                    outlier_mask = self.detect_outliers_for_curve(column, data)
                     outlier_count = np.sum(outlier_mask)
                     if outlier_count > 0:
                         self.log_processing(f"Outlier detection: {outlier_count} outliers identified in {column}")
@@ -10211,6 +10216,7 @@ Your feedback contributes to software quality and reliability.
             # Final UI updates
             self.root.after(0, lambda: self.progress_bar.configure(value=100))
             self.root.after(0, lambda: self.status_label.config(text="Processing completed successfully"))
+            self._emit_range_validation_summary()
             self.log_processing("=" * 50)
             self.log_processing("PROCESSING COMPLETED SUCCESSFULLY")
             self.log_processing("=" * 50)
@@ -10674,6 +10680,29 @@ Your feedback contributes to software quality and reliability.
         report.append(f"  Outlier Detection: {self.outlier_detection_var.get()}")
         report.append(f"  Range Validation: {self.range_validation_var.get()}")
         report.append(f"  Uncertainty Quantification: {self.uncertainty_quantification_var.get()}")
+        outcomes = getattr(self, 'range_validation_outcomes', None) or []
+        if outcomes:
+            skipped = [o for o in outcomes if o.get('outcome') == 'skipped']
+            errors = [o for o in outcomes if o.get('outcome') == 'error']
+            clipped = [o for o in outcomes if o.get('outcome') == 'clipped']
+            passed = [o for o in outcomes if o.get('outcome') == 'passed']
+            report.append("")
+            report.append("Range Validation Run Summary:")
+            report.append(
+                f"  passed={len(passed)}  clipped={len(clipped)}  "
+                f"skipped={len(skipped)}  errors={len(errors)}"
+            )
+            if skipped:
+                report.append("  Skipped (not validated):")
+                for item in skipped:
+                    report.append(
+                        f"    {item['curve']}: {item['reason']} "
+                        f"(type={item.get('curve_type')}, confidence={item.get('confidence', 0):.2f})"
+                    )
+            if errors:
+                report.append("  Validation errors (data left unchanged):")
+                for item in errors:
+                    report.append(f"    {item['curve']}: {item['reason']}")
         
         # Unit Standardization Analysis
         if hasattr(self, 'unit_standardizer'):
@@ -11139,6 +11168,66 @@ Your feedback contributes to software quality and reliability.
             # On any error, default to processing minimally to avoid skipping useful data
             return 'PROCESS_MINIMAL', 1.0
 
+    def detect_outliers_for_curve(self, curve_name: str, data: np.ndarray) -> np.ndarray:
+        """Dispatch outlier detection by curve type under the global switch.
+
+        Symmetric Tukey fences on right-skewed gamma ray clip genuine shale
+        response (KEOUGH GR peak 563 GAPI vs an IQR upper fence around 121).
+        Physical bounds use the same span-proportional pad as range validation.
+        The method applied is logged per curve.
+        """
+        if not self.outlier_detection_var.get():
+            return np.zeros(len(data), dtype=bool)
+
+        strategy = 'iqr_tukey'
+        curve_type = 'UNKNOWN'
+        family = 'unknown'
+        try:
+            strategy = self.curve_identifier.outlier_strategy_for_curve(curve_name)
+            info = self.curve_identifier.get_curve_info(curve_name)
+            curve_type = info.curve_type
+            family = info.curve_family
+        except Exception as e:
+            self.log_processing(
+                f"Outlier method for {curve_name}: iqr_tukey "
+                f"(strategy lookup failed: {e})"
+            )
+            return self.detect_outliers_iqr(data)
+
+        if strategy == 'skip':
+            self.log_processing(
+                f"Outlier method for {curve_name}: skip "
+                f"(type={curve_type}, family={family}) — unrecognised curve"
+            )
+            return np.zeros(len(data), dtype=bool)
+
+        if strategy == 'physical_bounds':
+            info = self.curve_identifier.get_curve_info(curve_name)
+            if info.typical_range is None:
+                self.log_processing(
+                    f"Outlier method for {curve_name}: skip "
+                    f"(physical_bounds requested but no typical range)"
+                )
+                return np.zeros(len(data), dtype=bool)
+            min_expected, max_expected = info.typical_range
+            min_allowed, max_allowed = allowed_range_from_typical(min_expected, max_expected)
+            mask = np.zeros(len(data), dtype=bool)
+            finite = np.isfinite(data)
+            mask[finite] = (data[finite] < min_allowed) | (data[finite] > max_allowed)
+            flagged = int(np.sum(mask))
+            self.log_processing(
+                f"Outlier method for {curve_name}: physical_bounds "
+                f"[{min_allowed:.6g}, {max_allowed:.6g}] "
+                f"(type={curve_type}, family={family}); {flagged} flagged"
+            )
+            return mask
+
+        self.log_processing(
+            f"Outlier method for {curve_name}: iqr_tukey "
+            f"(type={curve_type}, family={family})"
+        )
+        return self.detect_outliers_iqr(data)
+
     def detect_outliers_iqr(self, data: np.ndarray, multiplier: float = 1.5) -> np.ndarray:
         """Detect outliers using IQR method with professional logging"""
         if not self.outlier_detection_var.get():
@@ -11221,7 +11310,7 @@ Your feedback contributes to software quality and reliability.
                 
                 # Apply outlier detection
                 if self.outlier_detection_var.get():
-                    outlier_mask = self.detect_outliers_iqr(validated_data[curve_name])
+                    outlier_mask = self.detect_outliers_for_curve(curve_name, validated_data[curve_name])
                     if np.any(outlier_mask):
                         validated_data[curve_name][outlier_mask] = np.nan
                 
@@ -11272,6 +11361,19 @@ Your feedback contributes to software quality and reliability.
         self.log_processing(f"Total final points: {total_final:,}")
         self.log_processing(f"Total points removed: {total_removed:,}")
         self.log_processing(f"Overall data quality: {overall_quality:.1f}%")
+        failed_validations = [
+            name for name, summary in validation_summary.items()
+            if summary.get('validation_failed')
+        ]
+        if failed_validations:
+            self.log_processing(
+                f"Validation errors (data left unchanged): {len(failed_validations)}"
+            )
+            for name in failed_validations:
+                self.log_processing(
+                    f"  {name}: {validation_summary[name].get('error', 'unknown error')}"
+                )
+        self._emit_range_validation_summary()
         self.log_processing("=" * 50)
         
         return validated_data
@@ -11441,7 +11543,7 @@ Your feedback contributes to software quality and reliability.
                     'curve_type': 'UNKNOWN',
                     'unit': '',
                     'description': f'Curve {curve_name}',
-                    'typical_range': (0.0, 1.0),
+                    'typical_range': None,
                     'type_confidence': 0.0
                 })
         except Exception:
@@ -11450,50 +11552,161 @@ Your feedback contributes to software quality and reliability.
                 'curve_type': 'UNKNOWN',
                 'unit': '',
                 'description': f'Curve {curve_name}',
-                'typical_range': (0.0, 1.0),
+                'typical_range': None,
                 'type_confidence': 0.0
             }
 
     def apply_range_validation(self, curve_name: str, data: np.ndarray) -> np.ndarray:
-        """Alias for validate_curve_range - applies range validation and returns cleaned data.
-        
-        This method exists to maintain compatibility with existing code that calls
-        apply_range_validation. It uses the existing validate_curve_range method
-        and applies the validation results to clean the data.
+        """Apply mnemonic range validation, or skip when the curve is unknown.
+
+        A stage that does not recognise its input must decline, not substitute
+        (contract C3). Confidence 0.00 / type UNKNOWN is a counted skip with a
+        stated reason. A validation crash is recorded as an error, not a pass.
         """
         try:
-            # Use existing validation method
+            skip, skip_reason, curve_type, confidence = self._range_validation_skip_decision(curve_name)
+            if skip:
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped', skip_reason,
+                    confidence=confidence, curve_type=curve_type)
+                return data
+
             validation_result = self.curve_identifier.validate_curve_range(curve_name, data)
-            
+            confidence = float(validation_result.get('confidence', confidence) or 0.0)
+            curve_type = str(validation_result.get('curve_type', curve_type) or 'UNKNOWN')
+
+            if validation_result.get('skipped'):
+                reason = str(validation_result.get('reason') or 'unrecognised curve')
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped', reason,
+                    confidence=confidence, curve_type=curve_type)
+                return data
+
+            if validation_result.get('reason') == 'no_valid_data':
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped', 'no valid data',
+                    confidence=confidence, curve_type=curve_type)
+                return data
+
             if not validation_result['valid']:
-                # If range is invalid, apply tolerance-based cleaning
-                curve_info = self.get_curve_info(curve_name)
-                min_expected, max_expected = curve_info.typical_range
-                
-                # Apply tolerance factor (same as in validate_curve_range)
-                tolerance_factor = 2.0
-                min_allowed = min_expected / tolerance_factor
-                max_allowed = max_expected * tolerance_factor
-                
-                # Create mask for valid data within tolerance
-                valid_mask = (data >= min_allowed) & (data <= max_allowed)
-                
-                # Replace out-of-range values with NaN
-                cleaned_data = data.copy()
-                cleaned_data[~valid_mask] = np.nan
-                
+                allowed = validation_result.get('allowed_range')
+                if allowed is None:
+                    raise ValueError(
+                        f"range validation for {curve_name} is invalid but has no allowed_range"
+                    )
+                min_allowed, max_allowed = allowed
+                cleaned_data = np.array(data, copy=True)
+                out = np.isfinite(cleaned_data) & (
+                    (cleaned_data < min_allowed) | (cleaned_data > max_allowed)
+                )
+                cleaned_data[out] = np.nan
+                self._record_range_validation_outcome(
+                    curve_name, 'clipped',
+                    f'outside allowed [{min_allowed:.6g}, {max_allowed:.6g}]',
+                    confidence=confidence, curve_type=curve_type,
+                    removed=int(np.sum(out)))
                 return cleaned_data
-            
-            # If validation passed, return original data
+
+            self._record_range_validation_outcome(
+                curve_name, 'passed', 'within allowed range',
+                confidence=confidence, curve_type=curve_type)
             return data
-            
+
         except Exception as e:
-            # If validation fails, return original data unchanged
+            self._record_range_validation_outcome(
+                curve_name, 'error', str(e),
+                confidence=0.0, curve_type='UNKNOWN')
             try:
-                self.log_processing(f"Range validation failed for {curve_name}: {e}")
+                self.log_processing(f"Range validation ERROR for {curve_name}: {e}")
             except Exception:
                 pass
             return data
+
+    def _range_validation_skip_decision(
+        self, curve_name: str
+    ) -> Tuple[bool, str, str, float]:
+        """Decide whether range validation must decline for this curve.
+
+        Returns:
+            (skip, reason, curve_type, confidence)
+        """
+        if not hasattr(self, 'curve_identifier') or self.curve_identifier is None:
+            return True, 'no curve identifier', 'UNKNOWN', 0.0
+        info = self.curve_identifier.get_curve_info(curve_name)
+        curve_type = info.curve_type or 'UNKNOWN'
+        confidence = float(info.type_confidence or 0.0)
+        if confidence <= 0.0:
+            return True, 'confidence 0.00', curve_type, confidence
+        if curve_type == 'UNKNOWN':
+            return True, 'curve type UNKNOWN', curve_type, confidence
+        if info.typical_range is None:
+            return True, 'no typical range', curve_type, confidence
+        return False, '', curve_type, confidence
+
+    def _record_range_validation_outcome(
+        self,
+        curve_name: str,
+        outcome: str,
+        reason: str,
+        *,
+        confidence: float = 0.0,
+        curve_type: str = 'UNKNOWN',
+        removed: int = 0,
+    ) -> None:
+        """Append a counted range-validation outcome and log it."""
+        if not hasattr(self, 'range_validation_outcomes') or self.range_validation_outcomes is None:
+            self.range_validation_outcomes = []
+        entry = {
+            'curve': curve_name,
+            'outcome': outcome,
+            'reason': reason,
+            'confidence': confidence,
+            'curve_type': curve_type,
+            'removed': removed,
+        }
+        self.range_validation_outcomes.append(entry)
+        if outcome == 'skipped':
+            self.log_processing(
+                f"Range validation skipped for {curve_name}: {reason} "
+                f"(type={curve_type}, confidence={confidence:.2f})"
+            )
+        elif outcome == 'error':
+            self.log_processing(
+                f"Range validation ERROR counted for {curve_name}: {reason}"
+            )
+        elif outcome == 'clipped' and removed:
+            self.log_processing(
+                f"Range validation clipped {removed} values from {curve_name}: {reason}"
+            )
+
+    def _emit_range_validation_summary(self) -> None:
+        """Write the counted skip/error/clip summary into the processing log."""
+        outcomes = getattr(self, 'range_validation_outcomes', None) or []
+        skipped = [o for o in outcomes if o.get('outcome') == 'skipped']
+        errors = [o for o in outcomes if o.get('outcome') == 'error']
+        clipped = [o for o in outcomes if o.get('outcome') == 'clipped']
+        passed = [o for o in outcomes if o.get('outcome') == 'passed']
+        self.log_processing("=" * 50)
+        self.log_processing("RANGE VALIDATION SUMMARY")
+        self.log_processing("=" * 50)
+        self.log_processing(
+            f"passed={len(passed)}  clipped={len(clipped)}  "
+            f"skipped={len(skipped)}  errors={len(errors)}"
+        )
+        if skipped:
+            self.log_processing("Skipped (not validated):")
+            for item in skipped:
+                self.log_processing(
+                    f"  {item['curve']}: {item['reason']} "
+                    f"(type={item.get('curve_type')}, confidence={item.get('confidence', 0):.2f})"
+                )
+        if errors:
+            self.log_processing("Validation errors (data left unchanged):")
+            for item in errors:
+                self.log_processing(f"  {item['curve']}: {item['reason']}")
+        if not skipped and not errors:
+            self.log_processing("No skips or validation errors.")
+        self.log_processing("=" * 50)
 
     def uniformize_curves(self) -> None:
         """Standardize curve names and units in `processed_data`.

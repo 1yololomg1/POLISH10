@@ -49,6 +49,36 @@ except Exception:  # pragma: no cover - optional during isolated unit tests
 
 OHM_M_UNITS = ['OHMM', 'ohm.m', 'OHM-M']
 
+# Span-proportional range padding. k=1.0 keeps the previous upper bound for
+# zero-based ranges (allowed max = 2 * declared max, same as max * 2) while
+# applying the same pad to the lower bound. The old min/tolerance_factor rule
+# tightened negative lowers (SP -200 became -100) and gave zero-based lowers
+# no tolerance at all (0.0 / 2 = 0.0).
+RANGE_TOLERANCE_SPAN_FRACTION = 1.0
+
+
+def allowed_range_from_typical(
+    min_expected: float,
+    max_expected: float,
+    k: float = RANGE_TOLERANCE_SPAN_FRACTION,
+) -> Tuple[float, float]:
+    """Widen a declared typical range by k * span on both sides.
+
+    Args:
+        min_expected: Declared lower bound.
+        max_expected: Declared upper bound.
+        k: Fraction of (max - min) to pad on each side.
+
+    Returns:
+        (min_allowed, max_allowed) suitable for validation or physical bounds.
+    """
+    span = float(max_expected) - float(min_expected)
+    if span == 0.0:
+        pad = abs(float(max_expected)) * k if max_expected != 0.0 else k
+    else:
+        pad = abs(span) * k
+    return float(min_expected) - pad, float(max_expected) + pad
+
 # Short mnemonics (len <= 2) must never match via substring/partial/fuzzy inside longer
 # curve names. Explicit set covers spectral K/U/TH and other high-collision 1-2 char tokens.
 SHORT_MNEMONIC_MAX_LEN = 2
@@ -100,10 +130,10 @@ class CurveInfo:
 
     curve_family: str = 'unknown'
     physics_type: str = ''
-    typical_range: Tuple[float, float] = (0.0, 1.0)
+    typical_range: Optional[Tuple[float, float]] = None
     log_scale: bool = False
     industry_color: str = '#000000'
-    track_scale: Tuple[float, float] = (0.0, 1.0)
+    track_scale: Optional[Tuple[float, float]] = None
     processing_params: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -1051,7 +1081,20 @@ class CurveIdentificationEngine:
     ) -> CurveInfo:
         with self._lock:
             curve_type, confidence, curve_data = self.identify_curve(curve_name, unit, description)
-            typical_range = tuple(curve_data.get('range', [0.0, 1.0]))
+            # Absence must return absence: do not invent [0.0, 1.0] on a lookup miss.
+            range_raw = curve_data.get('range') if curve_data else None
+            typical_range: Optional[Tuple[float, float]]
+            if range_raw is not None and len(range_raw) == 2:
+                typical_range = (float(range_raw[0]), float(range_raw[1]))
+            else:
+                typical_range = None
+            # track_scale has its own lookup. It must not inherit an absent range
+            # (that made unknown-curve plot axes collapse to 0-1).
+            scale_raw = curve_data.get('track_scale') if curve_data else None
+            if scale_raw is not None and len(scale_raw) == 2:
+                track_scale: Optional[Tuple[float, float]] = (float(scale_raw[0]), float(scale_raw[1]))
+            else:
+                track_scale = None
             curve_family = curve_data.get('curve_family', 'unknown')
             processing_params = {
                 'wavelet_type': curve_data.get('wavelet_type', 'db4'),
@@ -1072,10 +1115,10 @@ class CurveIdentificationEngine:
                 type_confidence=confidence,
                 curve_family=curve_family,
                 physics_type=curve_data.get('physics', ''),
-                typical_range=typical_range,  # type: ignore[arg-type]
+                typical_range=typical_range,
                 log_scale=curve_data.get('log_scale', False),
                 industry_color=curve_data.get('industry_color', '#000000'),
-                track_scale=tuple(curve_data.get('track_scale', typical_range)),  # type: ignore[arg-type]
+                track_scale=track_scale,
                 processing_params=processing_params,
             )
             self._curve_info[curve_name] = curve_info
@@ -1096,8 +1139,24 @@ class CurveIdentificationEngine:
     def get_industry_color_for_curve(self, curve_name: str) -> str:
         return self.get_curve_info(curve_name).industry_color
 
-    def get_track_scale_for_curve(self, curve_name: str) -> Tuple[float, float]:
+    def get_track_scale_for_curve(self, curve_name: str) -> Optional[Tuple[float, float]]:
         return self.get_curve_info(curve_name).track_scale
+
+    def outlier_strategy_for_curve(self, curve_name: str) -> str:
+        """Return the outlier method this curve should receive.
+
+        Right-skewed families (gamma ray) use physical bounds rather than
+        symmetric Tukey fences, which clip genuine high-amplitude shale
+        response. Unrecognised curves are skipped, not given a default fence.
+        """
+        info = self.get_curve_info(curve_name)
+        if info.curve_type == 'UNKNOWN' or info.type_confidence <= 0.0:
+            return 'skip'
+        family = (info.curve_family or '').lower()
+        curve_type = info.curve_type or ''
+        if family in {'gamma_ray', 'gamma_ray_spectral'} or curve_type.startswith('GAMMA_RAY'):
+            return 'physical_bounds'
+        return 'iqr_tukey'
 
     def is_log_scale_curve(self, curve_name: str) -> bool:
         return self.get_curve_info(curve_name).log_scale
@@ -1112,20 +1171,45 @@ class CurveIdentificationEngine:
 
     def validate_curve_range(self, curve_name: str, data: np.ndarray) -> Dict[str, Any]:
         curve_info = self.get_curve_info(curve_name)
+        if (
+            curve_info.typical_range is None
+            or curve_info.curve_type == 'UNKNOWN'
+            or curve_info.type_confidence <= 0.0
+        ):
+            reason = 'no_typical_range'
+            if curve_info.type_confidence <= 0.0:
+                reason = 'confidence 0.00'
+            elif curve_info.curve_type == 'UNKNOWN':
+                reason = 'curve type UNKNOWN'
+            return {
+                'valid': False,
+                'skipped': True,
+                'reason': reason,
+                'confidence': curve_info.type_confidence,
+                'curve_type': curve_info.curve_type,
+            }
+
         min_expected, max_expected = curve_info.typical_range
         valid_data = data[~np.isnan(data)]
         if len(valid_data) == 0:
-            return {'valid': False, 'reason': 'no_valid_data'}
+            return {
+                'valid': False,
+                'skipped': False,
+                'reason': 'no_valid_data',
+                'expected_range': (min_expected, max_expected),
+                'confidence': curve_info.type_confidence,
+                'curve_type': curve_info.curve_type,
+            }
 
         min_actual = float(np.min(valid_data))
         max_actual = float(np.max(valid_data))
-        tolerance_factor = 2.0
-        range_valid = (min_expected / tolerance_factor) <= min_actual and max_actual <= (
-            max_expected * tolerance_factor
-        )
+        min_allowed, max_allowed = allowed_range_from_typical(min_expected, max_expected)
+        range_valid = min_allowed <= min_actual and max_actual <= max_allowed
         return {
             'valid': range_valid,
+            'skipped': False,
             'expected_range': (min_expected, max_expected),
+            'allowed_range': (min_allowed, max_allowed),
             'actual_range': (min_actual, max_actual),
             'confidence': curve_info.type_confidence,
             'curve_type': curve_info.curve_type,

@@ -12,11 +12,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+import numpy as np
+
 from core.curve_identification import (
     CurveIdentificationEngine,
     ComprehensiveCurveManager,
     ComprehensiveMnemonicLibrary,
     build_mnemonic_database,
+    allowed_range_from_typical,
 )
 
 
@@ -186,3 +189,68 @@ def test_longer_spectral_aliases_still_identify():
         identified, confidence, _ = engine.identify_curve(mnemonic)
         assert identified == curve_type, f"{mnemonic} -> {identified}, expected {curve_type}"
         assert confidence >= 0.9
+
+
+def test_unknown_mnemonic_has_no_fabricated_range_or_track_scale():
+    """C3: a lookup miss must not invent [0.0, 1.0] for range or axis scale."""
+    engine = CurveIdentificationEngine()
+    info = engine.create_comprehensive_curve_info('TBHV')
+    assert info.curve_type == 'UNKNOWN'
+    assert info.type_confidence == 0.0
+    assert info.typical_range is None
+    assert info.track_scale is None
+
+
+def test_validate_unknown_curve_skips():
+    engine = CurveIdentificationEngine()
+    data = np.linspace(1.0, 100.0, 50)
+    result = engine.validate_curve_range('TBHV', data)
+    assert result['skipped'] is True
+    assert result['curve_type'] == 'UNKNOWN'
+    assert result['confidence'] == 0.0
+    assert 'expected_range' not in result
+
+
+def test_span_padding_k_preserves_upper_doubling_for_zero_based_range():
+    """k=1 makes allowed max = 2 * declared max when min is 0, matching max*2."""
+    amin, amax = allowed_range_from_typical(0.0, 500.0)
+    assert amin == -500.0
+    assert amax == 1000.0
+
+
+def test_sp_tolerance_does_not_tighten_negative_bound():
+    engine = CurveIdentificationEngine()
+    info = engine.get_curve_info('SP')
+    assert info.typical_range is not None
+    amin, amax = allowed_range_from_typical(*info.typical_range)
+    # Previous rule used min/2, which tightened -200 to -100.
+    assert amin <= -200.0
+    data = np.array([-150.0, -80.0, 10.0, 40.0])
+    result = engine.validate_curve_range('SP', data)
+    assert result['skipped'] is False
+    assert result['valid'] is True
+    assert result['allowed_range'][0] <= -150.0
+
+
+def test_nphi_retains_negative_gas_effect():
+    engine = CurveIdentificationEngine()
+    data = np.array([-0.12, 0.05, 0.22, 0.35])
+    result = engine.validate_curve_range('NPHI', data)
+    assert result['skipped'] is False
+    assert result['valid'] is True
+    assert result['allowed_range'][0] <= -0.12
+
+
+def test_gr_physical_bounds_keep_hot_shale_peak():
+    """563 GAPI is a real shale response; IQR clipped it around 121 GAPI."""
+    engine = CurveIdentificationEngine()
+    assert engine.outlier_strategy_for_curve('GR') == 'physical_bounds'
+    info = engine.get_curve_info('GR')
+    assert info.typical_range is not None
+    amin, amax = allowed_range_from_typical(*info.typical_range)
+    assert amin < 563.0 < amax
+
+
+def test_unknown_curve_outlier_strategy_is_skip():
+    engine = CurveIdentificationEngine()
+    assert engine.outlier_strategy_for_curve('TBHV') == 'skip'
