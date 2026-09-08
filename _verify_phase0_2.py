@@ -6,18 +6,59 @@ row count survives; with it on, the same 0.5 is applied to converted metres and
 the well decimates. Also confirms RHOB against the BULK_DENSITY range in each
 unit system, and that the shipped defaults are actually False.
 """
+from __future__ import annotations
+
+import argparse
 import re
 import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-LAS = r"C:\Users\achav\Downloads\2022\1052970244.las"
 RHOB_RANGE = [1.0, 3.5]          # core/curve_identification.py BULK_DENSITY
 NULL = -999.25
 FT_TO_M = 0.3048
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Verify Phase 0 item 2 against a KEOUGH-style LAS file."
+    )
+    parser.add_argument(
+        "las_path",
+        nargs="?",
+        type=Path,
+        default=None,
+        help="Path to the reference LAS file (required unless POLISH_VERIFY_LAS is set).",
+    )
+    return parser.parse_args(argv)
+
+
+def resolve_las_path(args: argparse.Namespace) -> Path:
+    import os
+
+    raw = args.las_path or os.environ.get("POLISH_VERIFY_LAS")
+    if not raw:
+        print(
+            "ERROR: no LAS path given. Pass the file as an argument or set "
+            "POLISH_VERIFY_LAS.\n"
+            "Usage: python _verify_phase0_2.py <path-to-keough.las>"
+        )
+        sys.exit(2)
+    path = Path(raw)
+    if not path.is_file():
+        print(f"ERROR: LAS file not found: {path}")
+        sys.exit(2)
+    return path
+
+
+args = parse_args()
+LAS = resolve_las_path(args)
 
 # --- load the reference well -------------------------------------------------
-with open(LAS, "r", errors="replace") as fh:
+with LAS.open("r", encoding="utf-8", errors="replace") as fh:
     text = fh.read()
 
 curve_block = text.split("~Curve Information")[1].split("~")[0]
@@ -63,7 +104,8 @@ check("units ON   -> rows", on_rows, 3268)
 print("\nRHOB vs BULK_DENSITY range [1.0, 3.5]:")
 rhob_col = next((c for c in df.columns if c.upper() in ("RHOB", "RHOZ", "DENB")), None)
 if rhob_col is None:
-    print("  SKIP  no density curve in this file")
+    print("  FAIL  no recognised density curve in this file")
+    failures.append("no recognised density curve")
 else:
     raw = df[rhob_col].to_numpy(dtype=float)
     finite = raw[np.isfinite(raw)]
@@ -81,14 +123,14 @@ else:
 # --- shipped defaults --------------------------------------------------------
 print("\nShipped defaults for standardize_units_var:")
 sites = [
-    (r"advanced_preprocessing_system10.py", "self.standardize_units_var = tk.BooleanVar(value="),
-    (r"ui\processing_tab.py", "self.standardize_units_var = tk.BooleanVar(value="),
-    (r"core\unit_standardization.py", "standardize_units_var = tk.BooleanVar(value="),
+    (REPO_ROOT / "advanced_preprocessing_system10.py", "self.standardize_units_var = tk.BooleanVar(value="),
+    (REPO_ROOT / "ui" / "processing_tab.py", "self.standardize_units_var = tk.BooleanVar(value="),
+    (REPO_ROOT / "core" / "unit_standardization.py", "standardize_units_var = tk.BooleanVar(value="),
 ]
 for path, needle in sites:
-    src = open(path, encoding="utf-8", errors="replace").read()
+    src = path.read_text(encoding="utf-8", errors="replace")
     vals = re.findall(re.escape(needle) + r"(\w+)\)", src)
-    check(f"{path} default(s)", vals, ["False"])
+    check(f"{path.name} default(s)", vals, ["False"])
 
 print("\n" + ("ALL CHECKS PASSED" if not failures
               else f"{len(failures)} CHECK(S) FAILED: {failures}"))

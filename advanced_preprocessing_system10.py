@@ -8875,6 +8875,23 @@ Your feedback contributes to software quality and reliability.
         else:
             self.log_processing(f"Using declared NULL value {ui_value}")
 
+    def _declared_null_for_current_file(self) -> Optional[str]:
+        """NULL declared by the active/current dataset only, or None if absent.
+
+        Retained wells in well_datasets are ignored. A missing declaration is
+        not filled from another well or from the session default.
+        """
+        datasets = getattr(self, 'well_datasets', None) or {}
+        active = getattr(self, 'active_well_id', None)
+        if active and active in datasets:
+            well_info = (datasets[active] or {}).get('well_info') or {}
+            formatted = self._format_null_value_for_ui(well_info.get('null_value'))
+            if formatted is not None:
+                return formatted
+        if getattr(self, 'well_info', None):
+            return self._format_null_value_for_ui(self.well_info.get('null_value'))
+        return None
+
     def _collect_declared_nulls_by_well(self) -> Dict[str, str]:
         """Map well_id -> formatted NULL for wells that declare one."""
         declared: Dict[str, str] = {}
@@ -8964,9 +8981,22 @@ Your feedback contributes to software quality and reliability.
 
         - Single file / all wells agree → apply silently.
         - Multiple wells with disagreeing NULL → prompt (unless allow_prompt=False).
-        - No declared NULL → leave the current session value unchanged.
+        - Current file declares no NULL → leave the session value unchanged.
+          Retained wells in well_datasets are not used as a substitute.
         """
         declared = self._collect_declared_nulls_by_well()
+        current_declared = self._declared_null_for_current_file()
+        if current_declared is None:
+            # A retained well in well_datasets must not supply a sentinel the
+            # current file never declared. That would make real values look
+            # null, or miss nulls, which undoes NaN-as-internal-null (dbba867).
+            self.log_processing(
+                "Current file declares no NULL; keeping session null "
+                f"{self.null_value_var.get() if hasattr(self, 'null_value_var') else '-999.25'} "
+                "(not adopting retained wells)"
+            )
+            return
+
         if not declared:
             self.log_processing(
                 "No LAS-declared NULL value found; keeping session null "
@@ -13501,8 +13531,8 @@ Your feedback contributes to software quality and reliability.
             if hasattr(self, '_convert_nulls_to_nan'):
                 curve_data = self._convert_nulls_to_nan(curve_data)
             else:
-                # Fallback: replace common null values with NaN
-                null_value = -999.25
+                # Fallback: replace the configured null with NaN
+                null_value = self._get_null_value()
                 curve_data = np.where(curve_data == null_value, np.nan, curve_data)
             
             # Skip if entire curve is NaN
@@ -13527,7 +13557,7 @@ Your feedback contributes to software quality and reliability.
             ax.legend(loc='best', fontsize=8, framealpha=0.9)
         
         # Add info text
-        null_value = -999.25
+        null_value = self._get_null_value()
         info_text = (
             f"Depth Range: {depth_min:.1f} - {depth_max:.1f} {depth_unit}\n"
             f"Total Depth Points: {len(depth)}\n"

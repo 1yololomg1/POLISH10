@@ -506,13 +506,16 @@ def popup_helper_cases(app: Any, curve: str = "GR") -> List[Tuple[str, Callable[
     ]
 
 
-def dispatched_viz_types(module: Any) -> List[str]:
+def dispatched_viz_types(module: Any) -> Optional[List[str]]:
     """Return the viz_type values routed by _create_popup_visualization.
 
     Read out of the application source rather than hardcoded here. A viz_type
     added to the dispatch table but not to popup_helper_cases would otherwise go
     uncovered without anything saying so, which is the same class of silent gap
     this whole invariant exists to close.
+
+    Returns None when the dispatch table cannot be inspected, so callers can
+    treat inspection failure as a coverage failure rather than as zero gaps.
     """
     import inspect
     import re
@@ -522,36 +525,47 @@ def dispatched_viz_types(module: Any) -> List[str]:
             module.AdvancedPreprocessingApplication._create_popup_visualization)
     except (OSError, TypeError, AttributeError) as exc:
         print("WARNING: could not read the popup dispatch table: {}".format(exc))
-        return []
+        return None
 
     return re.findall(r"""viz_type\s*==\s*["']([A-Za-z0-9_]+)["']""", source)
 
 
 def coverage_gaps(module: Any, covered: List[str]) -> List[str]:
-    """Return dispatch-table viz_types that no harness case drives."""
+    """Return dispatch-table viz_types that no harness case drives.
+
+    Source-inspection failure is returned as an explicit unavailable state so
+    it cannot be mistaken for full coverage.
+    """
     dispatched = dispatched_viz_types(module)
+    if dispatched is None:
+        return ["<coverage inspection unavailable>"]
     if not dispatched:
-        return []
+        return ["<coverage inspection found no dispatch branches>"]
     return [name for name in dispatched if name not in set(covered)]
 
 
 def check_routes_raise(cases: List[Tuple[str, Callable[[], Any]]],
-                       phase: str) -> List[RaiseCheck]:
-    """Drive each route and record whether it raised. Nothing is swallowed.
+                       phase: str,
+                       capture: Optional[DialogCapture] = None) -> List[RaiseCheck]:
+    """Drive each route and record whether it raised or reported a dialog error.
 
     Exceptions are caught only so that one broken route does not stop the
     remaining routes from being driven; every one caught is reported as a
-    failure. A route that returns without raising passes regardless of what, if
-    anything, it drew, because judging the drawing is the other checks' job.
+    failure. Routes that swallow the exception and show a messagebox are also
+    failures: a captured error dialog is not a pass.
     """
     checks: List[RaiseCheck] = []
 
     for name, invoke in cases:
         check = RaiseCheck(route=name, phase=phase)
+        if capture is not None:
+            capture.reset()
         try:
             invoke()
         except Exception as exc:
             check.error = "{}: {}".format(type(exc).__name__, exc)
+        if capture is not None and capture.errors and check.error is None:
+            check.error = "error dialog -> " + capture.errors[0].replace("\n", " ")[:160]
         checks.append(check)
 
     return checks
@@ -814,8 +828,8 @@ def main() -> int:
                 else "matched - both frames {} rows".format(len(app.current_data))))
 
         cases = popup_helper_cases(app) + embedded_depth_cases(app, polish)
-        with DialogCapture(polish):
-            phase_checks = check_routes_raise(cases, phase)
+        with DialogCapture(polish) as capture:
+            phase_checks = check_routes_raise(cases, phase, capture)
         raise_checks.extend(phase_checks)
 
         failures = [c for c in phase_checks if not c.passed]
