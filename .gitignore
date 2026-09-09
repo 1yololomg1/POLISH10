@@ -32,8 +32,7 @@ Thumbs.db
 temp/
 tmp/
 
-debug-*.log 
-__pycache__/ 
-*.pyc 
-__pycache__/ 
-*.pyc 
+debug-*.log
+.coverage
+htmlcov/
+.ruff_cache/ 
