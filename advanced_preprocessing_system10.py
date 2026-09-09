@@ -8792,6 +8792,22 @@ Your feedback contributes to software quality and reliability.
         else:
             raise ValueError(f"Unsupported file format: {ext}")
         self.processed_data = self.current_data.copy() if self.current_data is not None else None
+        # Register the file just loaded as the active dataset before NULL
+        # reconciliation. Headless load used to leave active_well_id pointing at a
+        # retained well, so reconciliation read the wrong sentinel.
+        try:
+            well_id = self._gen_well_id_from_info(filepath)
+            if not isinstance(getattr(self, 'well_datasets', None), dict):
+                self.well_datasets = {}
+            self.well_datasets[well_id] = self._dataset_from_current_state(filepath)
+            self.active_well_id = well_id
+        except Exception as register_error:
+            try:
+                self.log_processing(
+                    f"load_data: could not register dataset before NULL reconcile: {register_error}"
+                )
+            except Exception:
+                pass
         # Headless: adopt file NULL without UI prompts
         self._reconcile_null_value_convention(allow_prompt=False)
         if hasattr(self, 'analyze_curves'):
@@ -8883,13 +8899,16 @@ Your feedback contributes to software quality and reliability.
         """
         datasets = getattr(self, 'well_datasets', None) or {}
         active = getattr(self, 'active_well_id', None)
+        current_info = getattr(self, 'well_info', None) or {}
+        # In-memory well_info is the file just loaded. Prefer it over a stale
+        # active_well_id left behind by a retained well (headless load_data).
+        if getattr(self, 'well_info', None):
+            return self._format_null_value_for_ui(current_info.get('null_value'))
         if active and active in datasets:
             well_info = (datasets[active] or {}).get('well_info') or {}
             formatted = self._format_null_value_for_ui(well_info.get('null_value'))
             if formatted is not None:
                 return formatted
-        if getattr(self, 'well_info', None):
-            return self._format_null_value_for_ui(self.well_info.get('null_value'))
         return None
 
     def _collect_declared_nulls_by_well(self) -> Dict[str, str]:
@@ -8901,11 +8920,17 @@ Your feedback contributes to software quality and reliability.
             formatted = self._format_null_value_for_ui(well_info.get('null_value'))
             if formatted is not None:
                 declared[well_id] = formatted
-        # Fall back to current well_info when datasets are empty (headless load_data).
-        if not declared and getattr(self, 'well_info', None):
+        # Include the in-memory current file even when retained wells already
+        # populated the map (headless load_data used to omit it).
+        if getattr(self, 'well_info', None):
             formatted = self._format_null_value_for_ui(self.well_info.get('null_value'))
-            if formatted is not None:
-                label = str(self.well_info.get('well_name') or self.well_info.get('uwi') or 'active')
+            if formatted is not None and not any(
+                self._null_value_strings_agree(formatted, existing)
+                for existing in declared.values()
+            ):
+                label = str(self.well_info.get('well_name') or self.well_info.get('uwi') or 'current')
+                if label in declared:
+                    label = f"{label}_current"
                 declared[label] = formatted
         return declared
 
@@ -8997,6 +9022,12 @@ Your feedback contributes to software quality and reliability.
             )
             return
 
+        if not allow_prompt:
+            # Headless/batch: the file just loaded owns the session sentinel.
+            # Do not adopt a retained well's NULL when the maps disagree.
+            self._set_null_value_var(current_declared, source='current file (no prompt)')
+            return
+
         if not declared:
             self.log_processing(
                 "No LAS-declared NULL value found; keeping session null "
@@ -9018,24 +9049,15 @@ Your feedback contributes to software quality and reliability.
             "NULL conflict across loaded wells: "
             + '; '.join(f"{wid}={val}" for wid, val in declared.items())
         )
-        if allow_prompt:
-            chosen = self._prompt_null_value_conflict(declared)
-            if chosen is not None:
-                self._set_null_value_var(chosen, source='user selection after conflict')
-                return
-            self.log_processing(
-                "NULL conflict dialog cancelled; keeping session null "
-                f"{self.null_value_var.get()}"
-            )
+        chosen = self._prompt_null_value_conflict(declared)
+        if chosen is not None:
+            self._set_null_value_var(chosen, source='user selection after conflict')
             return
-
-        # Headless / non-interactive: prefer the active well, else first seen.
-        active = getattr(self, 'active_well_id', None)
-        if active and active in declared:
-            self._set_null_value_var(declared[active], source=f'active well {active} (no prompt)')
-        else:
-            first_well, first_val = next(iter(declared.items()))
-            self._set_null_value_var(first_val, source=f'{first_well} (no prompt)')
+        self.log_processing(
+            "NULL conflict dialog cancelled; keeping session null "
+            f"{self.null_value_var.get()}"
+        )
+        return
 
     def _get_null_value(self) -> float:
         """Get the configured null value with proper error handling.
@@ -11198,6 +11220,34 @@ Your feedback contributes to software quality and reliability.
             # On any error, default to processing minimally to avoid skipping useful data
             return 'PROCESS_MINIMAL', 1.0
 
+    def _declared_curve_unit(self, curve_name: str) -> str:
+        """LAS/session unit from curve_info only.
+
+        Empty, missing, or absent entries stay empty. The identifier cache
+        defaults GR to GAPI (first mnemonic-table unit) and must not fill a
+        blank LAS unit — that would apply GAPI physical bounds by accident.
+        """
+        if hasattr(self, 'curve_info') and isinstance(self.curve_info, dict) and curve_name in self.curve_info:
+            return str((self.curve_info.get(curve_name) or {}).get('unit') or '').strip()
+        return ''
+
+    def _typical_range_unit_compatible(self, curve_name: str, info=None) -> bool:
+        """True only when typical_range's unit family matches the declared unit.
+
+        GAMMA_RAY_TOTAL typical_range is GAPI. CPS, a blank unit, and any
+        unrecognised unit must decline, not inherit GAPI fences.
+        """
+        if info is None:
+            if not hasattr(self, 'curve_identifier') or self.curve_identifier is None:
+                return False
+            info = self.curve_identifier.get_curve_info(curve_name)
+        unit = self._declared_curve_unit(curve_name).upper()
+        family = (getattr(info, 'curve_family', None) or '').lower()
+        curve_type = getattr(info, 'curve_type', None) or ''
+        if family == 'gamma_ray' or curve_type == 'GAMMA_RAY_TOTAL':
+            return unit in {'GAPI', 'API'}
+        return True
+
     def detect_outliers_for_curve(self, curve_name: str, data: np.ndarray) -> np.ndarray:
         """Dispatch outlier detection by curve type under the global switch.
 
@@ -11233,18 +11283,38 @@ Your feedback contributes to software quality and reliability.
 
         if strategy == 'physical_bounds':
             info = self.curve_identifier.get_curve_info(curve_name)
+            if not self._typical_range_unit_compatible(curve_name, info):
+                unit = self._declared_curve_unit(curve_name)
+                unit_label = unit or 'missing'
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped',
+                    f'outlier physical_bounds: unit {unit_label} incompatible with typical range',
+                    confidence=float(info.type_confidence or 0.0),
+                    curve_type=str(info.curve_type or curve_type),
+                )
+                return np.zeros(len(data), dtype=bool)
             if info.typical_range is None:
-                self.log_processing(
-                    f"Outlier method for {curve_name}: skip "
-                    f"(physical_bounds requested but no typical range)"
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped',
+                    'outlier physical_bounds: no typical range',
+                    confidence=float(info.type_confidence or 0.0),
+                    curve_type=str(info.curve_type or curve_type),
                 )
                 return np.zeros(len(data), dtype=bool)
             min_expected, max_expected = info.typical_range
             min_allowed, max_allowed = allowed_range_from_typical(min_expected, max_expected)
             mask = np.zeros(len(data), dtype=bool)
-            finite = np.isfinite(data)
-            mask[finite] = (data[finite] < min_allowed) | (data[finite] > max_allowed)
+            present = ~np.isnan(data)
+            mask[present] = (data[present] < min_allowed) | (data[present] > max_allowed)
             flagged = int(np.sum(mask))
+            unit_label = self._declared_curve_unit(curve_name) or 'missing'
+            self._record_range_validation_outcome(
+                curve_name, 'passed',
+                f'outlier physical_bounds applied for unit {unit_label}; {flagged} flagged',
+                confidence=float(info.type_confidence or 0.0),
+                curve_type=str(info.curve_type or curve_type),
+                removed=flagged,
+            )
             self.log_processing(
                 f"Outlier method for {curve_name}: physical_bounds "
                 f"[{min_allowed:.6g}, {max_allowed:.6g}] "
@@ -11319,6 +11389,10 @@ Your feedback contributes to software quality and reliability.
             return data_dict
         
         self.log_processing("Starting comprehensive data quality validation...")
+        # Each validation pass reports only its own curves. process_data_thread
+        # already resets via _initialize_processing_pipeline; this method can
+        # run without that init.
+        self.range_validation_outcomes = []
         validated_data = {}
         validation_summary = {}
         
@@ -11626,7 +11700,7 @@ Your feedback contributes to software quality and reliability.
                     )
                 min_allowed, max_allowed = allowed
                 cleaned_data = np.array(data, copy=True)
-                out = np.isfinite(cleaned_data) & (
+                out = ~np.isnan(cleaned_data) & (
                     (cleaned_data < min_allowed) | (cleaned_data > max_allowed)
                 )
                 cleaned_data[out] = np.nan
@@ -11671,6 +11745,9 @@ Your feedback contributes to software quality and reliability.
             return True, 'curve type UNKNOWN', curve_type, confidence
         if info.typical_range is None:
             return True, 'no typical range', curve_type, confidence
+        if not self._typical_range_unit_compatible(curve_name, info):
+            unit_label = self._declared_curve_unit(curve_name) or 'missing'
+            return True, f'unit {unit_label} incompatible with typical range', curve_type, confidence
         return False, '', curve_type, confidence
 
     def _record_range_validation_outcome(
