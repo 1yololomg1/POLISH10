@@ -1,0 +1,28 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    "distribution",
+    ".pytest_cache",
+]
+
+[tool.ruff.lint]
+# Starting gate only: syntax errors and undefined names.
+# Do not expand to the rest of F (unused imports, etc.) until a dedicated pass.
+select = ["E9", "F821", "F822"]
+
+[tool.ruff.lint.per-file-ignores]
+# Two pre-existing undefined `wid` names in cross-well prior error handlers.
+# Out of scope for this pass; recorded in the Step 1b report.
+"advanced_preprocessing_system10.py" = ["F821"]
+
+[tool.coverage.run]
+source = ["advanced_preprocessing_system10", "core", "ui", "petrophysics"]
+omit = ["tests/*", "distribution/*"]
+
+[tool.coverage.report]
+show_missing = true
