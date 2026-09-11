@@ -1,0 +1,44 @@
+name: CI
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install system packages for Tkinter tests
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
+      - run: pip install -r requirements.txt
+      - run: pip install pytest ruff coverage
+      - run: ruff check .
+      - run: xvfb-run -a coverage run -m pytest -q
+      - run: coverage report
+      - name: Coverage for apply_comprehensive_data_quality_validation
+        run: |
+          python -c "
+          import inspect
+          import coverage
+          from advanced_preprocessing_system10 import AdvancedPreprocessingApplication as App
+          cov = coverage.Coverage()
+          cov.load()
+          fn = App.apply_comprehensive_data_quality_validation
+          path = inspect.getsourcefile(fn)
+          src, start = inspect.getsourcelines(fn)
+          filename, statements, _excluded, missing, _fmt = cov.analysis2(path)
+          span = set(range(start, start + len(src)))
+          stated = span.intersection(statements)
+          missed = span.intersection(missing)
+          hit = len(stated) - len(missed)
+          total = len(stated)
+          pct = 100.0 * hit / total if total else 0.0
+          print(f'apply_comprehensive_data_quality_validation: {pct:.1f}% ({hit}/{total} executable lines)')
+          "
+

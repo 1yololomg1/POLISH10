@@ -189,7 +189,9 @@ class IndustryUnitStandardizer:
         if hasattr(self.app, 'standardize_units_var'):
             standardize_units_var = self.app.standardize_units_var
         else:
-            standardize_units_var = tk.BooleanVar(value=True)
+            # Off by default, matching the application-level variable. See the
+            # Phase 0 item 2 note in advanced_preprocessing_system10.py.
+            standardize_units_var = tk.BooleanVar(value=False)
             
         ttk.Checkbutton(unit_frame, text="Standardize Units to Industry Standard", 
                        variable=standardize_units_var).pack(anchor='w', pady=5)

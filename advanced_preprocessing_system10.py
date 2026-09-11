@@ -558,6 +558,7 @@ from core.curve_identification import (
     ComprehensiveMnemonicLibrary,
     ComprehensiveCurveManager,
     build_mnemonic_database,
+    allowed_range_from_typical,
 )
 
 from core.reporting import StandardizationReporter
@@ -627,6 +628,29 @@ class DepthValidationResult:
                 message += f"  {i}. {step}\n"
         
         return message
+
+
+@dataclass
+class LithologyTrackCurves:
+    """The GR and SP traces drawn into Track 1 of the industry log display.
+
+    plot_log_display attaches QC indicators to the GR and SP traces only after
+    all four tracks have been drawn, but the curve selection and the
+    null-sentinel-to-NaN conversion both happen inside _plot_lithology_track.
+    Returning the resolved names alongside the converted arrays lets the caller
+    reuse exactly what was plotted. Recomputing them at the call site would
+    duplicate the selection and conversion logic and allow the QC indicators to
+    describe an array that differs from the rendered trace.
+
+    An absent curve is reported as an empty name list with a None array, which
+    is the condition the caller tests before adding indicators.
+    """
+
+    gr_curves: List[str] = field(default_factory=list)
+    gr_data: Optional[np.ndarray] = None
+    sp_curves: List[str] = field(default_factory=list)
+    sp_data: Optional[np.ndarray] = None
+
 
 #=============================================================================
 # ADVANCED SIGNAL PROCESSING - DENOISING & SMOOTHING
@@ -886,8 +910,9 @@ class ReservoirDepthManager:
         depth_series = data[selected_depth].copy()
         self._clean_depth_series(depth_series)
         
-        # Set as primary depth reference
-        data['DEPTH_PRIMARY'] = depth_series
+        # Canonical depth mnemonic for later stages (resampling looks up DEPT).
+        # The source column stays under its original name.
+        data['DEPT'] = depth_series
         
         # Calculate depth metadata for reservoir work
         depth_metadata = self._calculate_depth_metadata(depth_series)
@@ -2362,7 +2387,31 @@ class AdvancedPreprocessingApplication(WellLoadingMixin, AppUIMixin):
         self.depth_spacing_var = tk.DoubleVar(value=0.1)
         self.rename_curves_var = tk.BooleanVar(value=True)
         self.null_value_var = tk.StringVar(value="-999.25")
-        self.standardize_units_var = tk.BooleanVar(value=True)
+        # Independent of rename and unit conversion. Default off so loading or
+        # relabelling a file does not resample it (contract C6).
+        self.resample_var = tk.BooleanVar(value=False)
+        # Counted range-validation outcomes (skip / pass / clip / error).
+        # Skipping is a logged result, not a silent pass (contract C3).
+        self.range_validation_outcomes: List[Dict[str, Any]] = []
+        # Phase 0 item 2 (see POLISH_pipeline_contracts.md sections 6 and 8): unit
+        # standardization is OFF by default. Converting on load is what breaks an
+        # imperial well. On KEOUGH #12-34 the chain is:
+        #   DEPT FT -> M (x0.3048), so 0-5359.5 ft becomes 0-1633.678 m; but
+        #   depth_spacing_var was already fixed at 0.5 by _sync_depth_spacing_default
+        #   while the unit was still FT. The resampler then reads that 0.5 as metres.
+        #   1633.678 / 0.5 + 1 = 3268 rows out of 10720. That is the C4 violation:
+        #   a parameter derived under "unit is FT" survived the unit changing.
+        #   RHOB G/CC -> KG/M3 (x1000) gives ~2000-2700, but BULK_DENSITY carries a
+        #   single 'range': [1.0, 3.5] for both G/CC and KG/M3 inputs
+        #   (core/curve_identification.py), so range validation empties the curve.
+        #   That is the C1 violation.
+        # Leaving an already-imperial well alone sidesteps both: DEPT stays FT, 0.5 ft
+        # spacing is then correct, 10720 rows survive, and RHOB passes its own range.
+        # This defaults the transformation off (C6); it does not repair C1 or C4
+        # themselves. Those are Phase 2, and the trap is still live for any user who
+        # ticks the box. Whether metric wells are processed at all is an open question
+        # (contracts section 9) -- deliberately not assumed either way here.
+        self.standardize_units_var = tk.BooleanVar(value=False)
         
         # === NEW PRODUCTION-READY FEATURE VARIABLES ===
         # Environmental Corrections (Priority 1.1)
@@ -5249,6 +5298,8 @@ Your feedback contributes to software quality and reliability.
             if first_well_id:
                 self.set_active_well(first_well_id)
             self.update_well_list_display()
+            # After all wells are in well_datasets, sync NULL (prompt only on conflict)
+            self._reconcile_null_value_convention(allow_prompt=True)
         except Exception as e:
             if self.error_handler:
                 context = self.error_handler.create_context(
@@ -6491,91 +6542,107 @@ Your feedback contributes to software quality and reliability.
         self.fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     def _plot_depth_based_curves(self, ax, curves, industry_colors):
-        """Plot curves in petroleum industry standard with depth on Y-axis"""
-        # Find depth curve if available
+        """Plot curves in petroleum industry standard with depth on Y-axis.
+
+        Depth is resolved per curve from the same frame that supplied that
+        curve's values. processing_results arrays share processed_data's grid;
+        current_data may still sit on the as-loaded grid after resampling, so a
+        single depth array taken from current_data cannot be shared across the
+        three-way value fallback below.
+        """
+        # Identify a depth mnemonic only to exclude it from the value list and
+        # to choose the axis-limit branch (set_ylim vs invert_yaxis). The depth
+        # ordinate itself is resolved per curve after the value source is known.
         depth_curve = None
         for curve in curves:
             curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
             if 'DEPTH' in curve_type:
                 depth_curve = curve
                 break
-        
-        # If no explicit depth curve, use index
-        if depth_curve:
-            # Use current_data as primary source
-            data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
-            # Validate data_source and depth_curve before access
-            if data_source is None or not isinstance(data_source, pd.DataFrame):
-                raise ValueError("No valid data source available for plotting")
-            if depth_curve not in data_source.columns:
-                raise ValueError(f"Depth curve '{depth_curve}' not found in data columns")
-            depth = data_source[depth_curve].values
-            # Remove depth from plotting curves
-            plot_curves = [c for c in curves if c != depth_curve]
-        else:
-            # Use row index as depth
-            data_source = self.current_data if hasattr(self, 'current_data') and self.current_data is not None else self.processed_data
-            if data_source is None or not isinstance(data_source, pd.DataFrame):
-                raise ValueError("No valid data source available for plotting")
-            depth = np.arange(len(data_source))
-            plot_curves = curves
-        
+
+        plot_curves = [c for c in curves if c != depth_curve] if depth_curve else list(curves)
+
         # Create twin axes for different scales if needed
         twin_axes = []
-        
+        depth_min = None
+        depth_max = None
+
         # Plot each curve with appropriate styling
         for i, curve in enumerate(plot_curves):
-            # Get curve data with proper validation
+            # Get curve data with proper validation; depth follows the winning frame
             curve_data = None
             curve_status = 'unknown'
-            
+            depth = None
+
             try:
                 if hasattr(self, 'processing_results') and self.processing_results and curve in self.processing_results:
                     curve_data = self.processing_results[curve]['final_data']
                     curve_status = 'processed'
+                    depth = self._get_depth_for_frame(self.processed_data)
                 elif hasattr(self, 'processed_data') and self.processed_data is not None and curve in self.processed_data.columns:
                     curve_data = self.processed_data[curve].values
                     curve_status = 'unprocessed'
+                    depth = self._get_depth_for_frame(self.processed_data)
                 elif hasattr(self, 'current_data') and self.current_data is not None and curve in self.current_data.columns:
                     curve_data = self.current_data[curve].values
                     curve_status = 'original'
+                    depth = self._get_depth_for_frame(self.current_data)
                 else:
                     warnings.warn(f"Curve '{curve}' not found in any data source", UserWarning)
                     continue
-                    
+
                 # Validate curve data
                 if curve_data is None or len(curve_data) == 0:
                     warnings.warn(f"Curve '{curve}' has no valid data", UserWarning)
                     continue
-                
+
+                # Index-fallback path: when the caller did not pass a depth
+                # mnemonic in `curves`, preserve the historical behaviour of
+                # plotting against row index rather than looking up DEPT from
+                # the frame. _get_depth_for_frame would otherwise return the
+                # real depth column and change the ordinate silently.
+                if depth_curve is None:
+                    depth = np.arange(len(curve_data))
+
+                if depth is None or len(depth) != len(curve_data):
+                    warnings.warn(
+                        f"Depth length {0 if depth is None else len(depth)} does not "
+                        f"match curve '{curve}' length {len(curve_data)}",
+                        UserWarning)
+                    continue
+
                 # Convert null values to NaN for proper line breaking (for visualization only)
                 # Uses helper method to ensure consistent null detection
                 curve_data = self._convert_nulls_to_nan(curve_data)
-                    
+
             except Exception as e:
                 warnings.warn(f"Error accessing curve '{curve}': {e}", UserWarning)
                 continue
-            
-            # Get actual depth range for proper axis limits (once per function call)
-            if i == 0:  # Only calculate once for all curves (shared Y-axis)
-                depth_min, depth_max = self._get_depth_limits(depth)
-            
+
+            # Expand shared Y limits across every frame that contributed a curve
+            c_min, c_max = self._get_depth_limits(depth)
+            if depth_min is None:
+                depth_min, depth_max = c_min, c_max
+            else:
+                depth_min = min(depth_min, c_min)
+                depth_max = max(depth_max, c_max)
+
             curve_type = self.curve_info.get(curve, {}).get('curve_type', '')
             curve_family = curve_type.split('_')[0] if '_' in curve_type else curve_type
-            
+
             # Determine if this curve should use log scale
             use_log_scale = False
             log_scale_families = ['RESISTIVITY', 'PERMEABILITY']
             if curve_family in log_scale_families:
                 use_log_scale = True
-                
+
             # Determine color based on industry standards
             if curve_family in industry_colors:
                 color = industry_colors[curve_family]
             else:
                 # Use a color cycle for non-standard curves
                 color = plt.cm.tab10.colors[i % len(plt.cm.tab10.colors)]
-            
+
             # Determine line style and width based on processing status
             if curve_status == 'processed':
                 line_style = '-'
@@ -6586,7 +6653,7 @@ Your feedback contributes to software quality and reliability.
             else:  # original
                 line_style = ':'
                 line_width = 1.0
-            
+
             # For multiple curves with different scales, create twin axes
             if i > 0 and use_log_scale != (ax.get_xscale() == 'log'):
                 twin_ax = ax.twiny()
@@ -6597,7 +6664,7 @@ Your feedback contributes to software quality and reliability.
                 current_ax.xaxis.set_label_position('top')
             else:
                 current_ax = ax
-            
+
             # Set appropriate scale for logarithmic curves
             if use_log_scale:
                 # Handle zeros and negatives for log scale
@@ -6611,38 +6678,34 @@ Your feedback contributes to software quality and reliability.
                     else:
                         # Fallback to reasonable log bounds
                         current_ax.set_xlim([min_val * 0.5, np.max(valid_data) * 2])
-            
+
             # Handle missing data (NaN values break lines properly)
             valid_mask = ~np.isnan(curve_data) & np.isfinite(curve_data)
             if np.any(valid_mask):
                 valid_data = curve_data[valid_mask]
                 valid_depth = depth[valid_mask]
-                
+
                 # Plot with depth on Y-axis (inverted)
                 legend_label = f"{curve} ({curve_status})"
-                current_ax.plot(valid_data, valid_depth, color=color, linestyle=line_style, 
+                current_ax.plot(valid_data, valid_depth, color=color, linestyle=line_style,
                               linewidth=line_width, label=legend_label)
-            
+
             # Add gridlines
             current_ax.grid(True, alpha=0.3, which='both')
-            
+
             # Set labels
             unit = self.curve_info.get(curve, {}).get('unit', '')
             current_ax.set_xlabel(f'{curve} ({unit})')
-        
-        # CRITICAL: Set axis limits to ACTUAL data range (once for shared Y-axis)
-        if depth_curve:  # Only if we have actual depth data
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
-        
-        # Invert Y-axis to show increasing depth downward (industry standard)
-        ax.invert_yaxis()
 
-        # Set Y label for depth
-        if depth_curve:
-            depth_unit = self.curve_info.get(depth_curve, {}).get('unit', 'm')
-            ax.set_ylabel(f'Depth ({depth_unit})')
-        else:
-            ax.set_ylabel('Depth (index)')
+        # CRITICAL: Set axis limits to ACTUAL data range (once for shared Y-axis).
+        # apply_depth_axis encodes downward depth via set_ylim alone; never pair
+        # that with invert_yaxis.
+        if depth_min is not None:
+            label = (
+                f'Depth ({self.curve_info.get(depth_curve, {}).get("unit", "m")})'
+                if depth_curve else 'Depth (index)'
+            )
+            self.apply_depth_axis(ax, np.array([depth_min, depth_max]), label=label)
 
         # Optional: draw formation tops and zone shading
         try:
@@ -6858,23 +6921,27 @@ Your feedback contributes to software quality and reliability.
         if depth_curves:
             depth = data_source[depth_curves[0]].values
             depth_unit = self.curve_info.get(depth_curves[0], {}).get('unit', 'm')
-            # Get actual depth range for proper axis limits
-            depth_min, depth_max = self._get_depth_limits(depth)
         else:
             depth = np.arange(len(data_source))
             depth_unit = 'index'
-            depth_min, depth_max = self._get_depth_limits(depth)
         
-        # CRITICAL: Set depth axis limits for all tracks (shared Y-axis)
-        for ax in axes:
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+        # Shared Y-axis: apply limits once and label only the first track.
+        self.apply_depth_axis_shared(
+            axes, depth, label=f'Depth ({depth_unit})')
         
         return axes, depth, depth_unit, curve_by_type, null_value
     
     def _plot_lithology_track(self, ax: Any, data_source: pd.DataFrame, depth: np.ndarray, 
-                              curve_by_type: Dict[str, List[str]], null_value: float) -> None:
-        """Plot Track 1: GR, SP, Caliper (Lithology Track)."""
+                              curve_by_type: Dict[str, List[str]],
+                              null_value: float) -> LithologyTrackCurves:
+        """Plot Track 1: GR, SP, Caliper (Lithology Track).
+        
+        Returns the GR and SP curve names and their null-converted arrays so the
+        caller can attach QC indicators to the same data that was plotted. See
+        LithologyTrackCurves for why this is returned rather than recomputed.
+        """
         ax.set_title('Track 1: GR/SP/CAL', fontsize=12, fontweight='bold')
+        track_curves = LithologyTrackCurves()
         
         # GR with industry-standard zone shading
         gr_curves = curve_by_type.get('GAMMA_RAY_TOTAL', [])
@@ -6882,6 +6949,8 @@ Your feedback contributes to software quality and reliability.
             gr_curve_name = gr_curves[0]
             gr_data = data_source[gr_curve_name].values
             gr_data = self._convert_nulls_to_nan(gr_data)
+            track_curves.gr_curves = gr_curves
+            track_curves.gr_data = gr_data
             gr_color = self._get_industry_color('GAMMA_RAY_TOTAL', gr_curve_name)
             
             ax.plot(gr_data, depth, color=gr_color, linewidth=1.5, label=gr_curve_name, zorder=3)
@@ -6909,6 +6978,8 @@ Your feedback contributes to software quality and reliability.
             sp_color = self._get_industry_color('SPONTANEOUS_POTENTIAL', sp_curve_name)
             twin1 = ax.twiny()
             sp_data = self._convert_nulls_to_nan(data_source[sp_curve_name].values, null_value)
+            track_curves.sp_curves = sp_curves
+            track_curves.sp_data = sp_data
             twin1.plot(sp_data, depth, color=sp_color, linewidth=1.5, label=sp_curve_name, zorder=2)
             twin1.set_xlim([-100, 100])
             twin1.xaxis.set_ticks_position('top')
@@ -6924,6 +6995,8 @@ Your feedback contributes to software quality and reliability.
             twin1_2.plot(cal_data, depth, color=cal_color, linewidth=1.5, label=cal_curve_name, zorder=2)
             twin1_2.xaxis.set_ticks_position('top')
             twin1_2.spines['top'].set_position(('outward', 40))
+        
+        return track_curves
     
     def plot_log_display(self):
         """Create a standard industry log display with multiple tracks"""
@@ -6935,8 +7008,9 @@ Your feedback contributes to software quality and reliability.
         data_source = self.current_data
         axes, depth, depth_unit, curve_by_type, null_value = self._setup_log_display_figure(data_source)
         
-        axes[0].set_ylabel(f'Depth ({depth_unit})', fontsize=10, fontweight='bold')
-        self._plot_lithology_track(axes[0], data_source, depth, curve_by_type, null_value)
+        # Track 1 is drawn by a helper; the QC-indicator and badge blocks below
+        # need the curves it selected, so they are carried back explicitly.
+        track1 = self._plot_lithology_track(axes[0], data_source, depth, curve_by_type, null_value)
         
         # Track 2: Resistivity curves (log scale, industry standard)
         ax2 = axes[1]
@@ -7070,11 +7144,11 @@ Your feedback contributes to software quality and reliability.
                     transform=ax4.transAxes, ha='center', va='center',
                     fontsize=11, style='italic', color='gray')
         
-        # Common settings for all tracks
+        # Common settings for all tracks. Depth orientation and the shared Y
+        # label were applied once in _setup_log_display_figure; do not flip
+        # each sharey track here (even track counts would cancel the flip).
         for ax in axes:
-            ax.invert_yaxis()  # Depth increases downward (industry standard)
             ax.grid(True, alpha=0.3)
-            ax.set_ylabel(f'Depth ({depth_unit})')
             
             # Enhanced formation tops with labels
             try:
@@ -7113,14 +7187,14 @@ Your feedback contributes to software quality and reliability.
         
         # Add QC indicators to curves in each track
         # Track 1: GR, SP, Caliper
-        if gr_curves:
-            badges = self._add_qc_indicators(ax1, gr_curves[0], gr_data, depth)
+        if track1.gr_curves:
+            badges = self._add_qc_indicators(axes[0], track1.gr_curves[0], track1.gr_data, depth)
             if badges:
-                all_processing_badges[gr_curves[0]] = badges
-        if sp_curves:
-            badges = self._add_qc_indicators(ax1, sp_curves[0], sp_data, depth)
+                all_processing_badges[track1.gr_curves[0]] = badges
+        if track1.sp_curves:
+            badges = self._add_qc_indicators(axes[0], track1.sp_curves[0], track1.sp_data, depth)
             if badges:
-                all_processing_badges[sp_curves[0]] = badges
+                all_processing_badges[track1.sp_curves[0]] = badges
         
         # Track 2: Resistivity
         for res_curve_name, res_data in resistivity_curves_data.items():
@@ -7166,10 +7240,10 @@ Your feedback contributes to software quality and reliability.
             curve_names_on_axis = []
             # Determine which curves are on this axis
             if i == 0:  # Track 1
-                if gr_curves:
-                    curve_names_on_axis.append(gr_curves[0])
-                if sp_curves:
-                    curve_names_on_axis.append(sp_curves[0])
+                if track1.gr_curves:
+                    curve_names_on_axis.append(track1.gr_curves[0])
+                if track1.sp_curves:
+                    curve_names_on_axis.append(track1.sp_curves[0])
             elif i == 1:  # Track 2
                 for res_type in res_types:
                     res_curves_list = curve_by_type.get(res_type, [])
@@ -7479,9 +7553,8 @@ Your feedback contributes to software quality and reliability.
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='gray'))
         
         ax.set_xlabel(f'{curve_name} ({self.curve_info.get(curve_name, {}).get("unit", "UNIT")})', fontsize=11)
-        ax.set_ylabel(f'Depth ({depth_unit})', fontsize=11)
         ax.grid(True, alpha=0.3)
-        ax.invert_yaxis()
+        self.apply_depth_axis(ax, depth, label=f'Depth ({depth_unit})')
         ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10)
         
         self.fig.tight_layout()
@@ -7577,15 +7650,13 @@ Your feedback contributes to software quality and reliability.
         # Set labels and title
         unit = self.curve_info.get(curve, {}).get('unit', '')
         ax.set_xlabel(f'{curve} ({unit})')
-        ax.set_ylabel(y_label)
         ax.set_title(f'Unprocessed Data: {curve}', fontsize=14, fontweight='bold')
         
         # Add grid and legend
         ax.grid(True, alpha=0.3)
         ax.legend()
         
-        # Invert Y-axis to show increasing depth downward (industry standard)
-        ax.invert_yaxis()
+        self.apply_depth_axis(ax, depth, label=y_label)
         
         # Create canvas and display
         self._create_visualization_canvas("Note: Displaying unprocessed data. Run processing to see enhanced results.")
@@ -7746,18 +7817,13 @@ Your feedback contributes to software quality and reliability.
                 unit = self.curve_info.get(curve, {}).get('unit', '')
                 current_ax.set_xlabel(f'{curve} ({unit})')
         
-        # CRITICAL: Set axis limits to ACTUAL data range (not default range)
-        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
-        
-        # Invert Y-axis to show increasing depth downward (industry standard)
-        ax.invert_yaxis()
-        
-        # Set Y label for depth
+        # CRITICAL: Set axis limits to ACTUAL data range (not default range).
         if depth_curve:
             depth_unit = 'm'  # Default unit
-            ax.set_ylabel(f'Depth ({depth_unit})')
+            label = f'Depth ({depth_unit})'
         else:
-            ax.set_ylabel('Depth (index)')
+            label = 'Depth (index)'
+        self.apply_depth_axis(ax, depth, label=label)
         
         # Add legends
         handles, labels = ax.get_legend_handles_labels()
@@ -7919,14 +7985,12 @@ Your feedback contributes to software quality and reliability.
                                                       color=base_color, alpha=0.6))
             
             # CRITICAL: Set axis limits to ACTUAL data range
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             # Configure axes
             ax.set_title(f'Processing Comparison: {curve} (Click legend to toggle)', fontsize=14, fontweight='bold', pad=10)
             ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
-            ax.set_ylabel(y_label, fontsize=11)
             ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()  # Industry standard: depth increases downward
             
             # Legend with toggle capability
             legend = ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10, framealpha=0.9)
@@ -8033,12 +8097,10 @@ Your feedback contributes to software quality and reliability.
             
             ax.set_title(f'Processing Comparison: {curve} (Click legend to toggle)', fontsize=14, fontweight='bold', pad=10)
             # CRITICAL: Set axis limits to ACTUAL data range
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
-            ax.set_ylabel(y_label, fontsize=11)
             ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()
             
             legend = ax.legend(loc=LABEL_UPPER_RIGHT, fontsize=10, framealpha=0.9)
             self.fig._comparison_legend = legend
@@ -8092,10 +8154,9 @@ Your feedback contributes to software quality and reliability.
             ax.plot(original, depth, color=base_color, alpha=0.7, label=LABEL_ORIGINAL_DATA, linewidth=2)
             ax.set_title(f'Original Data: {curve} (Not Yet Processed)', fontsize=14, fontweight='bold')
             ax.set_xlabel(f'{curve} ({curve_info.get("unit", "UNIT")})', fontsize=11)
-            ax.set_ylabel(y_label, fontsize=11)
             ax.legend(loc='best', fontsize=10)
             ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             # Statistics box
             valid_orig = original[~np.isnan(original)]
@@ -8359,17 +8420,20 @@ Your feedback contributes to software quality and reliability.
             sp = str(validated_path)
             sp_lower = sp.lower()
             export_df = self._dataframe_with_uncertainty_bands(self.processed_data)
+            # Missing data is held as NaN internally, so the sentinel is
+            # written here at the export boundary. Without na_rep the tabular
+            # writers would emit empty cells instead of the declared null.
+            null_value = self.null_value_var.get() if hasattr(self, 'null_value_var') else "-999.25"
             if sp_lower.endswith('.csv'):
-                export_df.to_csv(sp, index=False)
+                export_df.to_csv(sp, index=False, na_rep=str(null_value))
             elif sp_lower.endswith('.xlsx'):
                 try:
-                    export_df.to_excel(sp, index=False)
+                    export_df.to_excel(sp, index=False, na_rep=str(null_value))
                 except Exception as ex:
                     messagebox.showerror("Export", f"Excel export failed: {ex}")
                     return
             else:
                 # Default to LAS
-                null_value = self.null_value_var.get() if hasattr(self, 'null_value_var') else "-999.25"
                 # Merge uncertainty into curve_info for LAS headers when present
                 export_info = dict(self.curve_info or {})
                 for col in export_df.columns:
@@ -8654,6 +8718,9 @@ Your feedback contributes to software quality and reliability.
                 self.active_well_id = well_id
                 # Update the well listbox to show the loaded well
                 self.update_well_list_display()
+
+            # Apply LAS-declared NULL (prompt only if multiple loaded wells disagree)
+            self._reconcile_null_value_convention(allow_prompt=True)
             
             self.progress_bar['value'] = 50
             self.status_label.config(text="Analyzing curves...")
@@ -8729,6 +8796,24 @@ Your feedback contributes to software quality and reliability.
         else:
             raise ValueError(f"Unsupported file format: {ext}")
         self.processed_data = self.current_data.copy() if self.current_data is not None else None
+        # Register the file just loaded as the active dataset before NULL
+        # reconciliation. Headless load used to leave active_well_id pointing at a
+        # retained well, so reconciliation read the wrong sentinel.
+        try:
+            well_id = self._gen_well_id_from_info(filepath)
+            if not isinstance(getattr(self, 'well_datasets', None), dict):
+                self.well_datasets = {}
+            self.well_datasets[well_id] = self._dataset_from_current_state(filepath)
+            self.active_well_id = well_id
+        except Exception as register_error:
+            try:
+                self.log_processing(
+                    f"load_data: could not register dataset before NULL reconcile: {register_error}"
+                )
+            except Exception:
+                pass
+        # Headless: adopt file NULL without UI prompts
+        self._reconcile_null_value_convention(allow_prompt=False)
         if hasattr(self, 'analyze_curves'):
             try:
                 self.analyze_curves()
@@ -8742,6 +8827,242 @@ Your feedback contributes to software quality and reliability.
 
     
     
+    def _format_null_value_for_ui(self, raw: Any) -> Optional[str]:
+        """Normalize a LAS/well NULL declaration to a Combobox-friendly string.
+
+        Returns None when the well did not declare a usable NULL (CSV/Excel stubs,
+        missing header, UNKNOWN placeholders).
+        """
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text or text.upper() in ('UNKNOWN', 'N/A', 'NONE', 'NULL'):
+            # Missing / placeholder declarations are not usable sentinels.
+            return None
+        if text.upper() in ('NAN', 'NA'):
+            return 'NaN'
+        try:
+            value = float(text)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(value):
+            return 'NaN'
+        # Prefer the Combobox's canonical labels for common LAS sentinels.
+        known = (
+            (-999.25, '-999.25'),
+            (-999.0, '-999'),
+            (-9999.0, '-9999'),
+            (99999.0, '99999'),
+            (-99999.0, '-99999'),
+        )
+        for target, label in known:
+            if abs(value - target) < 1e-9:
+                return label
+        # Preserve other declared numerics without scientific noise.
+        if float(value).is_integer():
+            return str(int(value))
+        return format(value, 'g')
+
+    def _null_value_strings_agree(self, a: str, b: str) -> bool:
+        """True when two UI null strings represent the same convention."""
+        if a == b:
+            return True
+        if a == 'NaN' or b == 'NaN':
+            return a == b
+        try:
+            return abs(float(a) - float(b)) < 1e-9
+        except (TypeError, ValueError):
+            return False
+
+    def _set_null_value_var(self, ui_value: str, *, source: str = '') -> None:
+        """Apply a null convention to the session variable and Combobox options."""
+        if not hasattr(self, 'null_value_var'):
+            return
+        if hasattr(self, 'null_value_combo') and self.null_value_combo is not None:
+            try:
+                options = list(self.null_value_combo.cget('values') or ())
+                if ui_value not in options:
+                    options.append(ui_value)
+                    self.null_value_combo.configure(values=options)
+            except (tk.TclError, AttributeError):
+                pass
+        try:
+            self.null_value_var.set(ui_value)
+        except (tk.TclError, AttributeError):
+            return
+        if source:
+            self.log_processing(f"Using declared NULL value {ui_value} ({source})")
+        else:
+            self.log_processing(f"Using declared NULL value {ui_value}")
+
+    def _declared_null_for_current_file(self) -> Optional[str]:
+        """NULL declared by the active/current dataset only, or None if absent.
+
+        Retained wells in well_datasets are ignored. A missing declaration is
+        not filled from another well or from the session default.
+        """
+        datasets = getattr(self, 'well_datasets', None) or {}
+        active = getattr(self, 'active_well_id', None)
+        current_info = getattr(self, 'well_info', None) or {}
+        # In-memory well_info is the file just loaded. Prefer it over a stale
+        # active_well_id left behind by a retained well (headless load_data).
+        if getattr(self, 'well_info', None):
+            return self._format_null_value_for_ui(current_info.get('null_value'))
+        if active and active in datasets:
+            well_info = (datasets[active] or {}).get('well_info') or {}
+            formatted = self._format_null_value_for_ui(well_info.get('null_value'))
+            if formatted is not None:
+                return formatted
+        return None
+
+    def _collect_declared_nulls_by_well(self) -> Dict[str, str]:
+        """Map well_id -> formatted NULL for wells that declare one."""
+        declared: Dict[str, str] = {}
+        datasets = getattr(self, 'well_datasets', None) or {}
+        for well_id, dataset in datasets.items():
+            well_info = (dataset or {}).get('well_info') or {}
+            formatted = self._format_null_value_for_ui(well_info.get('null_value'))
+            if formatted is not None:
+                declared[well_id] = formatted
+        # Include the in-memory current file even when retained wells already
+        # populated the map (headless load_data used to omit it).
+        if getattr(self, 'well_info', None):
+            formatted = self._format_null_value_for_ui(self.well_info.get('null_value'))
+            if formatted is not None and not any(
+                self._null_value_strings_agree(formatted, existing)
+                for existing in declared.values()
+            ):
+                label = str(self.well_info.get('well_name') or self.well_info.get('uwi') or 'current')
+                if label in declared:
+                    label = f"{label}_current"
+                declared[label] = formatted
+        return declared
+
+    def _prompt_null_value_conflict(self, declared_by_well: Dict[str, str]) -> Optional[str]:
+        """Ask the user to pick a NULL when loaded wells disagree. Returns UI string or None."""
+        # Group wells by equivalent null convention.
+        groups: List[Tuple[str, List[str]]] = []
+        for well_id, ui_null in declared_by_well.items():
+            placed = False
+            for canonical, wells in groups:
+                if self._null_value_strings_agree(canonical, ui_null):
+                    wells.append(well_id)
+                    placed = True
+                    break
+            if not placed:
+                groups.append((ui_null, [well_id]))
+
+        if len(groups) <= 1:
+            return groups[0][0] if groups else None
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Null Value Conflict")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.geometry("520x360")
+
+        ttk.Label(
+            dialog,
+            text=(
+                "Loaded wells declare different NULL values.\n"
+                "Choose which convention to use for processing and export."
+            ),
+            wraplength=480,
+            justify='left',
+        ).pack(anchor='w', padx=12, pady=(12, 8))
+
+        choice = tk.StringVar(value=groups[0][0])
+        for ui_null, wells in groups:
+            well_list = ', '.join(wells[:6])
+            if len(wells) > 6:
+                well_list += f', … (+{len(wells) - 6} more)'
+            ttk.Radiobutton(
+                dialog,
+                text=f"{ui_null}  —  {well_list}",
+                variable=choice,
+                value=ui_null,
+            ).pack(anchor='w', padx=20, pady=3)
+
+        result: Dict[str, Optional[str]] = {'value': None}
+
+        def on_ok() -> None:
+            result['value'] = choice.get()
+            dialog.destroy()
+
+        def on_cancel() -> None:
+            result['value'] = None
+            dialog.destroy()
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill='x', pady=12, padx=12)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side='left')
+        ttk.Button(button_frame, text="Use Selected NULL", command=on_ok).pack(side='right')
+
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        self.root.wait_window(dialog)
+        return result['value']
+
+    def _reconcile_null_value_convention(self, *, allow_prompt: bool = True) -> None:
+        """Set null_value_var from declared LAS NULL values; prompt only on conflict.
+
+        - Single file / all wells agree → apply silently.
+        - Multiple wells with disagreeing NULL → prompt (unless allow_prompt=False).
+        - Current file declares no NULL → leave the session value unchanged.
+          Retained wells in well_datasets are not used as a substitute.
+        """
+        declared = self._collect_declared_nulls_by_well()
+        current_declared = self._declared_null_for_current_file()
+        if current_declared is None:
+            # A retained well in well_datasets must not supply a sentinel the
+            # current file never declared. That would make real values look
+            # null, or miss nulls, which undoes NaN-as-internal-null (dbba867).
+            self.log_processing(
+                "Current file declares no NULL; keeping session null "
+                f"{self.null_value_var.get() if hasattr(self, 'null_value_var') else '-999.25'} "
+                "(not adopting retained wells)"
+            )
+            return
+
+        if not allow_prompt:
+            # Headless/batch: the file just loaded owns the session sentinel.
+            # Do not adopt a retained well's NULL when the maps disagree.
+            self._set_null_value_var(current_declared, source='current file (no prompt)')
+            return
+
+        if not declared:
+            self.log_processing(
+                "No LAS-declared NULL value found; keeping session null "
+                f"{self.null_value_var.get() if hasattr(self, 'null_value_var') else '-999.25'}"
+            )
+            return
+
+        unique: List[str] = []
+        for ui_null in declared.values():
+            if not any(self._null_value_strings_agree(ui_null, existing) for existing in unique):
+                unique.append(ui_null)
+
+        if len(unique) == 1:
+            wells = ', '.join(list(declared.keys())[:4])
+            self._set_null_value_var(unique[0], source=f"from {wells}")
+            return
+
+        self.log_processing(
+            "NULL conflict across loaded wells: "
+            + '; '.join(f"{wid}={val}" for wid, val in declared.items())
+        )
+        chosen = self._prompt_null_value_conflict(declared)
+        if chosen is not None:
+            self._set_null_value_var(chosen, source='user selection after conflict')
+            return
+        self.log_processing(
+            "NULL conflict dialog cancelled; keeping session null "
+            f"{self.null_value_var.get()}"
+        )
+        return
+
     def _get_null_value(self) -> float:
         """Get the configured null value with proper error handling.
         
@@ -9253,6 +9574,7 @@ Your feedback contributes to software quality and reliability.
         # Initialize processed data
         self.processed_data = self.current_data.copy()
         self.processing_results = {}
+        self.range_validation_outcomes = []
         
         # Save initial state for undo/redo
         self.processing_history.save_state(
@@ -9287,7 +9609,7 @@ Your feedback contributes to software quality and reliability.
         if self.processed_data is None or self.processed_data.empty:
             return
 
-        depth_cols = {'DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS', 'DEPTH_PRIMARY'}
+        depth_cols = {'DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS'}
         method = 'zscore'
         if hasattr(self, 'normalize_method_var'):
             method = self.normalize_method_var.get() or 'zscore'
@@ -9324,8 +9646,13 @@ Your feedback contributes to software quality and reliability.
             f"Normalization ({method}) applied to {normalized_count} curve(s); depth columns excluded"
         )
     
-    def _validate_and_standardize_depth(self) -> None:
-        """Validate and standardize depth reference for processing."""
+    def _validate_and_standardize_depth(self) -> bool:
+        """Validate and standardize depth reference for processing.
+
+        Returns:
+            True if a depth reference was established. False if processing
+            must halt for this well.
+        """
         self.root.after(0, lambda: self.status_label.config(text="Validating depth reference..."))
         self.log_processing("Starting enhanced depth validation...")
         
@@ -9351,27 +9678,33 @@ Your feedback contributes to software quality and reliability.
                 self._sync_depth_spacing_default()
             except Exception:
                 pass
+            return True
             
         except Exception as e:
             error_category = self.categorize_error(e, "depth_validation")
             error_msg = f"[{error_category}] Depth validation failed: {e}"
             self.log_processing(f"ERROR: {error_msg}")
             
-            # Provide category-specific user feedback
+            halt_reason = f"Processing halted for this well: {e}"
+            # Provide category-specific user feedback, always including the reason.
             if error_category == "MEMORY_ERROR":
                 self.show_error_dialog(ERROR_TITLE_MEMORY, 
-                    "Insufficient memory for depth validation. Try processing smaller datasets.")
+                    "Insufficient memory for depth validation. Try processing smaller datasets.\n"
+                    + halt_reason)
             elif error_category == "DATA_ERROR":
                 self.show_error_dialog(ERROR_TITLE_DATA, 
-                    "Invalid depth data format detected. Check your input files.")
+                    "Invalid or unidentifiable depth data. Check your input files.\n"
+                    + halt_reason)
             elif error_category == "FILE_ERROR":
                 self.show_error_dialog(ERROR_TITLE_FILE, 
-                    "Unable to access depth data file. Check file permissions and path.")
+                    "Unable to access depth data file. Check file permissions and path.\n"
+                    + halt_reason)
             else:
-                self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg)
+                self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg + "\n" + halt_reason)
             
-            self.root.after(0, lambda: self.status_label.config(text="Depth validation failed - continuing with defaults"))
-            self.log_processing("Continuing with existing depth reference...")
+            self.root.after(0, lambda: self.status_label.config(text="Depth validation failed - processing halted"))
+            self.log_processing(halt_reason)
+            return False
     
     def _detect_geological_zones(self) -> List[Any]:
         """Detect geological zones from gamma ray data.
@@ -9468,18 +9801,21 @@ Your feedback contributes to software quality and reliability.
             self.log_processing("Continuing without environmental corrections...")
     
     def _uniformize_data(self) -> None:
-        """Uniformize curve names and units, resample to standard spacing."""
+        """Rename/units and resampling are independent; resampling has its own switch."""
         if self.rename_curves_var.get() or self.standardize_units_var.get():
             self.root.after(0, lambda: self.status_label.config(text="Uniformizing data..."))
             self.log_processing("Starting data uniformization...")
-            
-            # Standardize curve names and units
             self.uniformize_curves()
-            
-            # Resample to standard depth spacing if needed
-            if 'DEPT' in self.processed_data.columns:
+
+        resample_on = hasattr(self, 'resample_var') and self.resample_var.get()
+        if resample_on:
+            self.root.after(0, lambda: self.status_label.config(text="Resampling depth..."))
+            # DEPT is written by standardize_depth_reference during
+            # _validate_and_standardize_depth, which runs before this method.
+            if self.processed_data is not None and 'DEPT' in self.processed_data.columns:
                 depth_spacing = self.depth_spacing_var.get()
-                self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} m")
+                unit = self._current_depth_unit()
+                self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} {unit}")
                 self.resample_to_standard_spacing('DEPT', depth_spacing)
     
     def process_data_thread(self):
@@ -9489,7 +9825,8 @@ Your feedback contributes to software quality and reliability.
             self._initialize_processing_pipeline()
             
             # Step 1: Depth Validation and Standardization
-            self._validate_and_standardize_depth()
+            if not self._validate_and_standardize_depth():
+                return
             
             # Optional normalization step
             try:
@@ -9528,14 +9865,15 @@ Your feedback contributes to software quality and reliability.
             
             # Get depth-aware parameters (adjusts for depth spacing)
             depth_params = self.get_depth_aware_parameters()
+            unit = depth_params.get('depth_unit', 'm')
             
             self.log_processing("=" * 50)
             self.log_processing("DEPTH-AWARE PARAMETER ADJUSTMENT")
-            self.log_processing(f"Depth Spacing: {depth_params['depth_spacing']} m")
+            self.log_processing(f"Depth Spacing: {depth_params['depth_spacing']} {unit}")
             self.log_processing(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x")
-            self.log_processing(f"Geological Gap Threshold: {depth_params['geological_gap_threshold']} pts ({depth_params['geological_gap_meters']:.1f} m)")
-            self.log_processing(f"Large Gap Threshold: {depth_params['large_gap_threshold']} pts ({depth_params['large_gap_meters']:.1f} m)")
-            self.log_processing(f"Max Gap Size: {depth_params['max_gap_size']} pts ({depth_params['max_gap_meters']:.1f} m)")
+            self.log_processing(f"Geological Gap Threshold: {depth_params['geological_gap_threshold']} pts ({depth_params['geological_gap_meters']:.1f} {unit})")
+            self.log_processing(f"Large Gap Threshold: {depth_params['large_gap_threshold']} pts ({depth_params['large_gap_meters']:.1f} {unit})")
+            self.log_processing(f"Max Gap Size: {depth_params['max_gap_size']} pts ({depth_params['max_gap_meters']:.1f} {unit})")
             self.log_processing("=" * 50)
             
             # Get UI parameters for gap filling
@@ -9621,7 +9959,7 @@ Your feedback contributes to software quality and reliability.
                 
                 # Step 2: Outlier detection using IQR method
                 if self.outlier_detection_var.get():
-                    outlier_mask = self.detect_outliers_iqr(data)
+                    outlier_mask = self.detect_outliers_for_curve(column, data)
                     outlier_count = np.sum(outlier_mask)
                     if outlier_count > 0:
                         self.log_processing(f"Outlier detection: {outlier_count} outliers identified in {column}")
@@ -9950,6 +10288,7 @@ Your feedback contributes to software quality and reliability.
             # Final UI updates
             self.root.after(0, lambda: self.progress_bar.configure(value=100))
             self.root.after(0, lambda: self.status_label.config(text="Processing completed successfully"))
+            self._emit_range_validation_summary()
             self.log_processing("=" * 50)
             self.log_processing("PROCESSING COMPLETED SUCCESSFULLY")
             self.log_processing("=" * 50)
@@ -10129,15 +10468,16 @@ Your feedback contributes to software quality and reliability.
         
         # === IMPROVEMENT 3: Add Depth-Aware Parameters Section ===
         depth_params = self.get_depth_aware_parameters()
+        unit = depth_params.get('depth_unit', 'm')
         report.append("DEPTH-AWARE PARAMETER CONFIGURATION")
         report.append("=" * 80)
-        report.append(f"Depth Spacing: {depth_params['depth_spacing']} m")
-        report.append(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x (relative to 0.5m reference)")
+        report.append(f"Depth Spacing: {depth_params['depth_spacing']} {unit}")
+        report.append(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x (relative to 0.5 {unit} reference)")
         report.append("")
         report.append("Adjusted Thresholds (Points | Physical Distance):")
-        report.append(f"  Geological Gap Threshold:  {depth_params['geological_gap_threshold']:>4} pts | {depth_params['geological_gap_meters']:>6.1f} m")
-        report.append(f"  Large Gap Threshold:       {depth_params['large_gap_threshold']:>4} pts | {depth_params['large_gap_meters']:>6.1f} m")
-        report.append(f"  Max Gap Size:              {depth_params['max_gap_size']:>4} pts | {depth_params['max_gap_meters']:>6.1f} m")
+        report.append(f"  Geological Gap Threshold:  {depth_params['geological_gap_threshold']:>4} pts | {depth_params['geological_gap_meters']:>6.1f} {unit}")
+        report.append(f"  Large Gap Threshold:       {depth_params['large_gap_threshold']:>4} pts | {depth_params['large_gap_meters']:>6.1f} {unit}")
+        report.append(f"  Max Gap Size:              {depth_params['max_gap_size']:>4} pts | {depth_params['max_gap_meters']:>6.1f} {unit}")
         report.append("")
         report.append("Filter Windows (Adjusted for depth spacing):")
         report.append(f"  Savitzky-Golay: {depth_params['savgol_window']} pts")
@@ -10251,7 +10591,7 @@ Your feedback contributes to software quality and reliability.
         report.append("")
         report.append("1. DATA ERRORS (Small Gaps)")
         report.append(f"   Definition: Consecutive missing points < Geological Gap Threshold")
-        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} m)")
+        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} {unit})")
         report.append("   Characteristics:")
         report.append("     • Short duration gaps (typically <100m)")
         report.append("     • Caused by: Tool failures, data transmission errors, sensor issues")
@@ -10263,7 +10603,7 @@ Your feedback contributes to software quality and reliability.
         report.append("")
         report.append("2. GEOLOGICAL/LOGGING FEATURES (Large Gaps)")
         report.append(f"   Definition: Consecutive missing points ≥ Geological Gap Threshold")
-        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} m)")
+        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} {unit})")
         report.append("   Characteristics:")
         report.append("     • Extended duration gaps (typically >100m)")
         report.append("     • Caused by: Intentional non-logging, cased holes, interval logging")
@@ -10390,10 +10730,10 @@ Your feedback contributes to software quality and reliability.
         report.append("PROCESSING CONFIGURATION")
         report.append("=" * 80)
         report.append("Gap Filling Parameters:")
-        report.append(f"  Max Gap Size: {depth_params['max_gap_size']} points ({depth_params['max_gap_meters']:.1f} m)")
-        report.append(f"  Large Gap Threshold: {depth_params['large_gap_threshold']} points ({depth_params['large_gap_meters']:.1f} m)")
+        report.append(f"  Max Gap Size: {depth_params['max_gap_size']} points ({depth_params['max_gap_meters']:.1f} {unit})")
+        report.append(f"  Large Gap Threshold: {depth_params['large_gap_threshold']} points ({depth_params['large_gap_meters']:.1f} {unit})")
         report.append(f"  Large Gap Treatment: {self.large_gap_var.get()}")
-        report.append(f"  Geological Gap Threshold: {depth_params['geological_gap_threshold']} points ({depth_params['geological_gap_meters']:.1f} m)")
+        report.append(f"  Geological Gap Threshold: {depth_params['geological_gap_threshold']} points ({depth_params['geological_gap_meters']:.1f} {unit})")
         report.append(f"  Method Priority: {self.gap_method_var.get()}")
         report.append(f"  Physics-Informed: {self.physics_informed_var.get()}")
         report.append(f"  Multi-Curve Correlation: {self.multi_curve_var.get()}")
@@ -10402,7 +10742,7 @@ Your feedback contributes to software quality and reliability.
         report.append(f"  Method: {self.denoise_method_var.get()}")
         report.append("")
         report.append("Uniformization Parameters:")
-        report.append(f"  Depth Spacing: {self.depth_spacing_var.get()} m")
+        report.append(f"  Depth Spacing: {self.depth_spacing_var.get()} {unit}")
         report.append(f"  Rename Curves: {self.rename_curves_var.get()}")
         report.append(f"  Standardize Units: {self.standardize_units_var.get()}")
         report.append(f"  Null Value: {self.null_value_var.get()}")
@@ -10413,6 +10753,29 @@ Your feedback contributes to software quality and reliability.
         report.append(f"  Outlier Detection: {self.outlier_detection_var.get()}")
         report.append(f"  Range Validation: {self.range_validation_var.get()}")
         report.append(f"  Uncertainty Quantification: {self.uncertainty_quantification_var.get()}")
+        outcomes = getattr(self, 'range_validation_outcomes', None) or []
+        if outcomes:
+            skipped = [o for o in outcomes if o.get('outcome') == 'skipped']
+            errors = [o for o in outcomes if o.get('outcome') == 'error']
+            clipped = [o for o in outcomes if o.get('outcome') == 'clipped']
+            passed = [o for o in outcomes if o.get('outcome') == 'passed']
+            report.append("")
+            report.append("Range Validation Run Summary:")
+            report.append(
+                f"  passed={len(passed)}  clipped={len(clipped)}  "
+                f"skipped={len(skipped)}  errors={len(errors)}"
+            )
+            if skipped:
+                report.append("  Skipped (not validated):")
+                for item in skipped:
+                    report.append(
+                        f"    {item['curve']}: {item['reason']} "
+                        f"(type={item.get('curve_type')}, confidence={item.get('confidence', 0):.2f})"
+                    )
+            if errors:
+                report.append("  Validation errors (data left unchanged):")
+                for item in errors:
+                    report.append(f"    {item['curve']}: {item['reason']}")
         
         # Unit Standardization Analysis
         if hasattr(self, 'unit_standardizer'):
@@ -10479,7 +10842,7 @@ Your feedback contributes to software quality and reliability.
         report.append("=" * 80)
         report.append(f"Null Value Used: {self.null_value_var.get()}")
         report.append(f"Output Format: {self.output_format_var.get()}")
-        report.append(f"Depth Spacing: {self.depth_spacing_var.get()} m (standardized)")
+        report.append(f"Depth Spacing: {self.depth_spacing_var.get()} {unit} (standardized)")
         report.append(f"Unit Standard: {'SI Modified' if self.standardize_units_var.get() else 'Original'}")
         report.append(f"Curves Renamed: {'Yes' if self.rename_curves_var.get() else 'No'}")
         report.append("")
@@ -10501,7 +10864,7 @@ Your feedback contributes to software quality and reliability.
         # Geological gap recommendations
         if geological_gaps_count > data_error_gaps_count:
             recommendations.append(f"INFO: {geological_gaps_count} geological gaps detected (cased holes or interval logging).")
-            recommendations.append(f"  → This is normal for interval curves. Current threshold: {self.geological_gap_threshold_var.get()} pts ({depth_params['geological_gap_meters']:.1f}m)")
+            recommendations.append(f"  → This is normal for interval curves. Current threshold: {self.geological_gap_threshold_var.get()} pts ({depth_params['geological_gap_meters']:.1f} {unit})")
         
         # Gap filling recommendations
         if data_error_gaps_count > total_curves * 2:
@@ -10510,7 +10873,7 @@ Your feedback contributes to software quality and reliability.
         
         # Depth spacing recommendations
         if self.depth_spacing_var.get() != 0.5:
-            recommendations.append(f"NOTE: Non-standard depth spacing ({self.depth_spacing_var.get()}m) detected.")
+            recommendations.append(f"NOTE: Non-standard depth spacing ({self.depth_spacing_var.get()} {unit}) detected.")
             recommendations.append(f"  → All parameters automatically adjusted by {depth_params['spacing_ratio']:.2f}x to maintain physical distances")
         
         # Denoising recommendations
@@ -10878,6 +11241,114 @@ Your feedback contributes to software quality and reliability.
             # On any error, default to processing minimally to avoid skipping useful data
             return 'PROCESS_MINIMAL', 1.0
 
+    def _declared_curve_unit(self, curve_name: str) -> str:
+        """LAS/session unit from curve_info only.
+
+        Empty, missing, or absent entries stay empty. The identifier cache
+        defaults GR to GAPI (first mnemonic-table unit) and must not fill a
+        blank LAS unit — that would apply GAPI physical bounds by accident.
+        """
+        if hasattr(self, 'curve_info') and isinstance(self.curve_info, dict) and curve_name in self.curve_info:
+            return str((self.curve_info.get(curve_name) or {}).get('unit') or '').strip()
+        return ''
+
+    def _typical_range_unit_compatible(self, curve_name: str, info=None) -> bool:
+        """True only when typical_range's unit family matches the declared unit.
+
+        GAMMA_RAY_TOTAL typical_range is GAPI. CPS, a blank unit, and any
+        unrecognised unit must decline, not inherit GAPI fences.
+        """
+        if info is None:
+            if not hasattr(self, 'curve_identifier') or self.curve_identifier is None:
+                return False
+            info = self.curve_identifier.get_curve_info(curve_name)
+        unit = self._declared_curve_unit(curve_name).upper()
+        family = (getattr(info, 'curve_family', None) or '').lower()
+        curve_type = getattr(info, 'curve_type', None) or ''
+        if family == 'gamma_ray' or curve_type == 'GAMMA_RAY_TOTAL':
+            return unit in {'GAPI', 'API'}
+        return True
+
+    def detect_outliers_for_curve(self, curve_name: str, data: np.ndarray) -> np.ndarray:
+        """Dispatch outlier detection by curve type under the global switch.
+
+        Symmetric Tukey fences on right-skewed gamma ray clip genuine shale
+        response (KEOUGH GR peak 563 GAPI vs an IQR upper fence around 121).
+        Physical bounds use the same span-proportional pad as range validation.
+        The method applied is logged per curve.
+        """
+        if not self.outlier_detection_var.get():
+            return np.zeros(len(data), dtype=bool)
+
+        strategy = 'iqr_tukey'
+        curve_type = 'UNKNOWN'
+        family = 'unknown'
+        try:
+            strategy = self.curve_identifier.outlier_strategy_for_curve(curve_name)
+            info = self.curve_identifier.get_curve_info(curve_name)
+            curve_type = info.curve_type
+            family = info.curve_family
+        except Exception as e:
+            self.log_processing(
+                f"Outlier method for {curve_name}: iqr_tukey "
+                f"(strategy lookup failed: {e})"
+            )
+            return self.detect_outliers_iqr(data)
+
+        if strategy == 'skip':
+            self.log_processing(
+                f"Outlier method for {curve_name}: skip "
+                f"(type={curve_type}, family={family}) — unrecognised curve"
+            )
+            return np.zeros(len(data), dtype=bool)
+
+        if strategy == 'physical_bounds':
+            info = self.curve_identifier.get_curve_info(curve_name)
+            if not self._typical_range_unit_compatible(curve_name, info):
+                unit = self._declared_curve_unit(curve_name)
+                unit_label = unit or 'missing'
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped',
+                    f'outlier physical_bounds: unit {unit_label} incompatible with typical range',
+                    confidence=float(info.type_confidence or 0.0),
+                    curve_type=str(info.curve_type or curve_type),
+                )
+                return np.zeros(len(data), dtype=bool)
+            if info.typical_range is None:
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped',
+                    'outlier physical_bounds: no typical range',
+                    confidence=float(info.type_confidence or 0.0),
+                    curve_type=str(info.curve_type or curve_type),
+                )
+                return np.zeros(len(data), dtype=bool)
+            min_expected, max_expected = info.typical_range
+            min_allowed, max_allowed = allowed_range_from_typical(min_expected, max_expected)
+            mask = np.zeros(len(data), dtype=bool)
+            present = ~np.isnan(data)
+            mask[present] = (data[present] < min_allowed) | (data[present] > max_allowed)
+            flagged = int(np.sum(mask))
+            unit_label = self._declared_curve_unit(curve_name) or 'missing'
+            self._record_range_validation_outcome(
+                curve_name, 'passed',
+                f'outlier physical_bounds applied for unit {unit_label}; {flagged} flagged',
+                confidence=float(info.type_confidence or 0.0),
+                curve_type=str(info.curve_type or curve_type),
+                removed=flagged,
+            )
+            self.log_processing(
+                f"Outlier method for {curve_name}: physical_bounds "
+                f"[{min_allowed:.6g}, {max_allowed:.6g}] "
+                f"(type={curve_type}, family={family}); {flagged} flagged"
+            )
+            return mask
+
+        self.log_processing(
+            f"Outlier method for {curve_name}: iqr_tukey "
+            f"(type={curve_type}, family={family})"
+        )
+        return self.detect_outliers_iqr(data)
+
     def detect_outliers_iqr(self, data: np.ndarray, multiplier: float = 1.5) -> np.ndarray:
         """Detect outliers using IQR method with professional logging"""
         if not self.outlier_detection_var.get():
@@ -10939,6 +11410,10 @@ Your feedback contributes to software quality and reliability.
             return data_dict
         
         self.log_processing("Starting comprehensive data quality validation...")
+        # Each validation pass reports only its own curves. process_data_thread
+        # already resets via _initialize_processing_pipeline; this method can
+        # run without that init.
+        self.range_validation_outcomes = []
         validated_data = {}
         validation_summary = {}
         
@@ -10960,7 +11435,7 @@ Your feedback contributes to software quality and reliability.
                 
                 # Apply outlier detection
                 if self.outlier_detection_var.get():
-                    outlier_mask = self.detect_outliers_iqr(validated_data[curve_name])
+                    outlier_mask = self.detect_outliers_for_curve(curve_name, validated_data[curve_name])
                     if np.any(outlier_mask):
                         validated_data[curve_name][outlier_mask] = np.nan
                 
@@ -11011,6 +11486,19 @@ Your feedback contributes to software quality and reliability.
         self.log_processing(f"Total final points: {total_final:,}")
         self.log_processing(f"Total points removed: {total_removed:,}")
         self.log_processing(f"Overall data quality: {overall_quality:.1f}%")
+        failed_validations = [
+            name for name, summary in validation_summary.items()
+            if summary.get('validation_failed')
+        ]
+        if failed_validations:
+            self.log_processing(
+                f"Validation errors (data left unchanged): {len(failed_validations)}"
+            )
+            for name in failed_validations:
+                self.log_processing(
+                    f"  {name}: {validation_summary[name].get('error', 'unknown error')}"
+                )
+        self._emit_range_validation_summary()
         self.log_processing("=" * 50)
         
         return validated_data
@@ -11107,10 +11595,12 @@ Your feedback contributes to software quality and reliability.
                 'median_window': max(3, int(np.ceil(5 * spacing_ratio))),
                 'bilateral_window': max(5, int(np.ceil(10 * spacing_ratio))),
                 
-                # Physical interpretation
+                # Physical distance in the current depth unit. Keys keep the
+                # historical *_meters names; depth_unit says what to display.
                 'geological_gap_meters': geological_points * depth_spacing,
                 'large_gap_meters': large_gap_points * depth_spacing,
-                'max_gap_meters': max_gap_points * depth_spacing
+                'max_gap_meters': max_gap_points * depth_spacing,
+                'depth_unit': self._current_depth_unit(),
             }
             
             return adjusted
@@ -11123,7 +11613,8 @@ Your feedback contributes to software quality and reliability.
                 'spacing_ratio': 1.0,
                 'geological_gap_threshold': 200,
                 'large_gap_threshold': 500,
-                'max_gap_size': 500
+                'max_gap_size': 500,
+                'depth_unit': 'm',
             }
 
     def detect_curve_category(self, curve_name: str, curve_data: np.ndarray) -> str:
@@ -11180,7 +11671,7 @@ Your feedback contributes to software quality and reliability.
                     'curve_type': 'UNKNOWN',
                     'unit': '',
                     'description': f'Curve {curve_name}',
-                    'typical_range': (0.0, 1.0),
+                    'typical_range': None,
                     'type_confidence': 0.0
                 })
         except Exception:
@@ -11189,50 +11680,164 @@ Your feedback contributes to software quality and reliability.
                 'curve_type': 'UNKNOWN',
                 'unit': '',
                 'description': f'Curve {curve_name}',
-                'typical_range': (0.0, 1.0),
+                'typical_range': None,
                 'type_confidence': 0.0
             }
 
     def apply_range_validation(self, curve_name: str, data: np.ndarray) -> np.ndarray:
-        """Alias for validate_curve_range - applies range validation and returns cleaned data.
-        
-        This method exists to maintain compatibility with existing code that calls
-        apply_range_validation. It uses the existing validate_curve_range method
-        and applies the validation results to clean the data.
+        """Apply mnemonic range validation, or skip when the curve is unknown.
+
+        A stage that does not recognise its input must decline, not substitute
+        (contract C3). Confidence 0.00 / type UNKNOWN is a counted skip with a
+        stated reason. A validation crash is recorded as an error, not a pass.
         """
         try:
-            # Use existing validation method
+            skip, skip_reason, curve_type, confidence = self._range_validation_skip_decision(curve_name)
+            if skip:
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped', skip_reason,
+                    confidence=confidence, curve_type=curve_type)
+                return data
+
             validation_result = self.curve_identifier.validate_curve_range(curve_name, data)
-            
+            confidence = float(validation_result.get('confidence', confidence) or 0.0)
+            curve_type = str(validation_result.get('curve_type', curve_type) or 'UNKNOWN')
+
+            if validation_result.get('skipped'):
+                reason = str(validation_result.get('reason') or 'unrecognised curve')
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped', reason,
+                    confidence=confidence, curve_type=curve_type)
+                return data
+
+            if validation_result.get('reason') == 'no_valid_data':
+                self._record_range_validation_outcome(
+                    curve_name, 'skipped', 'no valid data',
+                    confidence=confidence, curve_type=curve_type)
+                return data
+
             if not validation_result['valid']:
-                # If range is invalid, apply tolerance-based cleaning
-                curve_info = self.get_curve_info(curve_name)
-                min_expected, max_expected = curve_info.typical_range
-                
-                # Apply tolerance factor (same as in validate_curve_range)
-                tolerance_factor = 2.0
-                min_allowed = min_expected / tolerance_factor
-                max_allowed = max_expected * tolerance_factor
-                
-                # Create mask for valid data within tolerance
-                valid_mask = (data >= min_allowed) & (data <= max_allowed)
-                
-                # Replace out-of-range values with NaN
-                cleaned_data = data.copy()
-                cleaned_data[~valid_mask] = np.nan
-                
+                allowed = validation_result.get('allowed_range')
+                if allowed is None:
+                    raise ValueError(
+                        f"range validation for {curve_name} is invalid but has no allowed_range"
+                    )
+                min_allowed, max_allowed = allowed
+                cleaned_data = np.array(data, copy=True)
+                out = ~np.isnan(cleaned_data) & (
+                    (cleaned_data < min_allowed) | (cleaned_data > max_allowed)
+                )
+                cleaned_data[out] = np.nan
+                self._record_range_validation_outcome(
+                    curve_name, 'clipped',
+                    f'outside allowed [{min_allowed:.6g}, {max_allowed:.6g}]',
+                    confidence=confidence, curve_type=curve_type,
+                    removed=int(np.sum(out)))
                 return cleaned_data
-            
-            # If validation passed, return original data
+
+            self._record_range_validation_outcome(
+                curve_name, 'passed', 'within allowed range',
+                confidence=confidence, curve_type=curve_type)
             return data
-            
+
         except Exception as e:
-            # If validation fails, return original data unchanged
+            self._record_range_validation_outcome(
+                curve_name, 'error', str(e),
+                confidence=0.0, curve_type='UNKNOWN')
             try:
-                self.log_processing(f"Range validation failed for {curve_name}: {e}")
+                self.log_processing(f"Range validation ERROR for {curve_name}: {e}")
             except Exception:
                 pass
             return data
+
+    def _range_validation_skip_decision(
+        self, curve_name: str
+    ) -> Tuple[bool, str, str, float]:
+        """Decide whether range validation must decline for this curve.
+
+        Returns:
+            (skip, reason, curve_type, confidence)
+        """
+        if not hasattr(self, 'curve_identifier') or self.curve_identifier is None:
+            return True, 'no curve identifier', 'UNKNOWN', 0.0
+        info = self.curve_identifier.get_curve_info(curve_name)
+        curve_type = info.curve_type or 'UNKNOWN'
+        confidence = float(info.type_confidence or 0.0)
+        if confidence <= 0.0:
+            return True, 'confidence 0.00', curve_type, confidence
+        if curve_type == 'UNKNOWN':
+            return True, 'curve type UNKNOWN', curve_type, confidence
+        if info.typical_range is None:
+            return True, 'no typical range', curve_type, confidence
+        if not self._typical_range_unit_compatible(curve_name, info):
+            unit_label = self._declared_curve_unit(curve_name) or 'missing'
+            return True, f'unit {unit_label} incompatible with typical range', curve_type, confidence
+        return False, '', curve_type, confidence
+
+    def _record_range_validation_outcome(
+        self,
+        curve_name: str,
+        outcome: str,
+        reason: str,
+        *,
+        confidence: float = 0.0,
+        curve_type: str = 'UNKNOWN',
+        removed: int = 0,
+    ) -> None:
+        """Append a counted range-validation outcome and log it."""
+        if not hasattr(self, 'range_validation_outcomes') or self.range_validation_outcomes is None:
+            self.range_validation_outcomes = []
+        entry = {
+            'curve': curve_name,
+            'outcome': outcome,
+            'reason': reason,
+            'confidence': confidence,
+            'curve_type': curve_type,
+            'removed': removed,
+        }
+        self.range_validation_outcomes.append(entry)
+        if outcome == 'skipped':
+            self.log_processing(
+                f"Range validation skipped for {curve_name}: {reason} "
+                f"(type={curve_type}, confidence={confidence:.2f})"
+            )
+        elif outcome == 'error':
+            self.log_processing(
+                f"Range validation ERROR counted for {curve_name}: {reason}"
+            )
+        elif outcome == 'clipped' and removed:
+            self.log_processing(
+                f"Range validation clipped {removed} values from {curve_name}: {reason}"
+            )
+
+    def _emit_range_validation_summary(self) -> None:
+        """Write the counted skip/error/clip summary into the processing log."""
+        outcomes = getattr(self, 'range_validation_outcomes', None) or []
+        skipped = [o for o in outcomes if o.get('outcome') == 'skipped']
+        errors = [o for o in outcomes if o.get('outcome') == 'error']
+        clipped = [o for o in outcomes if o.get('outcome') == 'clipped']
+        passed = [o for o in outcomes if o.get('outcome') == 'passed']
+        self.log_processing("=" * 50)
+        self.log_processing("RANGE VALIDATION SUMMARY")
+        self.log_processing("=" * 50)
+        self.log_processing(
+            f"passed={len(passed)}  clipped={len(clipped)}  "
+            f"skipped={len(skipped)}  errors={len(errors)}"
+        )
+        if skipped:
+            self.log_processing("Skipped (not validated):")
+            for item in skipped:
+                self.log_processing(
+                    f"  {item['curve']}: {item['reason']} "
+                    f"(type={item.get('curve_type')}, confidence={item.get('confidence', 0):.2f})"
+                )
+        if errors:
+            self.log_processing("Validation errors (data left unchanged):")
+            for item in errors:
+                self.log_processing(f"  {item['curve']}: {item['reason']}")
+        if not skipped and not errors:
+            self.log_processing("No skips or validation errors.")
+        self.log_processing("=" * 50)
 
     def uniformize_curves(self) -> None:
         """Standardize curve names and units in `processed_data`.
@@ -11298,6 +11903,24 @@ Your feedback contributes to software quality and reliability.
                     self.processed_data = self.current_data
                 finally:
                     self.current_data = original_current_data
+            else:
+                # Skipping is a logged, visible outcome, not a silent pass. State the
+                # units the data is actually carrying forward, because every later
+                # stage that compares against a reference range assumes some unit and
+                # currently has no way to declare which (C1 is not implemented yet).
+                try:
+                    declared = sorted({
+                        str(self.curve_info.get(col, {}).get('unit', '')).strip()
+                        for col in self.processed_data.columns
+                    } - {''})
+                    self.log_processing(
+                        "Unit standardization is OFF (default). Values and declared "
+                        "units are carried through as loaded; no conversion applied.")
+                    if declared:
+                        self.log_processing(
+                            f"  Units in play: {', '.join(declared)}")
+                except Exception:
+                    pass
         except Exception as e:
             try:
                 self.log_processing(f"ERROR: Uniformization failed: {e}")
@@ -11336,7 +11959,11 @@ Your feedback contributes to software quality and reliability.
 
                 s = pd.Series(series[valid].values, index=idx[valid].values)
                 s = s.groupby(level=0).mean().sort_index()
-                s_interp = s.reindex(s.index.union(new_depth)).interpolate(method='index', limit_direction='both')
+                # limit_area='inside' confines interpolation to gaps bracketed by real
+                # samples. Without it, a curve logged over only part of the well (e.g.
+                # a density tool run 4250-5326 ft in a 0-5359 ft hole) gets extrapolated
+                # to a fabricated value at every depth in the grid.
+                s_interp = s.reindex(s.index.union(new_depth)).interpolate(method='index', limit_area='inside')
                 resampled_df[col] = s_interp.reindex(new_depth).values
 
             self.processed_data = resampled_df
@@ -11346,10 +11973,52 @@ Your feedback contributes to software quality and reliability.
             except Exception:
                 pass
 
+    def _current_depth_unit(self) -> str:
+        """Return 'ft' or 'm' from the declared unit of the depth curve.
+
+        Used for logs and labels. Depth spacing numbers are in this unit;
+        they are not converted here.
+        """
+        try:
+            columns = self.processed_data.columns if self.processed_data is not None else []
+            curve_info = getattr(self, 'curve_info', None) or {}
+            depth_col = None
+            for col in columns:
+                ctype = str(curve_info.get(col, {}).get('curve_type', '')).upper()
+                if 'DEPTH' in ctype or str(col).upper() in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
+                    depth_col = col
+                    break
+            if not depth_col:
+                return 'm'
+            raw = str(curve_info.get(depth_col, {}).get('unit', 'M')).upper()
+            if raw in ['FT', 'FEET']:
+                return 'ft'
+            return 'm'
+        except Exception:
+            return 'm'
+
+    def _apply_depth_spacing_unit_labels(self, unit: str) -> None:
+        """Refresh Uniformization tab captions that previously hardcoded metres."""
+        buttons = getattr(self, '_depth_spacing_preset_buttons', None)
+        if buttons:
+            for btn, val in buttons:
+                try:
+                    btn.configure(text=f"{val} {unit}")
+                except Exception:
+                    pass
+        caption = getattr(self, '_depth_spacing_unit_caption', None)
+        if caption is not None:
+            word = 'feet' if unit == 'ft' else 'meters'
+            try:
+                caption.configure(
+                    text=f"{word} (affects gap thresholds, filter windows, and resampling)"
+                )
+            except Exception:
+                pass
+
     def _sync_depth_spacing_default(self) -> None:
         """Set depth resampling default to 0.1 m or 0.5 ft based on current depth units."""
         try:
-            # Determine current depth unit from curve_info
             depth_col = None
             for col in (self.processed_data.columns if self.processed_data is not None else []):
                 ctype = str(self.curve_info.get(col, {}).get('curve_type', '')).upper()
@@ -11358,44 +12027,75 @@ Your feedback contributes to software quality and reliability.
                     break
             if not depth_col:
                 return
-            unit = str(self.curve_info.get(depth_col, {}).get('unit', 'M')).upper()
-            if unit in ['FT', 'FEET']:
-                # 0.5 ft default
+            unit = self._current_depth_unit()
+            if unit == 'ft':
                 if abs(self.depth_spacing_var.get() - 0.5) > 1e-9:
                     self.depth_spacing_var.set(0.5)
                     self.log_processing("Depth spacing default set to 0.5 ft based on depth units")
             else:
-                # 0.1 m default
                 if abs(self.depth_spacing_var.get() - 0.1) > 1e-9:
                     self.depth_spacing_var.set(0.1)
                     self.log_processing("Depth spacing default set to 0.1 m based on depth units")
+            self._apply_depth_spacing_unit_labels(unit)
         except Exception:
             pass
 
     def finalize_uniformization(self):
-        """Apply final uniformization steps"""
+        """Apply final uniformization steps.
+
+        NaN is the single internal representation for missing data. This step
+        normalises every null sentinel found in the working frame to NaN,
+        including the sentinel the file's own header declares, so that
+        `processed_data` and the per-curve arrays in `processing_results`
+        express missingness the same way. Consumers that count gaps, compute
+        correlations or plot can therefore trust `isna`/`isnan` without each
+        having to know the session's null convention.
+
+        The sentinel is re-emitted only at the export boundary, where the LAS
+        and CSV formats require a numeric placeholder.
+        """
         try:
             self.log_processing("Applying final uniformization...")
             
             if self.processed_data is None:
                 return
             
-            # Standardize null values
+            # Retained only for the log message; the declared convention no
+            # longer changes how missing data is stored internally.
+            session_null_label = (
+                self.null_value_var.get()
+                if hasattr(self, 'null_value_var') and self.null_value_var.get()
+                else '-999.25'
+            )
             null_value = self._get_null_value()
             
-            # Replace various null representations with standard null
+            # The declared sentinel is normalised alongside the common
+            # alternates, because a curve may carry a sentinel that its own
+            # header never declared. Hits are logged, not silent.
             null_patterns = [-999.25, -999, -9999, 99999, -99999]
+            if np.isfinite(null_value) and not any(
+                abs(float(pattern) - float(null_value)) < 1e-9
+                for pattern in null_patterns
+            ):
+                null_patterns.append(float(null_value))
             
             for curve in self.processed_data.columns:
                 data = self.processed_data[curve]
+                numeric = pd.to_numeric(data, errors='coerce')
                 
-                # Replace null patterns with NaN first
                 for pattern in null_patterns:
+                    try:
+                        hit_count = int((numeric == pattern).sum())
+                    except Exception:
+                        hit_count = 0
+                    if hit_count > 0:
+                        self.log_processing(
+                            f"NULL normalisation: {curve} had {hit_count} value(s) equal to "
+                            f"{pattern} (session NULL is {session_null_label}); "
+                            f"converting to NaN"
+                        )
                     data = data.replace(pattern, np.nan)
-                
-                # Apply final null value representation
-                if self.null_value_var.get() != "NaN":
-                    data = data.fillna(null_value)
+                    numeric = pd.to_numeric(data, errors='coerce')
                 
                 self.processed_data[curve] = data
             
@@ -11486,8 +12186,10 @@ Your feedback contributes to software quality and reliability.
             # Plot main curve
             ax.plot(processed_plot, depth, 'b-', linewidth=2, label=LABEL_PROCESSED_DATA)
             
-            # CRITICAL: Set axis limits to ACTUAL data range
-            ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+            # CRITICAL: Set axis limits to ACTUAL data range before fills/scatters.
+            # set_ylim also disables y autoscaling, so the fill and scatter added
+            # below cannot widen these limits.
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             # Plot uncertainty bands (also convert nulls in bounds)
             upper_bound = processed_plot + uncertainty
@@ -11513,10 +12215,8 @@ Your feedback contributes to software quality and reliability.
             else:
                 ax.set_title(f'Uncertainty Analysis: {curve} (Not Yet Processed)', fontsize=14, fontweight='bold')
             ax.set_xlabel(f'{curve} ({self.curve_info[curve]["unit"]})')
-            ax.set_ylabel(y_label)
             ax.legend()
             ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()
             
             self.fig.tight_layout()
             
@@ -11964,9 +12664,6 @@ Your feedback contributes to software quality and reliability.
         # Use industry-standard colors
         industry_colors = PHYSICAL_CONSTANTS.LOG_COLORS
         
-        # Get actual depth range for proper axis limits
-        depth_min, depth_max = self._get_depth_limits(depth_data)
-        
         # Create twin axes for different scales
         twin_axes = []
         current_ax = ax
@@ -12067,12 +12764,10 @@ Your feedback contributes to software quality and reliability.
             # Reset current_ax to main axis for next iteration
             current_ax = ax
         
-        # CRITICAL: Set axis limits to ACTUAL data range (not default range)
-        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+        # CRITICAL: Set axis limits to ACTUAL data range (not default range).
+        self.apply_depth_axis(ax, depth_data, label=y_label)
         
         # Set axis properties
-        ax.invert_yaxis()  # Industry standard: depth increases downward
-        ax.set_ylabel(y_label)
         ax.grid(True, alpha=0.3)
         
         # Add legend
@@ -12341,7 +13036,6 @@ Your feedback contributes to software quality and reliability.
             ax.set_title(f'{curve} - {curve_type}\nOriginal vs Processed Comparison', 
                         fontsize=14, fontweight='bold')
             ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
-            ax.set_ylabel(y_label, fontsize=12)
             
             # Add legend
             ax.legend(loc='best', fontsize=10)
@@ -12349,8 +13043,7 @@ Your feedback contributes to software quality and reliability.
             # Add grid
             ax.grid(True, alpha=0.3)
             
-            # Invert Y-axis (industry standard)
-            ax.invert_yaxis()
+            self.apply_depth_axis(ax, depth, label=y_label)
             
             # Add processing statistics if available
             if curve in self.processing_results:
@@ -12435,9 +13128,8 @@ Your feedback contributes to software quality and reliability.
             ax1.plot(data1, depth, color=color1, linewidth=2, label=status1)
             ax1.set_title(f'{curve1}\n({status1})', fontsize=12, fontweight='bold')
             ax1.set_xlabel(f'{curve1} ({self.curve_info.get(curve1, {}).get("unit", "")})', fontsize=11)
-            ax1.set_ylabel(y_label, fontsize=11)
             ax1.grid(True, alpha=0.3)
-            ax1.invert_yaxis()
+            self.apply_depth_axis(ax1, depth, label=y_label)
             ax1.legend(loc='best')
             
             # Add statistics for curve 1
@@ -12779,7 +13471,6 @@ Your feedback contributes to software quality and reliability.
         ax.set_title(f'{curve} - {curve_type}\nOriginal vs Processed Comparison', 
                     fontsize=14, fontweight='bold')
         ax.set_xlabel(f'{curve} ({unit})', fontsize=12)
-        ax.set_ylabel(LABEL_DEPTH_M, fontsize=12)
 
         # Add legend
         ax.legend(loc='best', fontsize=10)
@@ -12787,8 +13478,13 @@ Your feedback contributes to software quality and reliability.
         # Add grid
         ax.grid(True, alpha=0.3)
         
-        # Invert Y-axis (industry standard)
-        ax.invert_yaxis()
+        # Span every frame that contributed a trace so a resampled processed
+        # grid cannot clip the original (or the reverse).
+        depth_for_axis = original_depth
+        if (self.processed_data is not None and curve in self.processed_data.columns):
+            depth_for_axis = np.concatenate([
+                original_depth, self._get_depth_for_frame(self.processed_data)])
+        self.apply_depth_axis(ax, depth_for_axis, label=LABEL_DEPTH_M)
         
         # Add processing statistics if available
         if curve in self.processing_results:
@@ -12828,8 +13524,6 @@ Your feedback contributes to software quality and reliability.
         ax1.plot(data1, depth1, 'b-', linewidth=2)
         ax1.set_title(curve1, fontsize=12, fontweight='bold')
         ax1.set_xlabel(f"{curve1}")
-        ax1.set_ylabel(LABEL_DEPTH_M)
-        ax1.invert_yaxis()
         ax1.grid(True, alpha=0.3)
         
         # Plot curve 2
@@ -12841,6 +13535,17 @@ Your feedback contributes to software quality and reliability.
         ax2.set_title(curve2, fontsize=12, fontweight='bold')
         ax2.set_xlabel(f"{curve2}")
         ax2.grid(True, alpha=0.3)
+
+        # sharey=ax1 means explicit ylim from depth1 alone would freeze ax2 as
+        # well, silently truncating a coarser/shorter/offset second grid.
+        # Match _plot_single_curve_popup: span every frame that contributed a
+        # trace before apply_depth_axis. Limits still go on ax1 only so the
+        # shared axis stays inverted via set_ylim, not invert_yaxis.
+        depth_for_axis = np.concatenate([
+            np.asarray(depth1, dtype=float),
+            np.asarray(depth2, dtype=float),
+        ])
+        self.apply_depth_axis(ax1, depth_for_axis, label=LABEL_DEPTH_M)
         
         fig.suptitle(f"Comparison: {curve1} vs {curve2}", fontsize=14, fontweight='bold')
         fig.tight_layout()
@@ -12852,20 +13557,36 @@ Your feedback contributes to software quality and reliability.
         if curve in self.processing_results:
             # Both arrays were captured from processed_data and share its grid.
             depth = self._get_depth_for_frame(self.processed_data)
-            original = self.processing_results[curve]['original_data']
-            processed = self.processing_results[curve]['final_data']
+            # Null sentinels are converted to NaN so matplotlib breaks the line at
+            # gaps rather than drawing a spike to -999.25, which would also drag
+            # the value-axis autoscale far outside the real measurement range.
+            # to_numeric coerces non-numeric entries to NaN rather than raising,
+            # and yields the float dtype _convert_nulls_to_nan needs to assign NaN.
+            # The Series wrapper is required because to_numeric returns a bare
+            # ndarray for ndarray input, which has no to_numpy method.
+            original = self._convert_nulls_to_nan(
+                pd.to_numeric(pd.Series(self.processing_results[curve]['original_data']),
+                              errors='coerce').to_numpy(dtype=float))
+            processed = self._convert_nulls_to_nan(
+                pd.to_numeric(pd.Series(self.processing_results[curve]['final_data']),
+                              errors='coerce').to_numpy(dtype=float))
 
             ax.plot(original, depth, 'r-', alpha=0.7, label='Original', linewidth=1)
             ax.plot(processed, depth, 'b-', alpha=0.9, label='Processed', linewidth=2)
         else:
             depth = self._get_depth_for_frame(self.current_data)
-            data = self.current_data[curve].values
+            data = self._convert_nulls_to_nan(
+                pd.to_numeric(self.current_data[curve],
+                              errors='coerce').to_numpy(dtype=float))
             ax.plot(data, depth, 'r-', label='Original', linewidth=1.5)
-        
+
+        # The depth axis spans the full grid of the frame being plotted. Without
+        # this, autoscale collapses onto the interval where the curve happens to
+        # hold finite values, hiding where that interval sits in the well.
+        self.apply_depth_axis(ax, depth, label=LABEL_DEPTH_M)
+
         ax.set_title(f"Comparison: {curve}", fontsize=14, fontweight='bold')
         ax.set_xlabel(f"{curve}")
-        ax.set_ylabel(LABEL_DEPTH_M)
-        ax.invert_yaxis()
         ax.grid(True, alpha=0.3)
         ax.legend()
         fig.tight_layout()
@@ -12886,9 +13607,8 @@ Your feedback contributes to software quality and reliability.
                 data = self.current_data[curve].values
                 ax.plot(data, depth, label=curve, linewidth=1.5, alpha=0.8)
         
-        ax.set_ylabel(LABEL_DEPTH_M)
         ax.set_title("Multi-Curve Display", fontsize=14, fontweight='bold')
-        ax.invert_yaxis()
+        self.apply_depth_axis(ax, depth, label=LABEL_DEPTH_M)
         ax.grid(True, alpha=0.3)
         ax.legend(bbox_to_anchor=(1.05, 1), loc=LABEL_UPPER_LEFT)
         fig.tight_layout()
@@ -12953,8 +13673,8 @@ Your feedback contributes to software quality and reliability.
             if hasattr(self, '_convert_nulls_to_nan'):
                 curve_data = self._convert_nulls_to_nan(curve_data)
             else:
-                # Fallback: replace common null values with NaN
-                null_value = -999.25
+                # Fallback: replace the configured null with NaN
+                null_value = self._get_null_value()
                 curve_data = np.where(curve_data == null_value, np.nan, curve_data)
             
             # Skip if entire curve is NaN
@@ -12966,11 +13686,10 @@ Your feedback contributes to software quality and reliability.
             curves_plotted += 1
         
         # CRITICAL: Set axis limits to ACTUAL data range (not 0-5000 default)
-        ax.set_ylim(depth_max, depth_min)  # Inverted for depth
+        self.apply_depth_axis(ax, depth, label=f'Depth ({depth_unit})')
         
         # Labels and formatting
         ax.set_xlabel('Curve Values', fontsize=12)
-        ax.set_ylabel(f'Depth ({depth_unit})', fontsize=12, fontweight='bold')
         ax.set_title("Unprocessed Curves - Gaps Indicate Missing Data", 
                     fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3, which='both', linestyle='--', linewidth=0.5)
@@ -12980,7 +13699,7 @@ Your feedback contributes to software quality and reliability.
             ax.legend(loc='best', fontsize=8, framealpha=0.9)
         
         # Add info text
-        null_value = -999.25
+        null_value = self._get_null_value()
         info_text = (
             f"Depth Range: {depth_min:.1f} - {depth_max:.1f} {depth_unit}\n"
             f"Total Depth Points: {len(depth)}\n"
@@ -13053,9 +13772,8 @@ Your feedback contributes to software quality and reliability.
             ax.set_xlim(data_min - padding, data_max + padding)
         
         ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
-        ax.set_ylabel(LABEL_DEPTH_M)
         ax.set_title(f'{curve} vs Depth Scatter Plot', fontsize=14, fontweight='bold')
-        ax.invert_yaxis()  # Industry standard: depth downward
+        self.apply_depth_axis(ax, depth, label=LABEL_DEPTH_M)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
     
@@ -13224,9 +13942,12 @@ Your feedback contributes to software quality and reliability.
                 ax.set_xlim(data_min - padding, data_max + padding)
             
             ax.set_xlabel(f"{curve} ({self.curve_info.get(curve, {}).get('unit', '')})")
-            ax.set_ylabel(LABEL_DEPTH_M)
             ax.set_title(f'{curve} - Uncertainty Analysis', fontsize=14, fontweight='bold')
-            ax.invert_yaxis()  # Industry standard: depth downward
+            depth_for_axis = depth
+            if (self.current_data is not None and curve in self.current_data.columns):
+                depth_for_axis = np.concatenate([
+                    depth, self._get_depth_for_frame(self.current_data)])
+            self.apply_depth_axis(ax, depth_for_axis, label=LABEL_DEPTH_M)
             ax.grid(True, alpha=0.3)
             ax.legend()
         else:
@@ -13430,6 +14151,39 @@ Your feedback contributes to software quality and reliability.
         except Exception as e:
             self.log_processing(f"Warning: Error calculating depth limits: {e}")
             return (0.0, 100.0)  # Safe fallback
+
+    def apply_depth_axis(self, ax, depth, *, label: str) -> Tuple[float, float]:
+        """Apply the wireline depth convention to one axis and return limits.
+
+        Depth increases downward. That is expressed solely as
+        ``set_ylim(depth_max, depth_min)``. This method never calls
+        ``invert_yaxis``: mixing the two is a double flip that silently
+        renders depth upward.
+
+        ``label`` is required because the smoke harness matches depth axes on
+        the Y label; an optional label would let a caller silently opt out of
+        the orientation guard.
+        """
+        depth_min, depth_max = self._get_depth_limits(depth)
+        ax.set_ylim(depth_max, depth_min)
+        ax.set_ylabel(label)
+        return depth_min, depth_max
+
+    def apply_depth_axis_shared(self, axes, depth, *, label: str) -> Tuple[float, float]:
+        """Apply depth convention once across a sharey axis group.
+
+        Limits are set on the first axis and propagate through sharey. Only the
+        first axis receives the depth label. Calling invert_yaxis on every
+        sharey track is a no-op only at even track counts, so the four-track
+        log display was previously correct by accident under that pattern.
+        """
+        axis_list = list(axes)
+        if not axis_list:
+            raise ValueError("apply_depth_axis_shared requires at least one axis")
+        depth_min, depth_max = self.apply_depth_axis(axis_list[0], depth, label=label)
+        for sibling in axis_list[1:]:
+            sibling.set_ylabel('')
+        return depth_min, depth_max
     
     # ============================================================================
     # ENHANCED VISUALIZATION CONTROLLER
