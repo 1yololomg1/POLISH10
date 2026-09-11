@@ -910,8 +910,9 @@ class ReservoirDepthManager:
         depth_series = data[selected_depth].copy()
         self._clean_depth_series(depth_series)
         
-        # Set as primary depth reference
-        data['DEPTH_PRIMARY'] = depth_series
+        # Canonical depth mnemonic for later stages (resampling looks up DEPT).
+        # The source column stays under its original name.
+        data['DEPT'] = depth_series
         
         # Calculate depth metadata for reservoir work
         depth_metadata = self._calculate_depth_metadata(depth_series)
@@ -9605,7 +9606,7 @@ Your feedback contributes to software quality and reliability.
         if self.processed_data is None or self.processed_data.empty:
             return
 
-        depth_cols = {'DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS', 'DEPTH_PRIMARY'}
+        depth_cols = {'DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS'}
         method = 'zscore'
         if hasattr(self, 'normalize_method_var'):
             method = self.normalize_method_var.get() or 'zscore'
