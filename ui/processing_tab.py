@@ -72,9 +72,12 @@ class ProcessingTabMixin:
         
         # Quick preset buttons
         spacing_values = [0.1, 0.25, 0.5, 1.0]
+        self._depth_spacing_preset_buttons = []
         for val in spacing_values:
-            ttk.Radiobutton(spacing_frame, text=f"{val} m", value=val, 
-                           variable=self.depth_spacing_var).pack(side='left', padx=10)
+            btn = ttk.Radiobutton(spacing_frame, text=f"{val} m", value=val, 
+                           variable=self.depth_spacing_var)
+            btn.pack(side='left', padx=10)
+            self._depth_spacing_preset_buttons.append((btn, val))
         
         # Custom depth spacing entry
         custom_spacing_frame = ttk.Frame(uniformization_tab)
@@ -83,7 +86,11 @@ class ProcessingTabMixin:
         ttk.Label(custom_spacing_frame, text="Custom Spacing:").pack(side='left', padx=(0, 5))
         custom_spacing_entry = ttk.Entry(custom_spacing_frame, textvariable=self.depth_spacing_var, width=10)
         custom_spacing_entry.pack(side='left', padx=(0, 5))
-        ttk.Label(custom_spacing_frame, text="meters (affects gap thresholds, filter windows, and resampling)").pack(side='left')
+        self._depth_spacing_unit_caption = ttk.Label(
+            custom_spacing_frame,
+            text="meters (affects gap thresholds, filter windows, and resampling)",
+        )
+        self._depth_spacing_unit_caption.pack(side='left')
         
         # Curve renaming to standard mnemonics
         self.rename_curves_var = tk.BooleanVar(value=True)
@@ -183,8 +190,9 @@ class ProcessingTabMixin:
         def update_gap_label(*args):
             pts = self.max_gap_var.get()
             spacing = self.depth_spacing_var.get()
-            meters = pts * spacing
-            self.gap_size_label.config(text=f"{pts} pts ({meters:.1f} m)")
+            distance = pts * spacing
+            unit = self._current_depth_unit()
+            self.gap_size_label.config(text=f"{pts} pts ({distance:.1f} {unit})")
         
         self.max_gap_var.trace_add("write", update_gap_label)
         self.depth_spacing_var.trace_add("write", update_gap_label)
@@ -216,8 +224,9 @@ class ProcessingTabMixin:
         def update_large_gap_physical(*args):
             pts = self.large_gap_threshold_var.get()
             spacing = self.depth_spacing_var.get()
-            meters = pts * spacing
-            self.large_gap_physical_label.config(text=f"points ({meters:.1f} m)")
+            distance = pts * spacing
+            unit = self._current_depth_unit()
+            self.large_gap_physical_label.config(text=f"points ({distance:.1f} {unit})")
         
         self.large_gap_threshold_var.trace_add("write", update_large_gap_physical)
         self.depth_spacing_var.trace_add("write", update_large_gap_physical)
@@ -250,8 +259,9 @@ class ProcessingTabMixin:
         def update_geo_gap_label(*args):
             pts = self.geological_gap_threshold_var.get()
             spacing = self.depth_spacing_var.get()
-            meters = pts * spacing
-            self.geo_gap_label.config(text=f"{pts} pts ({meters:.1f} m)")
+            distance = pts * spacing
+            unit = self._current_depth_unit()
+            self.geo_gap_label.config(text=f"{pts} pts ({distance:.1f} {unit})")
         
         self.geological_gap_threshold_var.trace_add("write", update_geo_gap_label)
         self.depth_spacing_var.trace_add("write", update_geo_gap_label)

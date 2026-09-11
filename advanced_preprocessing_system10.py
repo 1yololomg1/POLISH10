@@ -9814,7 +9814,8 @@ Your feedback contributes to software quality and reliability.
             # _validate_and_standardize_depth, which runs before this method.
             if self.processed_data is not None and 'DEPT' in self.processed_data.columns:
                 depth_spacing = self.depth_spacing_var.get()
-                self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} m")
+                unit = self._current_depth_unit()
+                self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} {unit}")
                 self.resample_to_standard_spacing('DEPT', depth_spacing)
     
     def process_data_thread(self):
@@ -9864,14 +9865,15 @@ Your feedback contributes to software quality and reliability.
             
             # Get depth-aware parameters (adjusts for depth spacing)
             depth_params = self.get_depth_aware_parameters()
+            unit = depth_params.get('depth_unit', 'm')
             
             self.log_processing("=" * 50)
             self.log_processing("DEPTH-AWARE PARAMETER ADJUSTMENT")
-            self.log_processing(f"Depth Spacing: {depth_params['depth_spacing']} m")
+            self.log_processing(f"Depth Spacing: {depth_params['depth_spacing']} {unit}")
             self.log_processing(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x")
-            self.log_processing(f"Geological Gap Threshold: {depth_params['geological_gap_threshold']} pts ({depth_params['geological_gap_meters']:.1f} m)")
-            self.log_processing(f"Large Gap Threshold: {depth_params['large_gap_threshold']} pts ({depth_params['large_gap_meters']:.1f} m)")
-            self.log_processing(f"Max Gap Size: {depth_params['max_gap_size']} pts ({depth_params['max_gap_meters']:.1f} m)")
+            self.log_processing(f"Geological Gap Threshold: {depth_params['geological_gap_threshold']} pts ({depth_params['geological_gap_meters']:.1f} {unit})")
+            self.log_processing(f"Large Gap Threshold: {depth_params['large_gap_threshold']} pts ({depth_params['large_gap_meters']:.1f} {unit})")
+            self.log_processing(f"Max Gap Size: {depth_params['max_gap_size']} pts ({depth_params['max_gap_meters']:.1f} {unit})")
             self.log_processing("=" * 50)
             
             # Get UI parameters for gap filling
@@ -10466,15 +10468,16 @@ Your feedback contributes to software quality and reliability.
         
         # === IMPROVEMENT 3: Add Depth-Aware Parameters Section ===
         depth_params = self.get_depth_aware_parameters()
+        unit = depth_params.get('depth_unit', 'm')
         report.append("DEPTH-AWARE PARAMETER CONFIGURATION")
         report.append("=" * 80)
-        report.append(f"Depth Spacing: {depth_params['depth_spacing']} m")
-        report.append(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x (relative to 0.5m reference)")
+        report.append(f"Depth Spacing: {depth_params['depth_spacing']} {unit}")
+        report.append(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x (relative to 0.5{unit} reference)")
         report.append("")
         report.append("Adjusted Thresholds (Points | Physical Distance):")
-        report.append(f"  Geological Gap Threshold:  {depth_params['geological_gap_threshold']:>4} pts | {depth_params['geological_gap_meters']:>6.1f} m")
-        report.append(f"  Large Gap Threshold:       {depth_params['large_gap_threshold']:>4} pts | {depth_params['large_gap_meters']:>6.1f} m")
-        report.append(f"  Max Gap Size:              {depth_params['max_gap_size']:>4} pts | {depth_params['max_gap_meters']:>6.1f} m")
+        report.append(f"  Geological Gap Threshold:  {depth_params['geological_gap_threshold']:>4} pts | {depth_params['geological_gap_meters']:>6.1f} {unit}")
+        report.append(f"  Large Gap Threshold:       {depth_params['large_gap_threshold']:>4} pts | {depth_params['large_gap_meters']:>6.1f} {unit}")
+        report.append(f"  Max Gap Size:              {depth_params['max_gap_size']:>4} pts | {depth_params['max_gap_meters']:>6.1f} {unit}")
         report.append("")
         report.append("Filter Windows (Adjusted for depth spacing):")
         report.append(f"  Savitzky-Golay: {depth_params['savgol_window']} pts")
@@ -10588,7 +10591,7 @@ Your feedback contributes to software quality and reliability.
         report.append("")
         report.append("1. DATA ERRORS (Small Gaps)")
         report.append(f"   Definition: Consecutive missing points < Geological Gap Threshold")
-        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} m)")
+        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} {unit})")
         report.append("   Characteristics:")
         report.append("     • Short duration gaps (typically <100m)")
         report.append("     • Caused by: Tool failures, data transmission errors, sensor issues")
@@ -10600,7 +10603,7 @@ Your feedback contributes to software quality and reliability.
         report.append("")
         report.append("2. GEOLOGICAL/LOGGING FEATURES (Large Gaps)")
         report.append(f"   Definition: Consecutive missing points ≥ Geological Gap Threshold")
-        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} m)")
+        report.append(f"   Current Threshold: {self.geological_gap_threshold_var.get()} points ({depth_params['geological_gap_meters']:.1f} {unit})")
         report.append("   Characteristics:")
         report.append("     • Extended duration gaps (typically >100m)")
         report.append("     • Caused by: Intentional non-logging, cased holes, interval logging")
@@ -10727,10 +10730,10 @@ Your feedback contributes to software quality and reliability.
         report.append("PROCESSING CONFIGURATION")
         report.append("=" * 80)
         report.append("Gap Filling Parameters:")
-        report.append(f"  Max Gap Size: {depth_params['max_gap_size']} points ({depth_params['max_gap_meters']:.1f} m)")
-        report.append(f"  Large Gap Threshold: {depth_params['large_gap_threshold']} points ({depth_params['large_gap_meters']:.1f} m)")
+        report.append(f"  Max Gap Size: {depth_params['max_gap_size']} points ({depth_params['max_gap_meters']:.1f} {unit})")
+        report.append(f"  Large Gap Threshold: {depth_params['large_gap_threshold']} points ({depth_params['large_gap_meters']:.1f} {unit})")
         report.append(f"  Large Gap Treatment: {self.large_gap_var.get()}")
-        report.append(f"  Geological Gap Threshold: {depth_params['geological_gap_threshold']} points ({depth_params['geological_gap_meters']:.1f} m)")
+        report.append(f"  Geological Gap Threshold: {depth_params['geological_gap_threshold']} points ({depth_params['geological_gap_meters']:.1f} {unit})")
         report.append(f"  Method Priority: {self.gap_method_var.get()}")
         report.append(f"  Physics-Informed: {self.physics_informed_var.get()}")
         report.append(f"  Multi-Curve Correlation: {self.multi_curve_var.get()}")
@@ -10739,7 +10742,7 @@ Your feedback contributes to software quality and reliability.
         report.append(f"  Method: {self.denoise_method_var.get()}")
         report.append("")
         report.append("Uniformization Parameters:")
-        report.append(f"  Depth Spacing: {self.depth_spacing_var.get()} m")
+        report.append(f"  Depth Spacing: {self.depth_spacing_var.get()} {unit}")
         report.append(f"  Rename Curves: {self.rename_curves_var.get()}")
         report.append(f"  Standardize Units: {self.standardize_units_var.get()}")
         report.append(f"  Null Value: {self.null_value_var.get()}")
@@ -10839,7 +10842,7 @@ Your feedback contributes to software quality and reliability.
         report.append("=" * 80)
         report.append(f"Null Value Used: {self.null_value_var.get()}")
         report.append(f"Output Format: {self.output_format_var.get()}")
-        report.append(f"Depth Spacing: {self.depth_spacing_var.get()} m (standardized)")
+        report.append(f"Depth Spacing: {self.depth_spacing_var.get()} {unit} (standardized)")
         report.append(f"Unit Standard: {'SI Modified' if self.standardize_units_var.get() else 'Original'}")
         report.append(f"Curves Renamed: {'Yes' if self.rename_curves_var.get() else 'No'}")
         report.append("")
@@ -10861,7 +10864,7 @@ Your feedback contributes to software quality and reliability.
         # Geological gap recommendations
         if geological_gaps_count > data_error_gaps_count:
             recommendations.append(f"INFO: {geological_gaps_count} geological gaps detected (cased holes or interval logging).")
-            recommendations.append(f"  → This is normal for interval curves. Current threshold: {self.geological_gap_threshold_var.get()} pts ({depth_params['geological_gap_meters']:.1f}m)")
+            recommendations.append(f"  → This is normal for interval curves. Current threshold: {self.geological_gap_threshold_var.get()} pts ({depth_params['geological_gap_meters']:.1f} {unit})")
         
         # Gap filling recommendations
         if data_error_gaps_count > total_curves * 2:
@@ -10870,7 +10873,7 @@ Your feedback contributes to software quality and reliability.
         
         # Depth spacing recommendations
         if self.depth_spacing_var.get() != 0.5:
-            recommendations.append(f"NOTE: Non-standard depth spacing ({self.depth_spacing_var.get()}m) detected.")
+            recommendations.append(f"NOTE: Non-standard depth spacing ({self.depth_spacing_var.get()} {unit}) detected.")
             recommendations.append(f"  → All parameters automatically adjusted by {depth_params['spacing_ratio']:.2f}x to maintain physical distances")
         
         # Denoising recommendations
@@ -11592,10 +11595,12 @@ Your feedback contributes to software quality and reliability.
                 'median_window': max(3, int(np.ceil(5 * spacing_ratio))),
                 'bilateral_window': max(5, int(np.ceil(10 * spacing_ratio))),
                 
-                # Physical interpretation
+                # Physical distance in the current depth unit. Keys keep the
+                # historical *_meters names; depth_unit says what to display.
                 'geological_gap_meters': geological_points * depth_spacing,
                 'large_gap_meters': large_gap_points * depth_spacing,
-                'max_gap_meters': max_gap_points * depth_spacing
+                'max_gap_meters': max_gap_points * depth_spacing,
+                'depth_unit': self._current_depth_unit(),
             }
             
             return adjusted
@@ -11608,7 +11613,8 @@ Your feedback contributes to software quality and reliability.
                 'spacing_ratio': 1.0,
                 'geological_gap_threshold': 200,
                 'large_gap_threshold': 500,
-                'max_gap_size': 500
+                'max_gap_size': 500,
+                'depth_unit': 'm',
             }
 
     def detect_curve_category(self, curve_name: str, curve_data: np.ndarray) -> str:
@@ -11967,10 +11973,52 @@ Your feedback contributes to software quality and reliability.
             except Exception:
                 pass
 
+    def _current_depth_unit(self) -> str:
+        """Return 'ft' or 'm' from the declared unit of the depth curve.
+
+        Used for logs and labels. Depth spacing numbers are in this unit;
+        they are not converted here.
+        """
+        try:
+            columns = self.processed_data.columns if self.processed_data is not None else []
+            curve_info = getattr(self, 'curve_info', None) or {}
+            depth_col = None
+            for col in columns:
+                ctype = str(curve_info.get(col, {}).get('curve_type', '')).upper()
+                if 'DEPTH' in ctype or str(col).upper() in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
+                    depth_col = col
+                    break
+            if not depth_col:
+                return 'm'
+            raw = str(curve_info.get(depth_col, {}).get('unit', 'M')).upper()
+            if raw in ['FT', 'FEET']:
+                return 'ft'
+            return 'm'
+        except Exception:
+            return 'm'
+
+    def _apply_depth_spacing_unit_labels(self, unit: str) -> None:
+        """Refresh Uniformization tab captions that previously hardcoded metres."""
+        buttons = getattr(self, '_depth_spacing_preset_buttons', None)
+        if buttons:
+            for btn, val in buttons:
+                try:
+                    btn.configure(text=f"{val} {unit}")
+                except Exception:
+                    pass
+        caption = getattr(self, '_depth_spacing_unit_caption', None)
+        if caption is not None:
+            word = 'feet' if unit == 'ft' else 'meters'
+            try:
+                caption.configure(
+                    text=f"{word} (affects gap thresholds, filter windows, and resampling)"
+                )
+            except Exception:
+                pass
+
     def _sync_depth_spacing_default(self) -> None:
         """Set depth resampling default to 0.1 m or 0.5 ft based on current depth units."""
         try:
-            # Determine current depth unit from curve_info
             depth_col = None
             for col in (self.processed_data.columns if self.processed_data is not None else []):
                 ctype = str(self.curve_info.get(col, {}).get('curve_type', '')).upper()
@@ -11979,17 +12027,16 @@ Your feedback contributes to software quality and reliability.
                     break
             if not depth_col:
                 return
-            unit = str(self.curve_info.get(depth_col, {}).get('unit', 'M')).upper()
-            if unit in ['FT', 'FEET']:
-                # 0.5 ft default
+            unit = self._current_depth_unit()
+            if unit == 'ft':
                 if abs(self.depth_spacing_var.get() - 0.5) > 1e-9:
                     self.depth_spacing_var.set(0.5)
                     self.log_processing("Depth spacing default set to 0.5 ft based on depth units")
             else:
-                # 0.1 m default
                 if abs(self.depth_spacing_var.get() - 0.1) > 1e-9:
                     self.depth_spacing_var.set(0.1)
                     self.log_processing("Depth spacing default set to 0.1 m based on depth units")
+            self._apply_depth_spacing_unit_labels(unit)
         except Exception:
             pass
 

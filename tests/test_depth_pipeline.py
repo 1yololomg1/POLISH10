@@ -117,6 +117,12 @@ class UniformizeHost:
 
     _uniformize_data = AdvancedPreprocessingApplication._uniformize_data
     resample_to_standard_spacing = AdvancedPreprocessingApplication.resample_to_standard_spacing
+    _current_depth_unit = AdvancedPreprocessingApplication._current_depth_unit
+    _apply_depth_spacing_unit_labels = (
+        AdvancedPreprocessingApplication._apply_depth_spacing_unit_labels
+    )
+    _sync_depth_spacing_default = AdvancedPreprocessingApplication._sync_depth_spacing_default
+    get_depth_aware_parameters = AdvancedPreprocessingApplication.get_depth_aware_parameters
 
     def uniformize_curves(self):
         return None
@@ -253,3 +259,44 @@ def test_unidentifiable_depth_halts_and_surfaces_reason():
     halt_idx = thread_src.index("if not self._validate_and_standardize_depth()")
     next_work = thread_src.index("_detect_geological_zones")
     assert halt_idx < next_work
+
+
+def test_foot_indexed_well_reports_ft_throughout():
+    """A DEPT/FT well must log and parameterise spacing in ft, not metres."""
+    data = pd.DataFrame(
+        {
+            "DEPT": [1000.0, 1000.5, 1001.0, 1001.5],
+            "GR": [40.0, 50.0, 60.0, 70.0],
+        }
+    )
+    host = UniformizeHost()
+    host.logs = []
+    host.root = _Root()
+    host.status_label = _Label()
+    host.processed_data = data
+    host.curve_info = {
+        "DEPT": {"unit": "FT", "curve_type": "DEPTH"},
+        "GR": {"unit": "GAPI"},
+    }
+    host.rename_curves_var = _Var(False)
+    host.standardize_units_var = _Var(False)
+    host.resample_var = _Var(True)
+    host.depth_spacing_var = _Var(0.1)
+    host.geological_gap_threshold_var = _Var(200)
+    host.large_gap_threshold_var = _Var(1000)
+    host.max_gap_var = _Var(500)
+
+    assert host._current_depth_unit() == "ft"
+    host._sync_depth_spacing_default()
+    params = host.get_depth_aware_parameters()
+    assert params["depth_unit"] == "ft"
+    host._uniformize_data()
+
+    joined = "\n".join(host.logs)
+    assert "ft" in joined
+    assert f"Resampling to standard depth spacing: {host.depth_spacing_var.get()} ft" in joined
+    assert "Resampling to standard depth spacing: 0.5 m" not in joined
+    assert params["depth_unit"] == "ft"
+    physical = f"({params['geological_gap_meters']:.1f} {params['depth_unit']})"
+    assert physical.endswith("ft)")
+    assert " m)" not in physical
