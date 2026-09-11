@@ -9795,7 +9795,8 @@ Your feedback contributes to software quality and reliability.
             # Standardize curve names and units
             self.uniformize_curves()
             
-            # Resample to standard depth spacing if needed
+            # DEPT is written by standardize_depth_reference during
+            # _validate_and_standardize_depth, which runs before this method.
             if 'DEPT' in self.processed_data.columns:
                 depth_spacing = self.depth_spacing_var.get()
                 self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} m")

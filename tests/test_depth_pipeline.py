@@ -8,7 +8,7 @@ Later items append tests to this module.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import inspect
 
 import pandas as pd
 
@@ -100,3 +100,74 @@ def test_dept_well_export_columns_unchanged_after_depth_copy():
     exported = _las_curve_names(las_text)
     assert exported == before_columns
     assert "DEPTH_PRIMARY" not in exported
+
+
+def test_depth_standardization_precedes_resample_in_process_thread():
+    """process_data_thread must finish depth copy before _uniformize_data resamples."""
+    thread_src = inspect.getsource(AdvancedPreprocessingApplication.process_data_thread)
+    assert thread_src.index("_validate_and_standardize_depth") < thread_src.index(
+        "_uniformize_data"
+    )
+    uni_src = inspect.getsource(AdvancedPreprocessingApplication._uniformize_data)
+    assert "resample_to_standard_spacing" in uni_src
+
+
+class UniformizeHost:
+    """Tk-free host for _uniformize_data / resample_to_standard_spacing."""
+
+    _uniformize_data = AdvancedPreprocessingApplication._uniformize_data
+    resample_to_standard_spacing = AdvancedPreprocessingApplication.resample_to_standard_spacing
+
+    def uniformize_curves(self):
+        return None
+
+    def log_processing(self, msg):
+        self.logs.append(str(msg))
+
+
+class _Label:
+    def config(self, **kwargs):
+        return None
+
+
+def test_md_well_has_dept_when_resampling_is_reached():
+    """A well whose depth column is MD must already have DEPT at resample time."""
+    data = pd.DataFrame(
+        {
+            "MD": [1000.0, 1000.5, 1001.0, 1001.5],
+            "GR": [40.0, 50.0, 60.0, 70.0],
+        }
+    )
+    curve_info = {
+        "MD": {"unit": "FT", "description": "MEASURED DEPTH", "curve_type": "DEPTH"},
+        "GR": {"unit": "GAPI", "description": "GAMMA RAY"},
+    }
+    manager = ReservoirDepthManager()
+    selected, _metadata = manager.standardize_depth_reference(data, curve_info)
+    assert selected == "MD"
+    assert "MD" in data.columns
+
+    seen = {}
+
+    class RecordingHost(UniformizeHost):
+        def resample_to_standard_spacing(self, depth_column, target_spacing):
+            seen["columns"] = list(self.processed_data.columns)
+            seen["depth_column"] = depth_column
+            return AdvancedPreprocessingApplication.resample_to_standard_spacing(
+                self, depth_column, target_spacing
+            )
+
+    host = RecordingHost()
+    host.logs = []
+    host.root = _Root()
+    host.status_label = _Label()
+    host.processed_data = data
+    host.curve_info = curve_info
+    host.rename_curves_var = _Var(True)
+    host.standardize_units_var = _Var(False)
+    host.depth_spacing_var = _Var(0.5)
+
+    host._uniformize_data()
+    assert seen, "resample_to_standard_spacing was not reached"
+    assert "DEPT" in seen["columns"]
+    assert seen["depth_column"] == "DEPT"
