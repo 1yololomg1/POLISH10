@@ -165,9 +165,47 @@ def test_md_well_has_dept_when_resampling_is_reached():
     host.curve_info = curve_info
     host.rename_curves_var = _Var(True)
     host.standardize_units_var = _Var(False)
+    host.resample_var = _Var(True)
     host.depth_spacing_var = _Var(0.5)
 
     host._uniformize_data()
     assert seen, "resample_to_standard_spacing was not reached"
     assert "DEPT" in seen["columns"]
     assert seen["depth_column"] == "DEPT"
+
+
+def test_rename_on_resample_off_keeps_input_row_count():
+    """Rename must not resample. Row count matches the input when resample_var is off."""
+    data = pd.DataFrame(
+        {
+            "DEPT": [1000.0, 1000.5, 1001.0, 1001.5, 1002.0],
+            "GR": [40.0, 50.0, 60.0, 70.0, 80.0],
+        }
+    )
+    input_rows = len(data)
+    resample_called = []
+
+    class Host(UniformizeHost):
+        def resample_to_standard_spacing(self, depth_column, target_spacing):
+            resample_called.append((depth_column, target_spacing))
+            return AdvancedPreprocessingApplication.resample_to_standard_spacing(
+                self, depth_column, target_spacing
+            )
+
+    host = Host()
+    host.logs = []
+    host.root = _Root()
+    host.status_label = _Label()
+    host.processed_data = data.copy()
+    host.curve_info = {
+        "DEPT": {"unit": "FT", "curve_type": "DEPTH"},
+        "GR": {"unit": "GAPI"},
+    }
+    host.rename_curves_var = _Var(True)
+    host.standardize_units_var = _Var(False)
+    host.resample_var = _Var(False)
+    host.depth_spacing_var = _Var(0.1)
+
+    host._uniformize_data()
+    assert resample_called == []
+    assert len(host.processed_data) == input_rows

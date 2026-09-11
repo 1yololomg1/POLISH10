@@ -110,6 +110,10 @@ class ProcessingTabMixin:
         ttk.Checkbutton(uniformization_tab, text="Standardize Units", 
                        variable=self.standardize_units_var).pack(anchor='w', pady=5, padx=10)
 
+        self.resample_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(uniformization_tab, text="Resample to Standard Depth Spacing",
+                       variable=self.resample_var).pack(anchor='w', pady=5, padx=10)
+
         # Move full Units controls into Uniformization section
         try:
             self.unit_standardizer.add_unit_standardization_ui(uniformization_tab)

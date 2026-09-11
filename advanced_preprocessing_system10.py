@@ -2387,6 +2387,9 @@ class AdvancedPreprocessingApplication(WellLoadingMixin, AppUIMixin):
         self.depth_spacing_var = tk.DoubleVar(value=0.1)
         self.rename_curves_var = tk.BooleanVar(value=True)
         self.null_value_var = tk.StringVar(value="-999.25")
+        # Independent of rename and unit conversion. Default off so loading or
+        # relabelling a file does not resample it (contract C6).
+        self.resample_var = tk.BooleanVar(value=False)
         # Counted range-validation outcomes (skip / pass / clip / error).
         # Skipping is a logged result, not a silent pass (contract C3).
         self.range_validation_outcomes: List[Dict[str, Any]] = []
@@ -9787,17 +9790,18 @@ Your feedback contributes to software quality and reliability.
             self.log_processing("Continuing without environmental corrections...")
     
     def _uniformize_data(self) -> None:
-        """Uniformize curve names and units, resample to standard spacing."""
+        """Rename/units and resampling are independent; resampling has its own switch."""
         if self.rename_curves_var.get() or self.standardize_units_var.get():
             self.root.after(0, lambda: self.status_label.config(text="Uniformizing data..."))
             self.log_processing("Starting data uniformization...")
-            
-            # Standardize curve names and units
             self.uniformize_curves()
-            
+
+        resample_on = hasattr(self, 'resample_var') and self.resample_var.get()
+        if resample_on:
+            self.root.after(0, lambda: self.status_label.config(text="Resampling depth..."))
             # DEPT is written by standardize_depth_reference during
             # _validate_and_standardize_depth, which runs before this method.
-            if 'DEPT' in self.processed_data.columns:
+            if self.processed_data is not None and 'DEPT' in self.processed_data.columns:
                 depth_spacing = self.depth_spacing_var.get()
                 self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} m")
                 self.resample_to_standard_spacing('DEPT', depth_spacing)
