@@ -10472,7 +10472,7 @@ Your feedback contributes to software quality and reliability.
         report.append("DEPTH-AWARE PARAMETER CONFIGURATION")
         report.append("=" * 80)
         report.append(f"Depth Spacing: {depth_params['depth_spacing']} {unit}")
-        report.append(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x (relative to 0.5{unit} reference)")
+        report.append(f"Scaling Ratio: {depth_params['spacing_ratio']:.2f}x (relative to 0.5 {unit} reference)")
         report.append("")
         report.append("Adjusted Thresholds (Points | Physical Distance):")
         report.append(f"  Geological Gap Threshold:  {depth_params['geological_gap_threshold']:>4} pts | {depth_params['geological_gap_meters']:>6.1f} {unit}")
