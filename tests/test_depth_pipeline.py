@@ -209,3 +209,47 @@ def test_rename_on_resample_off_keeps_input_row_count():
     host._uniformize_data()
     assert resample_called == []
     assert len(host.processed_data) == input_rows
+
+
+class DepthValidateHost:
+    _validate_and_standardize_depth = (
+        AdvancedPreprocessingApplication._validate_and_standardize_depth
+    )
+    categorize_error = AdvancedPreprocessingApplication.categorize_error
+
+    def log_processing(self, msg):
+        self.logs.append(str(msg))
+
+    def show_error_dialog(self, title, message):
+        self.dialogs.append((title, message))
+
+    def _sync_depth_spacing_default(self):
+        return None
+
+
+class _FailingDepthValidator:
+    def validate_and_identify_depth(self, columns, curve_info, data):
+        raise ValueError("No valid depth reference found")
+
+
+def test_unidentifiable_depth_halts_and_surfaces_reason():
+    host = DepthValidateHost()
+    host.logs = []
+    host.dialogs = []
+    host.root = _Root()
+    host.status_label = _Label()
+    host.processed_data = pd.DataFrame({"GR": [40.0, 50.0]})
+    host.curve_info = {"GR": {"unit": "GAPI"}}
+    host.depth_validator = _FailingDepthValidator()
+    host.reservoir_depth_manager = ReservoirDepthManager()
+
+    ok = host._validate_and_standardize_depth()
+    assert ok is False
+    assert not any("Continuing with existing depth reference" in line for line in host.logs)
+    assert any("Processing halted" in line for line in host.logs)
+    assert host.dialogs
+    assert "No valid depth reference found" in host.dialogs[0][1]
+    thread_src = inspect.getsource(AdvancedPreprocessingApplication.process_data_thread)
+    halt_idx = thread_src.index("if not self._validate_and_standardize_depth()")
+    next_work = thread_src.index("_detect_geological_zones")
+    assert halt_idx < next_work

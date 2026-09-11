@@ -9646,8 +9646,13 @@ Your feedback contributes to software quality and reliability.
             f"Normalization ({method}) applied to {normalized_count} curve(s); depth columns excluded"
         )
     
-    def _validate_and_standardize_depth(self) -> None:
-        """Validate and standardize depth reference for processing."""
+    def _validate_and_standardize_depth(self) -> bool:
+        """Validate and standardize depth reference for processing.
+
+        Returns:
+            True if a depth reference was established. False if processing
+            must halt for this well.
+        """
         self.root.after(0, lambda: self.status_label.config(text="Validating depth reference..."))
         self.log_processing("Starting enhanced depth validation...")
         
@@ -9673,27 +9678,33 @@ Your feedback contributes to software quality and reliability.
                 self._sync_depth_spacing_default()
             except Exception:
                 pass
+            return True
             
         except Exception as e:
             error_category = self.categorize_error(e, "depth_validation")
             error_msg = f"[{error_category}] Depth validation failed: {e}"
             self.log_processing(f"ERROR: {error_msg}")
             
-            # Provide category-specific user feedback
+            halt_reason = f"Processing halted for this well: {e}"
+            # Provide category-specific user feedback, always including the reason.
             if error_category == "MEMORY_ERROR":
                 self.show_error_dialog(ERROR_TITLE_MEMORY, 
-                    "Insufficient memory for depth validation. Try processing smaller datasets.")
+                    "Insufficient memory for depth validation. Try processing smaller datasets.\n"
+                    + halt_reason)
             elif error_category == "DATA_ERROR":
                 self.show_error_dialog(ERROR_TITLE_DATA, 
-                    "Invalid depth data format detected. Check your input files.")
+                    "Invalid or unidentifiable depth data. Check your input files.\n"
+                    + halt_reason)
             elif error_category == "FILE_ERROR":
                 self.show_error_dialog(ERROR_TITLE_FILE, 
-                    "Unable to access depth data file. Check file permissions and path.")
+                    "Unable to access depth data file. Check file permissions and path.\n"
+                    + halt_reason)
             else:
-                self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg)
+                self.show_error_dialog(ERROR_TITLE_PROCESSING, error_msg + "\n" + halt_reason)
             
-            self.root.after(0, lambda: self.status_label.config(text="Depth validation failed - continuing with defaults"))
-            self.log_processing("Continuing with existing depth reference...")
+            self.root.after(0, lambda: self.status_label.config(text="Depth validation failed - processing halted"))
+            self.log_processing(halt_reason)
+            return False
     
     def _detect_geological_zones(self) -> List[Any]:
         """Detect geological zones from gamma ray data.
@@ -9813,7 +9824,8 @@ Your feedback contributes to software quality and reliability.
             self._initialize_processing_pipeline()
             
             # Step 1: Depth Validation and Standardization
-            self._validate_and_standardize_depth()
+            if not self._validate_and_standardize_depth():
+                return
             
             # Optional normalization step
             try:
