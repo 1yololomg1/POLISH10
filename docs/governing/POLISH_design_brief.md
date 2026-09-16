@@ -63,12 +63,10 @@ the only one the user will ever run.**
 
 ## 3. The product claim
 
-Every other tool in this category can tell you *that* a curve was processed. None
-of them can tell you *which samples*, by what method, from what inputs, or what
-the tool declined to do and why.
-
 POLISH's claim is per-sample provenance that survives into the exported file, and
-a report that itemises refusals as prominently as actions.
+a report that itemises refusals as prominently as actions. It tells you which
+samples were processed, by what method, from what inputs, and what it declined
+to do and why.
 
 The single most valuable interaction in the product is hovering an empty stretch
 of a curve and reading:
@@ -83,32 +81,40 @@ If the design makes that moment feel authoritative, the product works.
 
 ### 4.1 The original is immutable
 
-The raw data is loaded once and never altered. Every change is stored as a sparse
-overlay keyed to sample index. This is non-destructive editing with a persistent
-edit stack — the same architecture as Lightroom (raw file plus sidecar
-instructions) or parametric CAD (a re-executable feature tree).
+The raw data is loaded once and never altered. **OD-03 split:** resampling
+produces a **child dataset** (a new grid, with a recorded mapping to the parent).
+Fills, derivations and smoothing remain **overlays** on the active dataset,
+keyed to sample index. The original input is never written (D85).
 
 Consequence for design: the unmodified curve is **always renderable**. Not a
-history feature, not an undo — a permanently available layer.
+history feature, not an undo — a permanently available layer. After resampling,
+that layer lives on the parent dataset; the child is a separate object.
 
-### 4.2 Three sample categories, and they are not interchangeable
+### 4.2 Sample status (D44), and the three-phrase Refused vocabulary (OD-04)
+
+D44 sample statuses — these are not interchangeable:
 
 - **Measured** — an instrument recorded this.
 - **Created** — no measurement existed at this depth. Gap fill, derived curve.
   Toggling created off leaves a visible hole, which is the honest signal.
 - **Changed** — a measurement existed and POLISH altered it. Smoothing,
-  despiking, unit conversion. Two values at one depth.
-
-**Created and changed must look different.** Changed is the more serious claim —
-contradicting a measurement rather than extending past one — and it is the one
-every competing tool hides completely.
-
-Two further states the display must handle:
-
+  despiking. Two values at one depth. Unit conversion is **not** Changed
+  (OD-05): stored numbers never change; the unit travels with the number.
 - **Invalid** — measured, outside physical bounds, excluded from use. Must remain
   visible and marked. A sample POLISH refused to trust is information.
-- **Refused** — a gap POLISH declined to fill. Permanently empty, labelled with
-  the reason on inspection.
+- **Absent** — no value at this depth (tool absence, dropout, or left out of the
+  processed file).
+- **Resampled** — the value exists on a child-dataset grid produced by Stage 5.
+
+**Created and changed must look different.** Changed is the more serious claim —
+contradicting a measurement rather than extending past one.
+
+"Refused" is **not** a sample status. Per OD-04 Appendix A it splits into three
+phrases, used as issue or method outcomes:
+
+- **gap not filled**
+- **declined by POLISH**
+- **method not run**
 
 ### 4.3 Colour is already spoken for
 
@@ -187,19 +193,34 @@ dismiss. There is a refusals panel and it is a selling point.
 This is the mechanism that makes "everything gets checked" structurally true
 rather than a thing a user has to remember.
 
-Every item POLISH raises must reach one of exactly four terminal states before
-export is permitted:
+Every finding is classified by **block type (D86)** before any action is offered:
+
+- informational discrepancy (dispositionable)
+- ambiguous interpretation (requires explicit user choice, rationale recorded)
+- rule-dependent warning (explicit labelled user mapping only)
+- scientific precondition failure (method declined, e.g. log fill with a
+  non-positive endpoint)
+- structural data failure (workflow or file refused)
+- export conformance failure (fix or do not export)
+
+**Structural data failures and export conformance failures are not four-state
+disposition items and have no override.** There is no general "force export"
+button.
+
+For findings that *are* dispositionable, every item must reach one of exactly
+four terminal states before export is permitted:
 
 - **Resolved** — user decided, decision recorded
 - **Accepted** — default applied, user saw it
 - **Deferred** — explicitly postponed, with a reason
-- **Refused** — POLISH declined, reason recorded
+- **Refused** — POLISH declined, reason recorded (the three OD-04 phrases above)
 
-Export is gated on every item having a disposition. It is **not** gated on every
-item being fixed. The user is not required to do the work; they are required to
-have been shown it.
+Export is gated on every *dispositionable* item having a disposition. It is
+**not** gated on every item being fixed. The user is not required to do the
+work; they are required to have been shown it.
 
-Silence is not one of the four states, so nothing can be silently unaddressed.
+Silence is not one of the four states, so nothing dispositionable can be
+silently unaddressed.
 
 ### 4.9 Staleness must be visible
 
@@ -218,9 +239,9 @@ what is now internally inconsistent.
 
 ## 5. The pipeline
 
-Ten stages. The ordering principle: **describe the file completely before
-altering any part of it; then alter minimally with consent, one recorded step at
-a time; then report everything including refusals.**
+Stages 0–10 (eleven stages). The ordering principle: **describe the file
+completely before altering any part of it; then alter minimally with consent,
+one recorded step at a time; then report everything including refusals.**
 
 Stages 0–4 touch no data. Stages 5–8 alter data, each independently switchable
 and each **defaulting to off**. Stages 9–10 report and export.
@@ -294,9 +315,11 @@ with it.
 - **Coverage track** — permanent column. The map of the whole file. Rendered from
   Stage 4. Shows measured intervals, interior gaps, tool-absence shoulders, and
   refusals. This is the landing view and requires no processing and no settings.
-- **Log tracks** — conventional left-to-right order: lithology/gamma, then
-  resistivity, then porosity/density. This order is reflex for the user; do not
-  innovate on it.
+- **Log tracks** — domain expert's default order, left to right: DTP, DTS,
+  density, porosity, Sw, GR, ILD. When a default curve is not in the file, use
+  the nearest equivalent and label it clearly (follow-up Q5). The list of
+  acceptable ILD substitutes was asked twice and left blank both times; it is
+  not invented here.
 - **Resolution queue** — side panel. Never covers the depth view. Never modal.
 - **Detail** — anchored in reserved space.
 
