@@ -1,6 +1,6 @@
 # POLISH — Build Plan and Cursor Prompt Pack
 
-**Prepared Tuesday 15 September 2026.** Also published as a Notion page tree ("POLISH — Build Plan"); this file and Notion hold the same content. **Revised the same day** with your answers to OD-03, OD-05 and OD-06, and your father's worksheet answers (worksheet dated 14 September).
+**Prepared Tuesday 15 September 2026.** Also published as a Notion page tree ("POLISH — Build Plan"); this file and Notion hold the same content. **Revised the same day** with your answers to OD-03, OD-05 and OD-06, and your father's worksheet answers (worksheet dated 14 September). **Revised 16 September** with the six follow-up answers in `docs/governing/POLISH_followup_answers.md`.
 
 Built from four documents and one inspection:
 
@@ -29,7 +29,7 @@ Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot 
 
 # PART 1 — DECISIONS NOT YET MADE
 
-## 1.0 What has been answered (15 Sept)
+## 1.0 What has been answered (15 Sept; follow-up 16 Sept)
 
 ### Decided by you
 
@@ -41,24 +41,24 @@ Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot 
   4. *Pairs with no fixed factor* (e.g. gamma ray in CPS vs API units, which depends on tool calibration) — refused, never invented.
 - **OD-06 — build beside the old app**, in a new `polish/` folder. The old app stays untouched and runnable until replaced.
 
-### Answered by your father (worksheet, 14 Sept)
+### Answered by your father (worksheet, 14 Sept; follow-up 16 Sept)
 
-The worksheet does **not** answer OD-01. Its question 2.1 ("which one wins") is about which *depth curve* governs, not which *document* governs. OD-01 is still yours.
+The worksheet does **not** answer OD-01. Its question 2.1 ("which one wins") is about which *depth curve* governs, not which *document* governs. OD-01 is still yours. Follow-up quotes below are from `docs/governing/POLISH_followup_answers.md`.
 
 | Worksheet | His answer | What it settles | Follow-up needed? |
 |---|---|---|---|
-| 1 Limits (D11, OD-12) | GR 0–300 GAPI · RHOB 1.5–3.5 g/cc · NPHI −0.15–0.6 v/v · DT 40–300 us/ft · PEF −2–270 b/e · resistivity −0.02–20,000 ohm·m · SP −150–50 mV | Values for the rule library (P12) | **Yes** — see 1.0.1 |
-| 1.2 Out-of-limit values | Prompt whether to delete the value, for this well only or all wells. Never clip. | A value outside a limit is flagged, then the user decides whether it is excluded from the processed output, with scope *this well* or *all wells*. "Delete" is read as *excluded from the processed file*; the original file is never touched (D17). | Confirm the "delete" reading |
+| 1 Limits (D11, OD-12) | GR 0–300 GAPI · RHOB 1.5–3.5 g/cc · NPHI −0.15–0.6 v/v · DT 40–300 us/ft · PEF −2–270 b/e · resistivity −0.02–20,000 ohm·m. **SP: no limit at all.** Quote: "No SP limit" | Values for the rule library (P12), except SP which is not in the library | Types: see 1.0.1. PEF type left blank. "Any curve where the limit should depend on something else" left blank |
+| 1.2 Out-of-limit values | Prompt whether to delete the value, for this well only or all wells. Never clip. Quote: "Delete means mark as \"no value\" visually -999.25" | Internal NaN; export sentinel −999.25; value stays visible on screen (marked) and untouched in the original file; decision recorded in the report. Scope *this well* or *all wells* | No |
 | 2.1 Two depth curves (D3) | The first curve in the file | Index = first curve (P09). The second depth curve is kept as-is. | No |
-| 2.2 Depth drift tolerance (D12, OD-10) | Check whether the difference can be a rounding error; if so, correct accordingly; otherwise skip the well | The rule, but not its exact meaning | **Yes** — see 1.0.2; the answer swings from ~0% to ~79% of wells refused |
-| 2.3 Blank STEP | Check the depth curve and fill the step if appropriate; otherwise skip | Derive STEP from data when the depth increments are regular; record it | **Yes** — does "otherwise skip" mean irregularly sampled wells are refused? That would override D88 for this case |
-| 2.4 KEOUGH 8 ft (D13, OD-11) | Skip and notify | Don't choose between header and data; exclude the disputed interval and tell the user. Unblocks P07. | Minor — skip the 8 ft, or the whole curve? |
+| 2.2 Depth drift tolerance (D12, OD-10) | Diagnose further: compute implied sampling interval as (STOP − START) / (NSAMPLES − 1), compare against known standard intervals in feet and metres including cross-unit matches (0.1524 m = 0.5 ft), treat as rounding only on a match, then correct the depth track. Quote: "Does (stop - start)/(nsam-1) match the sampling interval? … 0.1524 m which is half fot in meters" | A matching rule, not a single tolerance number (D12) | **Yes** — whether "the processed file's header states the real last depth from the data" (both Yes/No boxes blank; written line "See the previous question"). Needs an explicit yes/no from Alvaro |
+| 2.3 Blank STEP | Check the depth curve and fill the step if appropriate when increments are regular. If depths are genuinely uneven: Quote: "Accept it as unevenly spaced, don't invent a step, and tell me" | Matches D88. Does not refuse irregular wells | No |
+| 2.4 KEOUGH 8 ft (D13, OD-11) | Skip and notify. Quote: "Only the density readings below 5,326 ft (5,326.5 - 5,334 ft)" | Skip only that density interval; the rest of the density curve is unaffected | No |
 | 3 Unknown mnemonics (RM, RD, RACEHM, RACELM, RPCEHM, RPCELM, ABDCQF01–04, NBGRCFM, ROP) | Leave unchanged | They stay UNKNOWN, are preserved in the output, and are not processed (C3). | Confirm: "leave unchanged" = "don't process them", not "they're resistivity, keep the name" |
 | 3.1 RM | Leave unchanged and notify | Same, plus a notice in the queue | No |
 | 3.2 Main vs repeat pass | Show a selection to the user, with the option to apply to this well only or all wells | A queue decision with scope *this well* / *all wells* (P10, P13). Also answers OD-22: an explicit "all wells" choice is wanted. | No |
 | 3.3 Common mnemonics | (blank) | Recognition stays near half on the Norwegian wells for now; P10's candidate list is the route to improve it | Later |
 | 4.1 First three things | Check headers (depths) and consistency with the depth log · verify units · verify depth increment matches step | Confirms Stage 1 → Stage 3 → Stage 1 grid check as what the user looks at first. The describe view should lead with the depth-axis and units results. | No |
-| 4.2 Default tracks, left to right | DTP, DTS, density, porosity, Sw, GR, ILD | Default track order for P20. **Overrides brief §7.1** (see 1.0.3) | Minor — Sw is usually computed, often absent from raw files: show an empty labelled track, or skip it? |
+| 4.2 Default tracks, left to right | DTP, DTS, density, porosity, Sw, GR, ILD. Quote: "Use the nearest equivalent (for example RDEP in place of ILD) and label it clearly" | Default track order for P20. **Overrides brief §7.1** (see 1.0.3). Absent default curves: nearest equivalent, labelled clearly | **Yes** — the ILD substitute list was asked twice and left blank both times |
 | 4.3 Smoothing | Almost never | Stage 8 (denoising) drops to lowest priority | No |
 | 4.4 Gaps | Depends on how big the gap is | Consistent with D49 cases 3–4, but no numbers yet (OD-13) | Later, before Stage 7 |
 | 4.5 What other tools get wrong | No QC images | **New requirement:** POLISH exports QC images. Recommended for the read-only milestone (P22). | No |
@@ -67,13 +67,27 @@ The worksheet does **not** answer OD-01. Its question 2.1 ("which one wins") is 
 | 5.3 Filled gaps to clients | I'd ask the client | The export profile is chosen per job (D85) | No |
 | 5.4 Keep from old version | (blank) | — | — |
 
-### 1.0.1 Follow-up on the limits
+### 1.0.1 Follow-up on the limits (answered 16 Sept)
 
-The worksheet asked for "the absolute bound where the number cannot be right, ever". F15 splits limits into *impossible* (the value gets flagged as invalid) and *suspicious* (a warning; the value stays measured). Some of his numbers look like one, some like the other. Two of them would flag real data:
+The worksheet asked for "the absolute bound where the number cannot be right, ever". F15 splits limits into *impossible* (the value gets flagged as invalid) and *suspicious* (a warning; the value stays measured). The 16 Sept follow-up classified the worksheet numbers as follows (quotes from `POLISH_followup_answers.md`):
 
-- **GR maximum 300 GAPI.** *Correction:* an earlier version of this plan called KEOUGH's 563 GAPI value "real". Checked 15 Sept: KEOUGH's only values above 300 are in the top 1.5 ft (563 at 0 ft), almost certainly a surface artefact. The 171-curve well does read up to 1,568 API at 3,703–3,705 m.
-- **RHOB minimum 1.5 g/cc.** In `30_3-5 S.las`, four samples below 1.5 (minimum 1.332) sit at 4,126.0–4,126.5 m, where the file's own lithology column reads code 90000 (coal in the FORCE 2020 key, as I understand it). The `LFP_COAL` flag in the 171-curve file is zero everywhere, so it gives no evidence either way.
-- **PEF maximum 270** matches barite's PEF (about 267), so it reads as deliberate. The minimum of −2 and the resistivity minimum of −0.02 are below what is physically possible, so they look like allowances for tool noise rather than physics.
+| Curve | Worksheet numbers | Type |
+|---|---|---|
+| GR | 0–300 GAPI | "Suspicious all three." |
+| RHOB | 1.5–3.5 g/cc | "Suspicious" |
+| NPHI | −0.15–0.6 v/v | "Suspicious" |
+| DT | 40–300 us/ft | "Impossible" |
+| PEF | −2–270 b/e | *(classification column left blank)* |
+| Resistivity | −0.02–20,000 ohm·m | "Suspicious" |
+| SP | — | **No SP limit at all.** Quote: "No SP limit". The earlier −150–50 mV numbers are superseded; this is not a kept or adjusted limit. |
+
+Impossible: "Leave out of the processed file when values are impossible." Suspicious: "POLISH shows a warning and asks whether to eliminate these points. If yes, then remember this answer for all wells." "Any curve where the limit should depend on something else" was left blank.
+
+Two of the remaining numbers would flag real data:
+
+- **GR maximum 300 GAPI.** KEOUGH's only values above 300 are in the top 1.5 ft (563 at 0 ft), almost certainly a surface artefact. The 171-curve well does read up to 1,568 API at 3,703–3,705 m. Classified suspicious.
+- **RHOB minimum 1.5 g/cc.** In `30_3-5 S.las`, four samples below 1.5 (minimum 1.332) sit at 4,126.0–4,126.5 m, where the file's own lithology column reads code 90000 (coal in the FORCE 2020 key, as I understand it). The `LFP_COAL` flag in the 171-curve file is zero everywhere, so it gives no evidence either way. Classified suspicious.
+- **PEF maximum 270** matches barite's PEF (about 267), so it reads as deliberate. The minimum of −2 and the resistivity minimum of −0.02 are below what is physically possible, so they look like allowances for tool noise rather than physics. PEF type is still unanswered.
 
 **Scan of the five test wells against his limits (15 Sept, read-only):**
 
@@ -85,15 +99,11 @@ The worksheet asked for "the absolute bound where the number cannot be right, ev
 | DT 40–300 | KEOUGH: 7 below 40 at 5,352–5,355 ft, falling to 0.002 |
 | PEF −2–270 | `30_3-5 S`: 1 above (334.5 at 3,898.5 m) · KEOUGH's PE has no unit in the header |
 | Resistivity −0.02–20,000 | `WLC…F-1B` RT: 40 above (max 97,540) · KEOUGH RILD 442 and RILM 1,394 above, reaching 100,000 |
-| SP −150–50 | `34_10-19`: **6,703 of 13,224 above 50 mV** · KEOUGH: 866 above, 60 below (min −200 at 4.5 ft) |
-
-An absolute SP limit flags half of `34_10-19`, since SP is measured against a shifting baseline. That one may not belong in the library at all.
-
-**Question for him, per curve:** is this limit "impossible — flag it and ask me", or "suspicious — warn me"? Handout: `POLISH_followup_questions.docx`.
+| SP (no limit) | `34_10-19`: 6,703 of 13,224 above 50 mV · KEOUGH: 866 above, 60 below (min −200 at 4.5 ft) — recorded as context; SP is not range-checked |
 
 ### 1.0.2 Follow-up on the rounding rule — measured on 144 wells
 
-From `master_audit_report.csv` (read today):
+From `master_audit_report.csv` (read 15 Sept):
 
 | STOP: header vs last data depth | Wells |
 |---|---|
@@ -106,21 +116,18 @@ From `master_audit_report.csv` (read today):
 
 STRT matched exactly in 143 of 143 computable wells. Example: `15_9-15` declares STOP 3210.0056 m; its last data row is 3209.856 m; the step is 0.152 m — short by 0.98 of a step.
 
-So every mismatch is smaller than one sample interval. In the examples I checked, the header STOP appears to be the true bottom depth and the data ends on the last grid point before it; I did not check the direction for all 114. Whether that counts as "rounding" decides everything:
+The 16 Sept follow-up did not tick either of the two numbered boxes. The written rule is (quote): "Does (stop - start)/(nsam-1) match the sampling interval? Can the difference be attributed to rounding? If so, correct as follows: Consider common sampling intervals (fraction of feet when in feet, fraction of metric when in metric - sometimes sample of feet converted to metric - ie. 0.1524 m which is half fot in meters). Take determined sampling interval and correct depth track."
 
-- **Strict reading** (decimal rounding only): **114 of 144 wells are refused** (79%).
-- **Grid reading** (the last sample falls within one sample interval of the declared STOP, i.e. rounding to the sample grid): **0 of these 144 are refused**, and the output header records the actual last depth.
+That is a matching rule, not a single tolerance number. It is recorded on D12. These 144 wells are all Norwegian (Volve / FORCE 2020). KEOUGH is not in this set.
 
-**Question for him:** which one does he mean? Show him the `15_9-15` example.
-
-These 144 wells are all Norwegian (Volve / FORCE 2020). KEOUGH is not in this set.
+The second half of the question — whether "the processed file's header states the real last depth from the data, and the change is recorded. The original file is never altered" — has both Yes/No boxes blank and the written line "See the previous question". That is not a yes or a no. Needs an explicit yes/no from Alvaro before D12's second half can be closed.
 
 ### 1.0.3 Where his answers conflict with the plan
 
-- **4.2 vs brief §7.1.** The brief says tracks go gamma → resistivity → porosity/density, "do not innovate". His order starts with sonic and density — a well-tie layout, which fits a geophysicist. On petrophysics and workflow, his rows outrank DESIGN rows (the register's own finding). **Recommendation:** his order is the default; the conventional order becomes a saved view.
+- **4.2 vs brief §7.1.** The brief (until the Pre-P05 fix) said tracks go gamma → resistivity → porosity/density, "do not innovate". His order starts with sonic and density — a well-tie layout, which fits a geophysicist. On petrophysics and workflow, his rows outrank DESIGN rows (the register's own finding). **His order is the default** (DTP, DTS, density, porosity, Sw, GR, ILD). Absent default curves: nearest equivalent, labelled clearly. The conventional order becomes a saved view. The ILD substitute list was asked twice and left blank both times.
 - **5.2 vs D61.** D61 (your decision) says status curves go into every export, and brief §11 makes "provenance survives into the exported file" non-negotiable. He wants the marking only when asked. Options: (a) opt-in columns, but every export always carries a sidecar manifest plus header lines naming it, the input hash and counts of created/changed samples; (b) default on, with an opt-out. **Not needed until P28.** Note that a read-only export has nothing filled, so the question doesn't arise before then.
-- **1.2 vs my P12 draft.** I had out-of-limit values excluded automatically and recorded. He wants the user asked. P12 is changed to follow him.
-- **2.3 vs D88.** If "otherwise skip" refuses irregularly sampled wells, it overrides D88 (a REVIEW-tier row) for blank-STEP files. Ask before P09.
+- **1.2 vs my P12 draft.** I had out-of-limit values excluded automatically and recorded. He wants the user asked. "Delete" means internal NaN, −999.25 on export, still visible on screen (marked). P12 follows him.
+- **2.3 vs D88.** Resolved 16 Sept: genuinely uneven depths are accepted as irregular; POLISH does not invent a step; the user is told. Matches D88.
 
 ### Decided by you — vocabulary (OD-04, 15 Sept)
 
@@ -145,8 +152,9 @@ You marked no preference on OD-01, OD-02, OD-08, OD-26 and the branch name. P02 
 |---|---|
 | Licence check on the four fixtures (you) | P02 |
 | P08 ledger-to-block-type mapping | P08 |
-| His 2.2 meaning (1.0.2) and 2.3 meaning | P09 |
-| His limit types (1.0.1) | P12 (P12 can start with definitional rules only) |
+| Explicit yes/no from Alvaro on D12's second half (processed header states the real last depth) | P09 |
+| PEF impossible/suspicious classification (left blank 16 Sept) | P12 |
+| ILD substitute list (asked twice, left blank both times) | P20 |
 
 ### 1.0.5 What Prompt 01 found (15 Sept)
 
@@ -201,9 +209,9 @@ A second-opinion review of this plan agreed with the sequencing and architecture
 | **OD-07** | Toolkit: Tkinter or PySide6 (and which plot layer)? | You | P17 onward | PySide6; run P04 before choosing the plot layer |
 | **OD-08** | Numbering: "ten stages" is eleven; two "Phase" schemes | You | P02 | **No preference stated — recommendation used** |
 | **OD-09** | Legacy Cursor rule files and the always-on Aikido rule | You | P02 | **DECIDED 15 Sept:** archive the legacy rules; **keep Aikido** |
-| **OD-10** | D12 — header/data depth tolerance | Dad | P09 | **ANSWERED — meaning to confirm** (1.0.2) |
-| **OD-11** | D13 — KEOUGH 8 ft discrepancy | Dad | KEOUGH golden assertions over that interval | **ANSWERED:** skip and notify |
-| **OD-12** | D11 / D87 — rule values, split into four rule types | Dad | P12 (non-definitional rules) | **VALUES RECEIVED — types to confirm** (1.0.1) |
+| **OD-10** | D12 — header/data depth tolerance | Dad | P09 | **ANSWERED as a matching rule, not a number** (1.0.2). Second half (processed header states real last depth) unanswered |
+| **OD-11** | D13 — KEOUGH 8 ft discrepancy | Dad | KEOUGH golden assertions over that interval | **ANSWERED:** skip only density 5,326.5–5,334 ft |
+| **OD-12** | D11 / D87 — rule values, split into four rule types | Dad | P12 (non-definitional rules) | **VALUES RECEIVED; types received except PEF blank; SP has no limit** (1.0.1) |
 | **OD-13** | D41 tool groupings; D49 dropout cutoff and ambiguous threshold | Dad | P12, P23, P25 | — |
 | **OD-14** | D42 — interpolation domain per family | Dad | P23, P25 | — |
 | **OD-15** | D51 — metric version of the preferred threshold table | Dad | P23, P25 | — |
@@ -215,7 +223,7 @@ A second-opinion review of this plan agreed with the sequencing and architecture
 | **OD-21** | Per-sample method detail in the LAS: default or opt-in? | You | P28, P29 | Dad: opt-in. **Conflicts with D61** — your call (1.0.3) |
 | **OD-22** | Can a batch decision become a reusable local rule? | You | P13, P15 | **ANSWERED (dad 1.2, 3.2):** yes, as an explicit "all wells" choice |
 | **OD-23** | D15 — licensing: when, and what an invalid licence permits | You | P30 | Not before the read-only milestone |
-| **OD-24** | Obtain CWLS LAS 2.0 document; D67 unverified | You | P08 (hardening), P29 | Get it before P29 |
+| **OD-24** | Obtain CWLS LAS 2.0 document | You | P08 (hardening), P29 | Get it before P29. D67 is now RESOLVED from the 16 Sept follow-up (accept irregular, no invented step) |
 | **OD-25** | Visual design — brief §10 Q1, Q2, Q3, Q8 still open | You / design session | P19, P20, P27 | Don't let Cursor invent the coverage track |
 | **OD-26** | Commit the four real-well fixtures? LFS? | You | P02, P07 | **No preference stated — recommendation used:** LFS after your licence check |
 | **OD-27** | What does a read-only release export? | You | P22 | Report + JSON + **QC images** (dad 4.5) + session file |
