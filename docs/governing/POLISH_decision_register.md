@@ -109,7 +109,7 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 
 | ID | Decision | Source | Status |
 |---|---|---|---|
-| D21 | Three-state trust framework: validated / flagged / unvalidated | AC | REVISE — F4: must be separate from sample status (D38) and curve role (D32); currently conflated in the design brief. **Extended:** "validated" is ambiguous — it could mean curve identification, a range-check result, a user decision, or downstream freshness. Split into named operational fields: `evidence_tier`, `processing_eligibility`, `validation_outcome`, `sample_status`, `issue_disposition`, `dependency_state`. The user-facing three-state summary can remain; the data model may not. |
+| D21 | Three-state trust framework: validated / flagged / unvalidated | AC | REVISE — F4: must be separate from sample status (D44) and curve role (D32); currently conflated in the design brief. **Extended:** "validated" is ambiguous — it could mean curve identification, a range-check result, a user decision, or downstream freshness. Split into named operational fields: `evidence_tier`, `processing_eligibility`, `validation_outcome`, `sample_status`, `issue_disposition`, `dependency_state`. The user-facing three-state summary can remain; the data model may not. |
 | D22 | The unvalidated state must surface in the UI **and** in the audit export | AC | — |
 
 ## 5. Pipeline structure and sequencing
@@ -175,7 +175,7 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | D59 | The output header is **generated from final state**, never inherited and patched. Preserved-verbatim fields are a separate explicit list. | DESIGN | — |
 | D60 | Round-trip invariant: a file POLISH wrote must load in POLISH without triggering a refusal. Second invariant: re-importing a processed file rebuilds an identical mask. | DESIGN | — |
 | D61 | Status curves with a fixed, append-only code table, versioned, written into every export | AC | — |
-| D62 | Original mnemonics preserved in the output; POLISH's family assignment is an annotation | DESIGN | RESOLVED — F16: holds for the forensic and auditable-processed profiles (D85). The interoperability profile may add canonical names as extra curves without altering originals. |
+| D62 | Original mnemonics preserved in the output; POLISH's family assignment is an annotation | DESIGN | RESOLVED — F16: holds for the auditable-processed profile (D85). Original input is never written. The interoperability profile may add canonical names as extra curves without altering originals. |
 | D63 | A SHA-256 of the input file recorded in the processed file, so pairing survives renaming and copying | DESIGN | — |
 | D64 | Two-pass ingest: raw text audit, then tolerant parse, with an **audit ledger** recording every ambiguity. `ignore_header_errors` is never used to suppress silently. | DESIGN | — |
 | D65 | LAS format specifics: only the first character after `~` is significant; section boundary is the last section whose first letter is A; header fields split on **first period** and **last colon**; column count must equal the `~CURVE` count | DESIGN | PARTIAL — corroborated by KGS, geolog4 and lasio documentation, i.e. by independent implementations. **Not verified against CWLS.** One reviewer marked these "supported"; a second disagreed, and the second is right — vendor docs describe what a parser tolerates, not what the format requires. **Amended:** negative `STEP` is valid for descending logs (F14), and the column-count rule must account for `WRAP=YES`, comments and blank lines rather than being a binary parse failure. |
@@ -200,7 +200,7 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | D79 | Disposition gating: every raised item must reach one of four terminal states before export — resolved / accepted / deferred / refused. Export is gated on every item having a disposition, **not** on every item being fixed. Silence is not one of the states. | DESIGN | REVISE — F17: not every finding is dispositionable. There must be **no general "force export anyway"** — under deadline it becomes the button everyone presses, which destroys the differentiator. Findings classify by block type (D86); D8's refusal is then a declared non-overridable constraint rather than a contradiction. |
 | D80 | Staleness is a blocking fifth state: changing an upstream decision marks dependent downstream stages stale rather than leaving them quietly inconsistent | DESIGN | — |
 | D81 | Resolution points are a non-modal queue, never popups; every item has an identical shape (evidence / options / consequence / disposition) in an identical screen position | DESIGN | — |
-| D82 | Batch disposition and keyboard traversal are requirements, not refinements — the stress-test fixture has 171 curves, 147 sharing one prefix | DESIGN | — |
+| D82 | Batch disposition and keyboard traversal are requirements, not refinements — the stress-test fixture has 171 curves, 170 sharing one prefix | DESIGN | — |
 | D83 | Friction proportional to consequence: reversible actions instant and unceremonious; irreversible actions deliberate and confirmed | DESIGN | — |
 | D84 | Progressive disclosure in three optional depths: track (glance) / annotation (read) / record (inspect) | DESIGN | — |
 
@@ -236,8 +236,8 @@ Verified by parsing this document, not estimated.
 | Source | Count |
 |---|---|
 | DESIGN — Claude's proposals, unchallenged | 56 |
-| AC — project owner | 18 |
-| DAD — domain expert | 7 |
+| AC — project owner | 19 |
+| DAD — domain expert | 6 |
 | REVIEW — external review | 4 |
 | REPO — verified in code | 3 |
 
@@ -333,10 +333,10 @@ D67 (`STEP = 0` for irregular intervals) remains fully UNVER — no source
 corroborates it, and D88 now says irregular grids are accepted as irregular
 rather than forced into a convention.
 
-**4. Three questions belong to the domain expert, not to a reviewer** (D9, D11,
-D12, D13). D12 in particular has a measured constraint attached: 83% of 144
-audited wells show sub-sample-interval header drift, so a strict tolerance
-refuses most wells.
+**4. Three questions belong to the domain expert, not to a reviewer** (D11,
+D12, D13). D9 is RESOLVED (interoperability copy rule, D85). D12 in particular
+has a measured constraint attached: 83% of 144 audited wells show
+sub-sample-interval header drift, so a strict tolerance refuses most wells.
 
 ### Where a fresh reviewer is most likely to find something
 
