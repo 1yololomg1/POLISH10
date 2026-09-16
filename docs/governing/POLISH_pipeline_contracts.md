@@ -136,7 +136,7 @@ Known candidates from this codebase:
 
 **The set of unresolved unknowns is the UI.**
 
-The four scattered unit dialogs and the `Toplevel` popups landing all over the screen exist because resolution currently happens ad hoc, wherever a stage happens to need a value. Centralise resolution and you get one coherent "here is what I do not know — tell me" moment, with before/after preview, instead of four independent windows scattered across 13,867 lines.
+The four scattered unit dialogs and the `Toplevel` popups landing all over the screen exist because resolution currently happens ad hoc, wherever a stage happens to need a value. Centralise resolution and you get one coherent "here is what I do not know — tell me" moment, with before/after preview, instead of four independent windows scattered across 14,382 lines.
 
 The UI problem and the correctness problem have the same root and the same fix.
 
@@ -200,26 +200,32 @@ Each one would have thrown on the first well ever processed.
 
 Contract work does not start until the pipeline produces correct output once.
 
-**Phase 0 — repair (do first, in this order)**
+POLISH uses one numbering scheme: **Stages 0–10** (eleven stages; D6, D23). The
+order of remaining work is golden files → contracts → extraction → UI (D27),
+sitting on those stages: Stages 0–4 describe; Stages 5–8 alter; Stages 9–10
+report and export. The retired "Phase 0–4" labels are not used.
+
+**Repair already done on the legacy pipeline** (kept so these items are not
+re-opened under a retired Phase number):
 
 1. Add `limit` to the resample interpolation. **Before** fixing range validation — otherwise output goes from obviously empty to plausibly wrong. **Done** (`c126a62`, `limit_area='inside'`).
 2. Gate the unit conversion. Highest-leverage single change: an already-imperial well left alone keeps DEPT in FT, makes the 0.5 spacing correct, preserves 10720 rows, and lets RHOB pass its own range. Sidesteps C1 and C4 symptoms; does not repair them. **Done as default-off** (`3e0372a`): standardization defaults off at all three definition sites; skip logs units carried forward. Ticking the box still reproduces 3268 rows / empty RHOB.
 3. Unknown mnemonic → skip validation, log warning. Never validate against a fallback range.
 4. Per-curve outlier strategy. GR should not receive blanket IQR.
 
-**Phase 1 — golden files**
+**Golden files (Stages 0–4 assertions)**
 
 Process KEOUGH. Expect 10720 rows (with units off), RHOB populated only over the density-tool interval. Header `BLI1` says 5326 ft; the density tool on this file reads 4250–**5334** ft — resolve the eight-foot discrepancy before freezing the golden file. Capture output as the reference. Add two or three more wells with different unit systems and curve sets.
 
-**Phase 2 — contracts**
+**Contracts (C1–C7, implemented across Stages 0–10)**
 
 Implement C1–C7 and the assertions, validating continuously against the golden files.
 
-**Phase 3 — extraction**
+**Extraction (rebuild as `polish/`, Stages 0–10)**
 
 Move modules to the new shell, diffing every stage against golden files. The modules are portable; the orchestration is what is being rebuilt.
 
-**Phase 4 — toolkit and UI**
+**Toolkit and UI (surface on Stages 0–10)**
 
 Deferred deliberately. What the interface can honestly show depends on what the pipeline can honestly promise. Resolution points (§4) define the dialogs.
 
@@ -229,16 +235,16 @@ C7 constrains this choice. Overlaying ~10720 raw against ~3268 processed points 
 
 ## 9. Open questions
 
-- ~~Are metric wells processed at all? Determines whether the C6 gate is "never convert" or "convert only when source ≠ target."~~ **Partly moot.** `apply_unit_standardization` already guards every conversion with `if current_unit != target_unit:` — that option was always the behaviour and never sufficient. The real fork is: (a) conversion opt-in vs forced (Phase 0 item 2 chose opt-in / default-off), and (b) when conversion *is* on, whether C1 (unit-aware ranges) and C4 (invalidate `depth_spacing` after the depth unit changes) hold. Both remain live for any user who ticks the box. Whether metric wells are processed at all is still open, but it no longer defines the C6 gate wording.
+- ~~Are metric wells processed at all? Determines whether the C6 gate is "never convert" or "convert only when source ≠ target."~~ **Partly moot.** `apply_unit_standardization` already guards every conversion with `if current_unit != target_unit:` — that option was always the behaviour and never sufficient. The real fork is: (a) conversion opt-in vs forced (repair item 2 chose opt-in / default-off), and (b) when conversion *is* on, whether C1 (unit-aware ranges) and C4 (invalidate `depth_spacing` after the depth unit changes) hold. Both remain live for any user who ticks the box. Whether metric wells are processed at all is still open, but it no longer defines the C6 gate wording.
 - What populates the mnemonic database, and how are entries added? C3 makes unrecognised curves visible; something has to resolve them. Known trap: `BULK_DENSITY` lists both `G/CC` and `KG/M3` as valid units but carries a single `'range': [1.0, 3.5]` (`curve_identification.py`).
 - GR minimum drops from 4.03 to **0** across `fill_gaps`. Zero GAPI is not physically achievable. Mechanism unidentified.
 - The environmental-corrections error dialog fires on every run and is being dismissed. Contents unknown.
-- TBHV collapses to 3.1e-05 in scale-aware denoising. Downstream of Phase 0 items 2 and 3 — recheck after, do not chase now.
+- TBHV collapses to 3.1e-05 in scale-aware denoising. Downstream of repair items 2 and 3 — recheck after, do not chase now.
 
 ---
 
 ## 10. What this document does not claim
 
-Every finding in §1 is measured, from instrumented stage-by-stage output on one well. The contracts in §2 are design proposals inferred from those measurements and have not been implemented or tested. The consumer lists and function behaviours are taken from Cursor's reports on the source, not from independent reading of all 13,867 lines.
+Every finding in §1 is measured, from instrumented stage-by-stage output on one well. The contracts in §2 are design proposals inferred from those measurements and have not been implemented or tested. The consumer lists and function behaviours are taken from Cursor's reports on the source, not from independent reading of all 14,382 lines.
 
-One well is one well. Phase 1 exists to widen that.
+One well is one well. Golden-file work exists to widen that.
