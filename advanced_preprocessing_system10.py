@@ -2393,7 +2393,7 @@ class AdvancedPreprocessingApplication(WellLoadingMixin, AppUIMixin):
         # Counted range-validation outcomes (skip / pass / clip / error).
         # Skipping is a logged result, not a silent pass (contract C3).
         self.range_validation_outcomes: List[Dict[str, Any]] = []
-        # Phase 0 item 2 (see POLISH_pipeline_contracts.md sections 6 and 8): unit
+        # Phase 0 item 2 (see docs/governing/POLISH_pipeline_contracts.md sections 6 and 8): unit
         # standardization is OFF by default. Converting on load is what breaks an
         # imperial well. On KEOUGH #12-34 the chain is:
         #   DEPT FT -> M (x0.3048), so 0-5359.5 ft becomes 0-1633.678 m; but
