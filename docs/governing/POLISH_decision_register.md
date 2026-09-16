@@ -85,12 +85,12 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | ID | Decision | Source | Status |
 |---|---|---|---|
 | D7 | TVD resamples along with everything else | DAD | REVISE — F2: conflicts with D32 role taxonomy; TVD is a computed geometric reference, a role the taxonomy lacks. The decision is right; the taxonomy is too narrow. Also F13: linear TVD interpolation is near-exact at normal increments but degrades across large increment changes in high-build-rate sections. |
-| D8 | Wells whose depth data disagrees with declared header `STRT`/`STOP`/`STEP` are refused with a message and skipped | DAD | RESOLVED — F3/F17: the apparent contradiction with disposition gating (**D79**, mis-cited as D63 in revision 1) dissolves under D86. Header/data disagreement is not one condition but several: within tolerance → record and permit; endpoint rounding → flag, allow explicit acceptance; non-monotonic, duplicate or grid-inconsistent depths → structural failure, no override; ambiguous index curve → halt. The expert's refusal stands as a declared non-overridable constraint for the last two. Still OPEN on the tolerance number itself — see D12. |
+| D8 | Wells whose depth data disagrees with declared header `STRT`/`STOP`/`STEP` are refused with a message and skipped | DAD | RESOLVED — F3/F17: the apparent contradiction with disposition gating (**D79**, mis-cited as D63 in revision 1) dissolves under D86. Header/data disagreement is not one condition but several: within tolerance → record and permit; endpoint rounding → flag, allow explicit acceptance; non-monotonic, duplicate or grid-inconsistent depths → structural failure, no override; ambiguous index curve → halt. The expert's refusal stands as a declared non-overridable constraint for the last two. No single tolerance number: the matching rule is in D12. |
 | D9 | Non-standard depth mnemonics handled by **copying** — original retained, standard-named copy added alongside | DAD | RESOLVED — F16: the copy rule generalises as the **interoperability export profile** (D85). It remains the default for depth curves; for log curves it applies only within that profile, additively and on explicit selection. The earlier note cited D54 in error; the relevant row is D62. |
 | D10 | Rename-on-by-default is correct on product grounds | AC | RESOLVED — F16: satisfied by D85's interoperability profile, where standardised names are produced as **additive** curves. Never a silent replacement of a source mnemonic. Both external reviewers reached this independently. |
 | D11 | Physical limits for GR, RHOB, NPHI, DT, PEF, resistivity, SP | DAD | OPEN + REVISE — F15: "physical limit" conflates four rule types (mathematical/domain constraint, hard physical impossibility, plausibility range, data-consistency rule). Only the second justifies marking a value invalid. **The worksheet asks for min/max and must be split.** Where unit or family confidence is low the correct outcome is *not eligible for automatic range validation*, never *invalid*. See D87. |
-| D12 | Refusal tolerance — how far data may drift from header before refusal | DAD | OPEN — measured context: 83% of 144 audited wells were flagged for sub-sample-interval STOP drift. A zero tolerance refuses five wells in six. |
-| D13 | The 8-foot BLI1 discrepancy in KEOUGH — header or data governs? | DAD | OPEN — blocks KEOUGH as a fixture over that interval. |
+| D12 | Refusal tolerance — how far data may drift from header before refusal | DAD | PARTIAL — domain-expert follow-up Q1: no single tolerance number. Compute the implied sampling interval as (STOP − START) / (NSAMPLES − 1), compare it against known standard intervals in both feet and metres (including cross-unit matches, e.g. 0.1524 m = 0.5 ft), and treat the header/data disagreement as rounding only if it matches. Quote: "Does (stop - start)/(nsam-1) match the sampling interval? … 0.1524 m which is half fot in meters". Second half of Q1 ("the processed file's header states the real last depth from the data") is unanswered: both Yes/No boxes are blank and the written line is "See the previous question". Needs an explicit yes/no from Alvaro before that half can be closed. |
+| D13 | The 8-foot BLI1 discrepancy in KEOUGH — header or data governs? | DAD | RESOLVED — domain-expert follow-up Q6: skip only the density readings below 5,326 ft (5,326.5–5,334 ft); the rest of the density curve is unaffected. Quote: "Only the density readings below 5,326 ft (5,326.5 - 5,334 ft)". |
 
 ## 3. Product and commercial decisions
 
@@ -147,7 +147,7 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | ID | Decision | Source | Status |
 |---|---|---|---|
 | D43 | The original is immutable; every change is a sparse overlay keyed to sample index | DESIGN | STRUCT — F1: incompatible with resampling, which changes the index. Resampling must produce a **child dataset**, not an overlay. Naive implementation interpolates the base layer to render it, making the "unmodified original" itself synthesized. **Decide before scaffolding.** |
-| D44 | Sample status values: measured / created / changed / invalid / absent / resampled | DESIGN | — |
+| D44 | Sample status values: measured / created / changed / invalid / absent / resampled | DESIGN | — Follow-up Q4: "delete" of an out-of-limit value means the sample becomes internal NaN, is written as −999.25 on export, stays visible on screen (marked), stays untouched in the original file, and the decision is recorded in the report. Quote: "Delete means mark as \"no value\" visually -999.25". Matches `petrophysics/constants.py` `NULL_VALUES` (`"STANDARD": -999.25`, `"IEEE_NAN": float('nan')`) and commit `dbba867` ("Make NaN the single internal null representation; sentinels only at export"). |
 | D45 | Created (no measurement existed) and changed (a measurement was altered) are different claims and must render differently | AC | — |
 | D46 | Sessions keyed to a SHA-256 of the input file, not to well identity | DESIGN | — |
 | D47 | Session files (decisions only, never values) stored beside the well; preferences (no well information) in app-data | DESIGN | — |
@@ -180,7 +180,7 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | D64 | Two-pass ingest: raw text audit, then tolerant parse, with an **audit ledger** recording every ambiguity. `ignore_header_errors` is never used to suppress silently. | DESIGN | — |
 | D65 | LAS format specifics: only the first character after `~` is significant; section boundary is the last section whose first letter is A; header fields split on **first period** and **last colon**; column count must equal the `~CURVE` count | DESIGN | PARTIAL — corroborated by KGS, geolog4 and lasio documentation, i.e. by independent implementations. **Not verified against CWLS.** One reviewer marked these "supported"; a second disagreed, and the second is right — vendor docs describe what a parser tolerates, not what the format requires. **Amended:** negative `STEP` is valid for descending logs (F14), and the column-count rule must account for `WRAP=YES`, comments and blank lines rather than being a binary parse failure. |
 | D66 | Null handling: match declared NULL with a tolerance not exact equality; never assume a default when NULL is undeclared; scan every column for known null sentinels and flag every undeclared one | DESIGN | PARTIAL + REVISE — F19. `-999.25` is confirmed as common practice but **not** as a spec default, so never-assume stands. Sentinel scanning must remain a **warning heuristic**, never a parser rule that silently converts values — a legitimate measurement can coincide with a sentinel. **Contradiction to resolve:** this row lists `1e30` / `-1.0e+30` as observed sentinels, while a proposed strict mode would flag scientific notation as nonconforming. That rule traces to a KGS page documenting KGS's own software, not the LAS format, and would flag the null column of a large share of real wells. Do not implement it. |
-| D67 | `STEP = 0` when the increment is not constant | DESIGN | UNVER — believed to be LAS convention; enforcement by downstream tools unverified. |
+| D67 | `STEP = 0` when the increment is not constant | DESIGN | RESOLVED — domain-expert follow-up Q3, reading (b): if depths are genuinely uneven, accept as irregularly spaced, do not invent a step, notify the user. Quote: "Accept it as unevenly spaced, don't invent a step, and tell me". Matches D88. |
 | D68 | LAS 2.0 as the target format | DESIGN | PARTIAL — supported: USGS describes LAS 2.0 as the most-used digital well-log distribution format. A v2-targeted product must **detect and report** v3 features rather than parsing them optimistically. |
 | D69 | Companion flag curves are established industry practice (evidenced by `ABDCQF01`–`04` in the Volve fixture) | DESIGN | REVISE — F18: the fixture evidence is direct; the generality is inferred and should be stated as such. |
 
@@ -248,17 +248,17 @@ Verified by parsing this document, not estimated.
 | — not flagged | 55 |
 | REVISE | 14 |
 | NEW | 6 |
-| RESOLVED | 4 |
-| OPEN | 4 |
-| PARTIAL | 3 |
+| RESOLVED | 6 |
+| OPEN | 2 |
+| PARTIAL | 4 |
 | STRUCT | 1 |
-| UNVER | 1 |
+| UNVER | 0 |
 | CONFLICT | 0 |
 
 Counts parsed from the table rows, not tallied by hand. All three CONFLICT rows
-from revision 1 are now RESOLVED, plus D8. The un-flagged count fell from 60 to
-55 as the external round reached rows the internal one had not. D20a is struck
-and excluded from these counts.
+from revision 1 are now RESOLVED, plus D8. D13 and D67 are RESOLVED from the
+domain-expert follow-up (16 Sept). D12 is PARTIAL (rule recorded; second half
+open). D20a is struck and excluded from these counts.
 
 ### Findings
 
@@ -329,14 +329,14 @@ document their own software. The CWLS LAS 2.0 document is still the thing to
 get, and D65–D68 should become an executable conformance-test matrix before any
 of it reaches code.
 
-D67 (`STEP = 0` for irregular intervals) remains fully UNVER — no source
-corroborates it, and D88 now says irregular grids are accepted as irregular
-rather than forced into a convention.
+D67 (genuinely uneven depths) is RESOLVED from the domain-expert follow-up Q3:
+accept as irregular, do not invent a step, notify — matching D88.
 
-**4. Three questions belong to the domain expert, not to a reviewer** (D11,
-D12, D13). D9 is RESOLVED (interoperability copy rule, D85). D12 in particular
-has a measured constraint attached: 83% of 144 audited wells show
-sub-sample-interval header drift, so a strict tolerance refuses most wells.
+**4. Open domain-expert questions remaining after the 16 Sept follow-up:** D11
+(limit types; worksheet min/max still to be split per D87) and D12's second
+half (whether the processed header states the real last depth). D9 and D13 are
+RESOLVED. D12's sampling-interval rule is recorded; it is not a tolerance
+number.
 
 ### Where a fresh reviewer is most likely to find something
 
@@ -351,5 +351,12 @@ sub-sample-interval header drift, so a strict tolerance refuses most wells.
 - **D23–D27** — the ten-stage decomposition is a reasonable seam-placement, not
   a standard. A reviewer with commercial-preprocessor experience may cut it
   differently.
+
+**Open from `POLISH_followup_answers.md` (16 Sept).** Needs explicit yes/no
+confirmation from Alvaro before D12's second half can be closed — both Yes/No
+boxes under "the processed file's header states the real last depth" are blank;
+the written line is "See the previous question". Q5 records "nearest equivalent,
+labelled clearly"; the ILD substitute list was asked twice and left blank both
+times.
 
 *End of register.*
