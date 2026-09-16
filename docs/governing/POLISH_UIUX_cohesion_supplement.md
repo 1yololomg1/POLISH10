@@ -467,8 +467,8 @@ DEP-UX-08	Export review, profile picker, re-import messaging	Profile schema, out
 DEP-UX-09	File audit and refusal screen	LAS parser audit ledger and conformance outcomes	D64–D68	UI must invent confidence about malformed or ambiguous input
 DEP-UX-10	Scope control and stored preferences	Decision persistence and scope policy	D46–D48, D38	A file-specific decision silently becomes a global preference or vice versa
 Part E — Implementation Priority
-Phase 0 — Design only after dependencies are named
-Before detailed mockups, document the state vocabulary and the lineage assumptions. This phase produces no polished interface; it produces a truthful vocabulary.
+Vocabulary (before Stage 0 scaffolding)
+Before detailed mockups, document the state vocabulary and the lineage assumptions. This work produces no polished interface; it produces a truthful vocabulary. POLISH numbering is Stages 0–10 (D6, D23); the retired "Phase 0–3" labels are not used.
 
 Deliverables:
 
@@ -488,7 +488,7 @@ Staleness dependency model.
 
 Why first: Without these, UI mockups will create attractive but false simplifications.
 
-Phase 1 — Read-only trust surface
+Read-only trust surface (Stages 0–4)
 Build the portion of POLISH that provides value without altering data:
 
 Ingest audit ledger.
@@ -513,7 +513,7 @@ This aligns with the register’s suggestion that Stages 0–4 can form a sellab
 
 UI goal: A user can load a difficult LAS file and immediately understand what POLISH found, what it trusts, what it declines to infer, and what needs their attention.
 
-Phase 2 — Consent and state transitions
+Consent and state transitions (Stages 0–4)
 Add:
 
 Explicit mapping decisions.
@@ -530,7 +530,7 @@ Export-readiness summary without writing altered logs.
 
 UI goal: A user can make and revisit recorded decisions without hidden persistence, silent scope expansion, or uncertainty about downstream consequences.
 
-Phase 3 — Data-altering operations
+Data-altering operations (Stages 5–8)
 Only after dataset lineage and state contracts are implemented:
 
 Resampling as child-dataset creation.
