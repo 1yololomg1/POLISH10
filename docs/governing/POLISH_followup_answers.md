@@ -122,6 +122,10 @@ SP: a fixed limit flags half of Well C. Should SP have a limit at all?
 
 No SP limit
 
+### Final SP answer (18 Sept)
+
+The 16 Sept "No SP limit" answer was a reaction to per-sample flagging volume (51% of Well C), not a rejection of the −150/50 mV numbers. Final rule: keep −150/50 mV, but flag at the log level — a log is flagged for review when more than 20% of its samples fall outside that range; individual out-of-range samples don't trigger anything on their own.
+
 Any curve where the limit should depend on something else (units, rock
 type, hole conditions)?
 

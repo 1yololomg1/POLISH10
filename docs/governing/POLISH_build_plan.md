@@ -47,7 +47,7 @@ The worksheet does **not** answer OD-01. Its question 2.1 ("which one wins") is 
 
 | Worksheet | His answer | What it settles | Follow-up needed? |
 |---|---|---|---|
-| 1 Limits (D11, OD-12) | GR 0–300 GAPI · RHOB 1.5–3.5 g/cc · NPHI −0.15–0.6 v/v · DT 40–300 us/ft · PEF −2–270 b/e · resistivity −0.02–20,000 ohm·m. **SP: no limit at all.** Quote: "No SP limit" | Values for the rule library (P12), except SP which is not in the library | Types: see 1.0.1. PEF type left blank. "Any curve where the limit should depend on something else" left blank |
+| 1 Limits (D11, OD-12) | GR 0–300 GAPI · RHOB 1.5–3.5 g/cc · NPHI −0.15–0.6 v/v · DT 40–300 us/ft · PEF −2–270 b/e · resistivity −0.02–20,000 ohm·m. **SP: −150 to 50 mV, flagged at the log level only** — a log is flagged for review when more than 20% of its samples fall outside that range; individual out-of-range samples are not flagged on their own. Supersedes the 16 Sept "No SP limit" answer (see 1.0.1). | Values for the rule library (P12), including SP as a log-level 20% rule | Types: see 1.0.1. PEF type left blank. "Any curve where the limit should depend on something else" left blank |
 | 1.2 Out-of-limit values | Prompt whether to delete the value, for this well only or all wells. Never clip. Quote: "Delete means mark as \"no value\" visually -999.25" | Internal NaN; export sentinel −999.25; value stays visible on screen (marked) and untouched in the original file; decision recorded in the report. Scope *this well* or *all wells* | No |
 | 2.1 Two depth curves (D3) | The first curve in the file | Index = first curve (P09). The second depth curve is kept as-is. | No |
 | 2.2 Depth drift tolerance (D12, OD-10) | Diagnose further: compute implied sampling interval as (STOP − START) / (NSAMPLES − 1), compare against known standard intervals in feet and metres including cross-unit matches (0.1524 m = 0.5 ft), treat as rounding only on a match, then correct the depth track. Quote: "Does (stop - start)/(nsam-1) match the sampling interval? … 0.1524 m which is half fot in meters" | A matching rule, not a single tolerance number (D12) | **Yes** — whether "the processed file's header states the real last depth from the data" (both Yes/No boxes blank; written line "See the previous question"). Needs an explicit yes/no from Alvaro |
@@ -79,7 +79,7 @@ The worksheet asked for "the absolute bound where the number cannot be right, ev
 | DT | 40–300 us/ft | "Impossible" |
 | PEF | −2–270 b/e | *(classification column left blank)* |
 | Resistivity | −0.02–20,000 ohm·m | "Suspicious" |
-| SP | — | **No SP limit at all.** Quote: "No SP limit". The earlier −150–50 mV numbers are superseded; this is not a kept or adjusted limit. |
+| SP | −150 to 50 mV | **Log-level threshold, not per-sample.** A log is flagged for review when more than 20% of its samples fall outside −150–50 mV; individual out-of-range samples do not trigger a flag alone. Supersedes the 16 Sept "No SP limit" answer — the numbers were never rejected, the per-sample flagging behaviour was. Final answer, 18 Sept. |
 
 Impossible: "Leave out of the processed file when values are impossible." Suspicious: "POLISH shows a warning and asks whether to eliminate these points. If yes, then remember this answer for all wells." "Any curve where the limit should depend on something else" was left blank.
 
@@ -99,7 +99,7 @@ Two of the remaining numbers would flag real data:
 | DT 40–300 | KEOUGH: 7 below 40 at 5,352–5,355 ft, falling to 0.002 |
 | PEF −2–270 | `30_3-5 S`: 1 above (334.5 at 3,898.5 m) · KEOUGH's PE has no unit in the header |
 | Resistivity −0.02–20,000 | `WLC…F-1B` RT: 40 above (max 97,540) · KEOUGH RILD 442 and RILM 1,394 above, reaching 100,000 |
-| SP (no limit) | `34_10-19`: 6,703 of 13,224 above 50 mV · KEOUGH: 866 above, 60 below (min −200 at 4.5 ft) — recorded as context; SP is not range-checked |
+| SP −150–50 mV, log-level 20% | `34_10-19`: 6,703 of 13,224 above 50 mV (~51%) — this log flags for review · KEOUGH: 866 above, 60 below (min −200 at 4.5 ft) |
 
 ### 1.0.2 Follow-up on the rounding rule — measured on 144 wells
 
@@ -211,7 +211,7 @@ A second-opinion review of this plan agreed with the sequencing and architecture
 | **OD-09** | Legacy Cursor rule files and the always-on Aikido rule | You | P02 | **DECIDED 15 Sept:** archive the legacy rules; **keep Aikido** |
 | **OD-10** | D12 — header/data depth tolerance | Dad | P09 | **ANSWERED as a matching rule, not a number** (1.0.2). Second half (processed header states real last depth) unanswered |
 | **OD-11** | D13 — KEOUGH 8 ft discrepancy | Dad | KEOUGH golden assertions over that interval | **ANSWERED:** skip only density 5,326.5–5,334 ft |
-| **OD-12** | D11 / D87 — rule values, split into four rule types | Dad | P12 (non-definitional rules) | **VALUES RECEIVED; types received except PEF blank; SP has no limit** (1.0.1) |
+| **OD-12** | D11 / D87 — rule values, split into four rule types | Dad | P12 (non-definitional rules) | **VALUES RECEIVED; types received except PEF blank; SP settled 18 Sept as −150/50 mV at log-level 20%** (1.0.1) |
 | **OD-13** | D41 tool groupings; D49 dropout cutoff and ambiguous threshold | Dad | P12, P23, P25 | — |
 | **OD-14** | D42 — interpolation domain per family | Dad | P23, P25 | — |
 | **OD-15** | D51 — metric version of the preferred threshold table | Dad | P23, P25 | — |
