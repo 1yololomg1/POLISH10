@@ -1,6 +1,9 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# tests/archive/ holds frozen-app tests that import advanced_preprocessing_system10.
+# testpaths still recurses into subfolders, so ignore the archive explicitly.
+addopts = ["--ignore=tests/archive"]
 
 [tool.ruff]
 target-version = "py311"
