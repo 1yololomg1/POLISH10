@@ -89,7 +89,7 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | D9 | Non-standard depth mnemonics handled by **copying** — original retained, standard-named copy added alongside | DAD | RESOLVED — F16: the copy rule generalises as the **interoperability export profile** (D85). It remains the default for depth curves; for log curves it applies only within that profile, additively and on explicit selection. The earlier note cited D54 in error; the relevant row is D62. |
 | D10 | Rename-on-by-default is correct on product grounds | AC | RESOLVED — F16: satisfied by D85's interoperability profile, where standardised names are produced as **additive** curves. Never a silent replacement of a source mnemonic. Both external reviewers reached this independently. |
 | D11 | Physical limits for GR, RHOB, NPHI, DT, PEF, resistivity, SP | DAD | OPEN + REVISE — F15: "physical limit" conflates four rule types (mathematical/domain constraint, hard physical impossibility, plausibility range, data-consistency rule). Only the second justifies marking a value invalid. **The worksheet asks for min/max and must be split.** Where unit or family confidence is low the correct outcome is *not eligible for automatic range validation*, never *invalid*. See D87. **SP resolved 18 Sept — see 1.0.1: −150/50 mV kept, log-level 20%-of-samples threshold, not per-sample.** |
-| D12 | Refusal tolerance — how far data may drift from header before refusal | DAD | PARTIAL — domain-expert follow-up Q1: no single tolerance number. Compute the implied sampling interval as (STOP − START) / (NSAMPLES − 1), compare it against known standard intervals in both feet and metres (including cross-unit matches, e.g. 0.1524 m = 0.5 ft), and treat the header/data disagreement as rounding only if it matches. Quote: "Does (stop - start)/(nsam-1) match the sampling interval? … 0.1524 m which is half fot in meters". Second half of Q1 ("the processed file's header states the real last depth from the data") is unanswered: both Yes/No boxes are blank and the written line is "See the previous question". Needs an explicit yes/no from Alvaro before that half can be closed. |
+| D12 | Refusal tolerance — how far data may drift from header before refusal | DAD | RESOLVED — CLOSED 23 Sept (owner). Part One (detection) unchanged: implied interval (STOP − START) / (NSAMPLES − 1) compared to known standard intervals in feet and metres (including 0.1524 m = 0.5 ft); treat as rounding only on a match. Part Two (header STOP): both verification boxes true. **DECISION: YES.** If a well's depth grid is corrected via step-step calculation, the exported STOP depth in the final output file header MUST be rewritten to reflect the newly calculated true depth (STRT + (n-1) * S_corrected). Original file is never altered. Eligibility to apply that correction is D89 and does not change this rule. |
 | D13 | The 8-foot BLI1 discrepancy in KEOUGH — header or data governs? | DAD | RESOLVED — domain-expert follow-up Q6: skip only the density readings below 5,326 ft (5,326.5–5,334 ft); the rest of the density curve is unaffected. Quote: "Only the density readings below 5,326 ft (5,326.5 - 5,334 ft)". |
 
 ## 3. Product and commercial decisions
@@ -172,7 +172,7 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 
 | ID | Decision | Source | Status |
 |---|---|---|---|
-| D59 | The output header is **generated from final state**, never inherited and patched. Preserved-verbatim fields are a separate explicit list. | DESIGN | — |
+| D59 | The output header is **generated from final state**, never inherited and patched. Preserved-verbatim fields are a separate explicit list. | DESIGN | — Addendum 19 Sept (owner): a field's status (generated-from-final-state vs. preserved-verbatim) changes only through its own explicit, recorded decision — never by default, and never for implementation convenience. D12 is the procedural precedent: a header field changes because a specific question was asked and answered, not because regenerating was easier than preserving. D12 Part Two is RESOLVED 23 Sept: processed STOP is rewritten to STRT+(n−1)×S_corrected when the well is corrected. |
 | D60 | Round-trip invariant: a file POLISH wrote must load in POLISH without triggering a refusal. Second invariant: re-importing a processed file rebuilds an identical mask. | DESIGN | — |
 | D61 | Status curves with a fixed, append-only code table, versioned, written into every export | AC | — |
 | D62 | Original mnemonics preserved in the output; POLISH's family assignment is an annotation | DESIGN | RESOLVED — F16: holds for the auditable-processed profile (D85). Original input is never written. The interoperability profile may add canonical names as extra curves without altering originals. |
@@ -213,7 +213,13 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | D87 | **Versioned validation-rule library**, not thresholds embedded in application logic. Each rule carries: curve family · accepted and canonical units · rule type (domain constraint / hard impossibility / plausibility / consistency) · bound values · environmental qualifiers · source · source tier · library version · whether violation means invalid, warning or refusal · whether it is overridable and how the override is recorded. | REVIEW | NEW — makes D11 implementable and prevents a repeat of the GAPI-bounds-on-CPS-curves bug. |
 | D88 | **The depth axis may ascend or descend.** Negative `STEP` is valid and normal. Monotonicity is tested in either direction; ordering is recorded, never silently reversed. Descending and irregular-but-monotonic grids are both accepted as-is — POLISH does not pretend an irregular grid is regular. | REVIEW | NEW — F14. Closes an assumption that ran through D3, D65 and Stage 1 unnoticed. |
 
-*(Register ends at D88. See the Count section below for verified tallies. The
+## 12. Added 23 September (domain expert)
+
+| ID | Decision | Source | Status |
+|---|---|---|---|
+| D89 | A well is corrected to the standard step only if max bottom displacement \|original last depth − (STRT + (n−1)×S)\| ≤ 0.5 × S; otherwise the correction is invalidated, the well is left verbatim, and the end user is notified ("bad well"). | DAD | NEW — Alvaro Sr. 23 Sept, eligibility. Does **not** modify D12. D12 Part Two still governs wells that pass. |
+
+*(Register ends at D89. See the Count section below for verified tallies. The
 "44 decisions" figure in the four-pass review was an estimate stated as a count
 and is wrong.)*
 
@@ -225,7 +231,7 @@ Verified by parsing this document, not estimated.
 
 | | Count |
 |---|---|
-| **Total register entries** | **88** (D1–D88, continuous, plus struck D20a) |
+| **Total register entries** | **89** (D1–D89, continuous, plus struck D20a) |
 | Decisions made during the project week | 82 |
 | Added by the internal four-pass review | 2 (D41, D42) |
 | Added by external review | 4 (D85–D88) |
@@ -237,7 +243,7 @@ Verified by parsing this document, not estimated.
 |---|---|
 | DESIGN — Claude's proposals, unchallenged | 56 |
 | AC — project owner | 19 |
-| DAD — domain expert | 6 |
+| DAD — domain expert | 7 |
 | REVIEW — external review | 4 |
 | REPO — verified in code | 3 |
 
@@ -247,18 +253,18 @@ Verified by parsing this document, not estimated.
 |---|---|
 | — not flagged | 55 |
 | REVISE | 14 |
-| NEW | 6 |
-| RESOLVED | 6 |
+| NEW | 7 |
+| RESOLVED | 7 |
 | OPEN | 2 |
-| PARTIAL | 4 |
+| PARTIAL | 3 |
 | STRUCT | 1 |
 | UNVER | 0 |
 | CONFLICT | 0 |
 
 Counts parsed from the table rows, not tallied by hand. All three CONFLICT rows
-from revision 1 are now RESOLVED, plus D8. D13 and D67 are RESOLVED from the
-domain-expert follow-up (16 Sept). D12 is PARTIAL (rule recorded; second half
-open). D20a is struck and excluded from these counts.
+from revision 1 are now RESOLVED, plus D8. D12 Part Two is RESOLVED (CLOSED 23 Sept).
+D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW.
+D20a is struck and excluded from these counts.
 
 ### Findings
 
@@ -332,7 +338,7 @@ of it reaches code.
 D67 (genuinely uneven depths) is RESOLVED from the domain-expert follow-up Q3:
 accept as irregular, do not invent a step, notify — matching D88.
 
-**4. Open domain-expert questions remaining after the 18 Sept follow-up:** D11 (limit types for GR/PEF/DT/NPHI/resistivity; worksheet min/max still to be split per D87 — SP is now settled, see 1.0.1) and D12's second half (whether the processed header states the real last depth). D9, D13, and SP under D11 are RESOLVED. D12's sampling-interval rule is recorded; it is not a tolerance number.
+**4. Open domain-expert questions remaining after the 23 Sept follow-up:** D11 (limit types for GR/PEF/DT/NPHI/resistivity; worksheet min/max still to be split per D87 — SP is now settled, see 1.0.1). D9, D12, D13, and SP under D11 are RESOLVED. D12 Part Two: processed STOP is rewritten to STRT+(n−1)×S_corrected when the well is corrected. D89 is the eligibility gate for that correction.
 
 ### Where a fresh reviewer is most likely to find something
 
@@ -348,11 +354,6 @@ accept as irregular, do not invent a step, notify — matching D88.
   a standard. A reviewer with commercial-preprocessor experience may cut it
   differently.
 
-**Open from `POLISH_followup_answers.md` (16 Sept).** Needs explicit yes/no
-confirmation from Alvaro before D12's second half can be closed — both Yes/No
-boxes under "the processed file's header states the real last depth" are blank;
-the written line is "See the previous question". Q5 records "nearest equivalent,
-labelled clearly"; the ILD substitute list was asked twice and left blank both
-times.
+**Open from `POLISH_followup_answers.md` (16 Sept, Part Two closed 23 Sept).** D12 Part Two is RESOLVED: Yes — processed STOP is rewritten to STRT+(n−1)×S_corrected when the well is corrected. Q5 records "nearest equivalent, labelled clearly"; the ILD substitute list was asked twice and left blank both times.
 
 *End of register.*

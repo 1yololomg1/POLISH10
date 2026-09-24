@@ -12,4 +12,4 @@ Suggested by the external review (15 Sept) and adopted. Every line must be true 
 - [x] Aikido decision made (OD-09): keep it
 - [x] P03 reconciliation reviewed with Claude
 - [x] **Document fixes committed:** brief §3 (competitor claim), §4.1 (overlay vs D43), §4.2 (unit conversion is not "changed"; no "refused" sample state), §4.8 (D86 block types, no override for structural or conformance blocks), §5 ("Stages 0–10"), §7.1 (domain expert's track order); register: D21 citation, source tally, reviewer-notes count, "147" in D82, D62 "forensic"; contracts: "Stages 0–10", Phase numbering retired
-- [ ] Needs explicit yes/no confirmation from Alvaro before D12's second half can be closed.
+- [x] Needs explicit yes/no confirmation from Alvaro before D12's second half can be closed. **Resolved 23 Sept: YES — processed STOP is rewritten to STRT+(n−1)×S_corrected when the well is corrected (D12 Part Two).**

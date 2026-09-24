@@ -69,10 +69,14 @@ determined sampling interval and correct depth track.
 real last depth from the data, and the change is recorded. The original
 file is never altered. Is that right?
 
-[ ] Yes
+[x] Yes
 [ ] No — explain:
 
 See the previous question
+
+### Final Part Two answer (23 Sept)
+
+DECISION: YES. If a well's depth grid is corrected via step-step calculation, the exported STOP depth in the final output file header MUST be rewritten to reflect the newly calculated true depth (STRT + (n-1) * S_corrected). The original file is never altered.
 
 2. Your limits — impossible, or just suspicious?
 
