@@ -6,7 +6,7 @@ Suggested by the external review (15 Sept) and adopted. Every line must be true 
 - [x] Clean test baseline recorded (P01: 56 passed, ruff clean)
 - [x] **Precedence rule explicitly approved by you** (OD-01)
 - [x] **UXC adoption explicitly approved by you** (OD-02)
-- [ ] Backup made of the four untracked fixtures and the governing documents, outside the repo, before P02 moves anything
+- [x] Backup made of the four untracked fixtures and the governing documents, outside the repo, before P02 moves anything. **Copied 24 Sept 2026** to `C:\porfolio\POLISH10_backup_2026-09-24` (`docs/governing/` and the four wells: `34_10-19.las`, `30_3-5 S.las`, `159-19A_LFP.las`, `WLC_PETRO_COMPUTED_INPUT_1_15_9-F-1B.las`). SHA-256 matched.
 - [x] Fixture licences checked; fixtures committed with LFS (P02). FORCE 2020 wells (`34/10-19`, `30/3-5S`) are clear under NLOD 2.0 / CC-BY-4.0. The two Volve wells' commercial-use status is unresolved.
 - [x] Legacy agent rules archived; only `polish-rebuild.mdc` and `aikido_rules.mdc` active (P02)
 - [x] Aikido decision made (OD-09): keep it

@@ -12,6 +12,8 @@
 
 `POLISH_build_plan.md` governs open decisions OD-nn, Cursor prompts Pnn, and the recorded answers in section 1.0 (owner and domain expert). It is the rebuild sequence, not a second set of scientific invariants.
 
+`state_glossary.md` records the OD-04 state schema in words: one table per enum, the UXC2 and UXC9 wording where those tables give it, and the block-type/action matrix. It does not add values or export rules beyond Appendix A.
+
 ## Precedence
 
 Contracts C1–C7 are the core invariants. Where a decision-register row (revision 2 or later) revises older text, the register row wins. The domain expert's answers (POLISH_build_plan.md section 1.0) outrank DESIGN-tier rows on petrophysics and workflow. Owner decisions recorded in POLISH_build_plan.md section 1.0 apply. The design brief governs interface intent where the register is silent. Any conflict not covered: stop and ask.
