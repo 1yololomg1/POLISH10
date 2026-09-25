@@ -1,3 +1,12 @@
+[project]
+name = "polish"
+version = "0.0.0"
+description = "Isolated desktop preprocessor for petrophysical well logs."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.20.0",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
