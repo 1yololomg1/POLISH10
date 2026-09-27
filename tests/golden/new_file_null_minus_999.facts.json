@@ -1,0 +1,66 @@
+{
+  "fixture": "new_file_null_minus_999.las",
+  "sha256": "7452e80939da545c9224de5aeefd45ff9593656187f2a506e70ca18e8852bc6d",
+  "vers": {
+    "text": "2.0"
+  },
+  "wrap": {
+    "text": "NO",
+    "wrapped": false
+  },
+  "null": {
+    "text": "-999",
+    "number": -999.0
+  },
+  "strt": {
+    "text": "1000.0",
+    "unit": "FT",
+    "number": 1000.0
+  },
+  "stop": {
+    "text": "1000.5",
+    "unit": "FT",
+    "number": 1000.5
+  },
+  "step": {
+    "text": "0.5",
+    "unit": "FT",
+    "number": 0.5
+  },
+  "null_comparison": {
+    "rel_tol": 1e-06,
+    "abs_tol": 0.0,
+    "rule": "math.isclose(value, null, rel_tol=1e-6, abs_tol=0.0)"
+  },
+  "depth_channel": {
+    "curve_index": 0,
+    "meaning": "LAS index channel, the first curve in the curve section"
+  },
+  "depth_step_count": 2,
+  "curves": [
+    {
+      "index": 0,
+      "mnemonic": "DEPT",
+      "unit": "FT",
+      "description": " DEPTH",
+      "line": "DEPT.FT                            : DEPTH",
+      "null_count": 0,
+      "first_non_null_depth": 1000.0,
+      "last_non_null_depth": 1000.5,
+      "min_non_null": 1000.0,
+      "max_non_null": 1000.5
+    },
+    {
+      "index": 1,
+      "mnemonic": "GR",
+      "unit": "GAPI",
+      "description": " GAMMA RAY",
+      "line": "GR  .GAPI                          : GAMMA RAY",
+      "null_count": 0,
+      "first_non_null_depth": 1000.0,
+      "last_non_null_depth": 1000.5,
+      "min_non_null": 80.0,
+      "max_non_null": 90.0
+    }
+  ]
+}
