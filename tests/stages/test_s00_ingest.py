@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from polish.model.states import BlockType, StageStatus
-from polish.stages.s00_ingest import CONTRACT, ingest
+from polish.stages.s00_ingest import CONTRACT, UnclassifiedIngest, ingest
 
 _REPO = Path(__file__).resolve().parents[2]
 _FIXTURES = _REPO / "tests" / "fixtures"
@@ -84,6 +84,7 @@ def test_stage_contract_is_read_only_and_has_no_dependencies():
     assert CONTRACT.stage_number == 0
     assert CONTRACT.alters_data is False
     assert CONTRACT.depends_on_stages == ()
+    assert any("not strictly monotonic" in line for line in CONTRACT.declines_when)
 
 
 @pytest.mark.parametrize("evidence", ["PARTIAL-D65-first-char-after-tilde"])
@@ -110,6 +111,8 @@ def test_partial_d65_data_section_is_the_last_section_whose_letter_is_a(tmp_path
     body = _las(data="0.0 1.0\n1.0 2.0\n~PARAMETER INFORMATION\nX. 1 : Y\n")
     result = _read(_write(tmp_path, body))
     assert result.audit.ascii_is_last is False
+    # ~A not last is now an informational ledger entry. The dataset is still built.
+    assert any("not the last section" in message for message in _messages(result, BlockType.INFORMATIONAL))
     assert result.dataset is not None
     assert result.dataset.grid.values.size == 2
     assert result.audit.depth_step_count == 2
@@ -180,6 +183,8 @@ def test_partial_d65_negative_step_is_kept(tmp_path: Path, evidence: str):
     result = _read(_write(tmp_path, body))
     assert result.dataset is not None
     assert result.dataset.grid.declared_step == -1.0
+    # Stage 0 no longer classifies regularity. None means not yet classified.
+    assert result.dataset.grid.regularity is None
     assert result.dataset.grid.direction.value == "DESCENDING"
     assert result.dataset.grid.values.tolist() == [2.0, 1.0]
     assert BlockType.STRUCTURAL_DATA_FAILURE not in _blocks(result)
@@ -328,6 +333,8 @@ def test_ascii_section_with_no_data_rows_is_structural(tmp_path: Path):
     result = _read(_write(tmp_path, body))
     assert result.dataset is None
     assert any("no data rows" in message for message in _messages(result, BlockType.STRUCTURAL_DATA_FAILURE))
+    assert any("no adjacent pair" in message for message in _messages(result, BlockType.STRUCTURAL_DATA_FAILURE))
+    assert result.status is StageStatus.REFUSED_STRUCTURAL
 
 
 def test_duplicate_mnemonics_keep_two_curve_refs(tmp_path: Path):
@@ -420,6 +427,8 @@ def test_fixture_headline_facts_match_the_golden_file(path: Path):
     assert result.audit.stop_number == pytest.approx(facts["stop"]["number"])
     assert result.audit.step_number == pytest.approx(facts["step"]["number"])
     assert result.dataset.grid.declared_step == pytest.approx(facts["step"]["number"])
+    # Stage 0 no longer classifies regularity.
+    assert result.dataset.grid.regularity is None
     structural = _messages(result, BlockType.STRUCTURAL_DATA_FAILURE)
     assert structural == []
     for curve, golden in zip(result.dataset.curves, facts["curves"], strict=True):
@@ -447,4 +456,176 @@ def test_cli_ingest_json_writes_no_file(tmp_path: Path):
     assert payload["dataset"]["row_count"] == 2
     assert payload["null"]["number"] == -999.25
     assert payload["status"] == "COMPLETE"
+    assert payload["dataset"]["regularity"] is None
+    assert payload["dataset"]["declared_step"] == 1.0
+    assert payload["duplicate_sections"] == []
+    assert payload["absent_sections"] == []
+    assert payload["preamble_lines"] == []
+    assert payload["repeated_well_mnemonics"] == []
+    assert payload["repeated_version_mnemonics"] == []
     assert "ledger" in payload
+
+
+def test_non_monotonic_depth_is_a_structural_refusal(tmp_path: Path):
+    body = _las(data="0.0 1\n2.0 1\n1.0 1\n")
+    result = _read(_write(tmp_path, body))
+    assert result.dataset is None
+    assert result.status is StageStatus.REFUSED_STRUCTURAL
+    messages = _messages(result, BlockType.STRUCTURAL_DATA_FAILURE)
+    assert any("Non-monotonic depth at indexes 1 and 2" in message and "2.0" in message and "1.0" in message for message in messages)
+
+
+def test_duplicate_depth_is_a_structural_refusal(tmp_path: Path):
+    body = _las(data="0.0 1\n1.0 1\n1.0 2\n")
+    result = _read(_write(tmp_path, body))
+    assert result.dataset is None
+    assert result.status is StageStatus.REFUSED_STRUCTURAL
+    messages = _messages(result, BlockType.STRUCTURAL_DATA_FAILURE)
+    assert any("Duplicate depth at indexes 1 and 2" in message and "1.0" in message for message in messages)
+
+
+def test_one_depth_row_is_a_structural_refusal(tmp_path: Path):
+    body = _las(data="0.0 1.0\n")
+    result = _read(_write(tmp_path, body))
+    assert result.dataset is None
+    assert result.status is StageStatus.REFUSED_STRUCTURAL
+    messages = _messages(result, BlockType.STRUCTURAL_DATA_FAILURE)
+    assert any("index 0" in message and "0.0" in message and "no adjacent pair" in message for message in messages)
+
+
+def test_blank_step_builds_a_dataset_without_a_step_finding(tmp_path: Path):
+    body = _las(step="", data="0.0 1.0\n1.0 2.0\n")
+    result = _read(_write(tmp_path, body))
+    assert result.dataset is not None
+    assert result.status is StageStatus.COMPLETE
+    assert result.audit.step_number is None
+    assert result.audit.step_text == ""
+    assert result.dataset.grid.declared_step is None
+    assert result.dataset.grid.regularity is None
+    assert not any("STEP" in message for message in _messages(result, BlockType.STRUCTURAL_DATA_FAILURE))
+    assert not any("STEP is" in message for message in (finding.message for finding in result.findings))
+
+
+def test_non_numeric_step_builds_a_dataset_and_keeps_the_header_text(tmp_path: Path):
+    body = _las(step="N/A", data="0.0 1.0\n1.0 2.0\n")
+    result = _read(_write(tmp_path, body))
+    assert result.dataset is not None
+    assert result.audit.step_text == "N/A"
+    assert result.audit.step_number is None
+    assert result.dataset.grid.declared_step is None
+    assert result.status is StageStatus.COMPLETE
+
+
+def test_repeated_null_uses_the_first_value(tmp_path: Path):
+    body = _las(null="-999.25", well_extra="NULL. -999 : SECOND\n", data="0.0 -999.25\n1.0 -999\n")
+    result = _read(_write(tmp_path, body))
+    assert result.dataset is not None
+    assert result.audit.repeated_well_mnemonics == ("NULL",)
+    assert math.isnan(result.dataset.curves[1].values[0])
+    assert result.dataset.curves[1].values[1] == -999.0
+    messages = _messages(result, BlockType.AMBIGUOUS_INTERPRETATION)
+    assert any("NULL is repeated" in message and "-999.25" in message and "first value" in message for message in messages)
+
+
+def test_repeated_vers_and_wrap_are_stored_and_the_first_is_used(tmp_path: Path):
+    body = _las().replace(
+        "WRAP. NO : WRAP\n",
+        "WRAP. NO : WRAP\nVERS. 1.2 : SECOND\nWRAP. YES : SECOND\n",
+        1,
+    )
+    result = _read(_write(tmp_path, body))
+    assert result.dataset is not None
+    assert result.audit.vers_text == "2.0"
+    assert result.audit.wrap_text == "NO"
+    assert result.audit.wrapped is False
+    assert result.audit.repeated_version_mnemonics == ("VERS", "WRAP")
+    messages = _messages(result, BlockType.AMBIGUOUS_INTERPRETATION)
+    assert any("VERS is repeated" in message and "2.0" in message for message in messages)
+    assert any("WRAP is repeated" in message and "NO" in message for message in messages)
+
+
+def test_non_finite_null_converts_nothing(tmp_path: Path):
+    body = _las(null="N/A", data="0.0 1.0\n1.0 2.0\n")
+    result = _read(_write(tmp_path, body))
+    assert result.dataset is not None
+    assert result.audit.null_text == "N/A"
+    assert result.audit.null_number is None
+    assert result.dataset.curves[1].values.tolist() == [1.0, 2.0]
+    messages = _messages(result, BlockType.AMBIGUOUS_INTERPRETATION)
+    assert any("not a finite number" in message and "N/A" in message for message in messages)
+
+
+def test_duplicate_section_absent_section_and_preamble_are_informational(tmp_path: Path):
+    duplicate = (
+        "~V\nVERS. 2.0 : CWLS\nWRAP. NO : WRAP\n"
+        "~W\nSTRT.M 0 : S\nSTOP.M 1 : S\nSTEP.M 1 : S\nNULL. -999.25 : N\n"
+        "~W\nSTRT.M 9 : LATER\n"
+        "~C\nDEPT.M : D\nGR.GAPI : G\n"
+        "~A\n0 1\n1 2\n"
+    )
+    result = _read(_write(tmp_path, duplicate, name="dup.las"))
+    assert result.dataset is not None
+    assert "W" in result.audit.duplicate_section_letters
+    assert result.audit.strt_number == 0.0
+    assert any("Section ~W appears 2 times" in message for message in _messages(result, BlockType.INFORMATIONAL))
+    assert any("STRT is repeated" in message and "0" in message for message in _messages(result, BlockType.AMBIGUOUS_INTERPRETATION))
+
+    preamble = "before any section\n" + _las()
+    preamble_result = _read(_write(tmp_path, preamble, name="preamble.las"))
+    assert preamble_result.audit.preamble_lines == (1,)
+    assert any("before the first section" in message for message in _messages(preamble_result, BlockType.INFORMATIONAL))
+
+    missing_curve = (
+        "~V\nVERS. 2.0 : CWLS\nWRAP. NO : WRAP\n"
+        "~W\nSTRT.M 0 : S\nSTOP.M 1 : S\nSTEP.M 1 : S\nNULL. -999.25 : N\n"
+        "~A\n0 1\n1 2\n"
+    )
+    missing = _read(_write(tmp_path, missing_curve, name="noc.las"))
+    assert "C" in missing.audit.absent_section_letters
+    assert any("Section ~C is absent." in message for message in _messages(missing, BlockType.INFORMATIONAL))
+
+    missing_version = (
+        "preface\n"
+        "~W\nSTRT.M 0 : S\nSTOP.M 1 : S\nSTEP.M 1 : S\nNULL. -999.25 : N\n"
+        "~C\nDEPT.M : D\nGR.GAPI : G\n"
+        "~A\n0 1\n1 2\n"
+    )
+    path = _write(tmp_path, missing_version, name="nov.las")
+    with pytest.raises(UnclassifiedIngest) as caught:
+        _read(path)
+    partial = caught.value.partial
+    assert partial.status is StageStatus.BLOCKED
+    assert partial.dataset is None
+    assert any("Section ~V is absent." in message for message in _messages(partial, BlockType.INFORMATIONAL))
+    assert any("VERS is not declared" in message for message in _messages(partial, BlockType.INFORMATIONAL))
+
+
+def test_unclassified_halt_is_blocked_and_chooses_no_block_type(tmp_path: Path):
+    # WRAP is neither YES nor NO. That condition has no approved block type.
+    body = _las(wrap="MAYBE", data="0.0 1.0\n1.0 2.0\n")
+    path = _write(tmp_path, body)
+    with pytest.raises(UnclassifiedIngest) as caught:
+        _read(path)
+    partial = caught.value.partial
+    assert partial.status is StageStatus.BLOCKED
+    assert partial.dataset is None
+    assert BlockType.STRUCTURAL_DATA_FAILURE not in _blocks(partial)
+    completed = subprocess.run(
+        [sys.executable, "-m", "polish", "ingest", str(path), "--json"],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    payload = json.loads(completed.stdout)
+    assert payload["status"] == "BLOCKED"
+    assert payload["dataset"] is None
+
+
+def test_declared_version_two_is_recorded_as_parsed_like_las_2(tmp_path: Path):
+    result = _read(_write(tmp_path, _las()))
+    messages = _messages(result, BlockType.INFORMATIONAL)
+    assert any("not major version 3" in message and "parsed as LAS 2.0" in message for message in messages)
+    assert result.status is StageStatus.COMPLETE
+    assert result.dataset is not None

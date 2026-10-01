@@ -11,7 +11,8 @@ SourceFile
 Curve
     Verbatim mnemonic, unit, and description, plus a read-only float64 array.
 DepthGrid
-    Read-only depths, a stated direction and regularity, and the declared step.
+    Read-only depths, a required direction, an optional regularity, and an
+    optional declared step.
 LineageRecord
     The recorded parent link for a child dataset.
 Dataset
@@ -20,6 +21,7 @@ Dataset
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -42,7 +44,9 @@ class DepthRegularity(Enum):
 
     The value is the caller's classification. Comparing it to the samples
     would need a tolerance, and no tolerance is approved, so this module
-    does not recompute it.
+    does not recompute it. A grid may carry None instead of either value.
+    None means the regularity has not been classified yet. It is not a
+    third enum value.
     """
 
     REGULAR = "REGULAR"
@@ -147,25 +151,33 @@ class Curve:
 class DepthGrid:
     """Depth samples for one dataset. D3, D88, D67.
 
-    Direction is checked by strict pairwise comparison, which needs no
-    tolerance. Regularity is stored as given. ``declared_step`` is the header
-    step the caller supplies, including a negative step or zero. It is not
+    Direction is required. It is checked by strict pairwise comparison, which
+    needs no tolerance. ``regularity`` is stored as given. None means it has
+    not been classified; Stage 1 owns that classification. ``declared_step``
+    is the header step the caller supplies, including a negative step or zero.
+    None means the header did not state a finite step. The step is not
     recomputed from the samples.
     """
 
     values: numpy.ndarray
     direction: DepthDirection
-    regularity: DepthRegularity
-    declared_step: float
+    regularity: DepthRegularity | None
+    declared_step: float | None
     unit: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.direction, DepthDirection):
             raise TypeError("direction must be a DepthDirection")
-        if not isinstance(self.regularity, DepthRegularity):
-            raise TypeError("regularity must be a DepthRegularity")
-        if type(self.declared_step) is bool or not isinstance(self.declared_step, (int, float)):
-            raise TypeError("declared_step must be a real number")
+        if self.regularity is not None and not isinstance(self.regularity, DepthRegularity):
+            raise TypeError("regularity must be a DepthRegularity or None")
+        if self.declared_step is None:
+            step = None
+        elif type(self.declared_step) is bool or not isinstance(self.declared_step, (int, float)):
+            raise TypeError("declared_step must be a real number or None")
+        else:
+            step = float(self.declared_step)
+            if not math.isfinite(step):
+                raise TypeError("declared_step must be a finite real number or None")
         unit = _require_str(self.unit, "unit")
         owned = _as_readonly_float64(self.values, "Depth grid")
         if owned.size < 2:
@@ -175,7 +187,8 @@ class DepthGrid:
             raise ValueError("ASCENDING depth grid is not strictly increasing.")
         if self.direction is DepthDirection.DESCENDING and not bool(numpy.all(diffs < 0)):
             raise ValueError("DESCENDING depth grid is not strictly decreasing.")
-        object.__setattr__(self, "declared_step", float(self.declared_step))
+        object.__setattr__(self, "regularity", self.regularity)
+        object.__setattr__(self, "declared_step", step)
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "values", owned)
 

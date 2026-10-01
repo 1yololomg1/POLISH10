@@ -16,8 +16,9 @@ CONTRACT
 ingest
     Read one file. Returns an IngestResult.
 TextAudit
-    Facts pass 1 recorded that are not findings: encoding, line endings,
-    sections, VERS, WRAP, well header numbers, curve text, duplicate mnemonics.
+    Pass-1 facts, including ones that are also findings: encoding, line
+    endings, sections, VERS, WRAP, well header numbers, curve text, duplicate
+    mnemonics, repeated VERS and WRAP.
 IngestResult
     Source file, dataset or none, findings, audit, and null sample indexes.
 UnclassifiedIngest
@@ -36,6 +37,15 @@ no ~A section or no data rows → STRUCTURAL_DATA_FAILURE
 encoding undeterminable → STRUCTURAL_DATA_FAILURE
 pass-1/pass-2 disagreement → INFORMATIONAL, unless it changes a value, then
 STRUCTURAL_DATA_FAILURE
+non-monotonic depth, duplicate depth, or fewer than 2 depth samples →
+STRUCTURAL_DATA_FAILURE
+repeated NULL, STRT, STOP, STEP, VERS, or WRAP → AMBIGUOUS_INTERPRETATION
+NULL present but not a finite number → AMBIGUOUS_INTERPRETATION
+duplicate sections, absent ~V/~W/~C, ~A not last, preamble lines, or a VERS
+that is not major version 3 and is parsed as LAS 2.0 → INFORMATIONAL
+
+Regularity is not classified here. DepthGrid.regularity is None. A blank or
+non-numeric STEP is stored as declared_step None and is not a finding.
 
 NULL matching uses polish/rules/null_comparison.json. Sentinel candidates
 live in polish/rules/null_sentinels.json. Stage 4 owns sample status, so a
@@ -60,7 +70,6 @@ from polish.model.dataset import (
     Dataset,
     DepthDirection,
     DepthGrid,
-    DepthRegularity,
     SourceFile,
 )
 from polish.model.findings import Evidence, FindingRecord
@@ -147,6 +156,7 @@ CONTRACT = StageContract(
         "The file has no ~A section or the data section has no rows.",
         "The data column count cannot be reconciled with the ~C count after WRAP, comments, and blank lines.",
         "VERS has major version 3. LAS 3.0 is reported and is not parsed as LAS 2.0.",
+        "The depth column is not strictly monotonic, contains a duplicate depth, or has fewer than 2 samples.",
     ),
     depends_on_stages=(),
     alters_data=False,
@@ -157,7 +167,9 @@ class UnclassifiedIngest(Exception):
     """A condition the approved ledger mapping does not name.
 
     ``partial`` is the audit and any findings already recorded. This exception
-    does not choose a block type.
+    does not choose a block type. ``partial.status`` is BLOCKED when the
+    ledger has no structural finding. A structural finding already on the
+    ledger stays REFUSED_STRUCTURAL. D80, D86.
     """
 
     def __init__(self, message: str, partial: IngestResult) -> None:
@@ -227,6 +239,7 @@ class TextAudit:
     curves: tuple[ParsedCurve, ...]
     duplicate_mnemonics: tuple[str, ...]
     repeated_well_mnemonics: tuple[str, ...]
+    repeated_version_mnemonics: tuple[str, ...]
     preamble_lines: tuple[int, ...]
     column_mismatches: tuple[tuple[int, int, int], ...]
     data_token_count: int
@@ -464,6 +477,7 @@ def _empty_audit(encoding_name: str | None, encoding_method: str) -> TextAudit:
         curves=(),
         duplicate_mnemonics=(),
         repeated_well_mnemonics=(),
+        repeated_version_mnemonics=(),
         preamble_lines=(),
         column_mismatches=(),
         data_token_count=0,
@@ -476,6 +490,92 @@ def _well_slot(mnemonic: str) -> str | None:
     if upper in {"NULL", "STRT", "STOP", "STEP"}:
         return upper
     return None
+
+
+def _record_text_conditions(
+    ledger: _Ledger,
+    *,
+    sections: list[SectionMark],
+    letter_counts: Counter[str],
+    preamble_lines: list[int],
+    vers_text: str | None,
+    vers_major: int | None,
+    wrap_text: str | None,
+    well: dict[str, tuple[str, str, float | None]],
+    repeated_well: list[str],
+    repeated_version: list[str],
+) -> None:
+    """Ledger entries for conditions pass 1 used to store only on the audit.
+
+    The first value of a repeated mnemonic is the one already stored. A second
+    VERS or WRAP is kept on the audit as well as here. D64.
+    """
+
+    if preamble_lines:
+        shown = ", ".join(str(number) for number in preamble_lines[:10])
+        extra = ""
+        if len(preamble_lines) > 10:
+            extra = f" {len(preamble_lines) - 10} further lines are in the audit."
+        ledger.add(
+            BlockType.INFORMATIONAL,
+            f"Lines before the first section are not in a LAS section: {shown}.{extra}",
+        )
+    for letter, count in letter_counts.items():
+        if count < 2 or letter == "":
+            continue
+        lines = ", ".join(str(mark.lineno) for mark in sections if mark.letter == letter)
+        ledger.add(
+            BlockType.INFORMATIONAL,
+            f"Section ~{letter} appears {count} times, at lines {lines}.",
+        )
+    for letter in ("V", "W", "C"):
+        if letter_counts[letter] == 0:
+            ledger.add(BlockType.INFORMATIONAL, f"Section ~{letter} is absent.")
+    has_ascii = any(mark.letter == "A" for mark in sections)
+    if has_ascii and sections and sections[-1].letter != "A":
+        start = next(mark.lineno for mark in sections if mark.letter == "A")
+        ledger.add(
+            BlockType.INFORMATIONAL,
+            (
+                f"The ~A section is not the last section. It starts at line {start}. "
+                "Lines after the next section were not read as data."
+            ),
+        )
+    if vers_major != 3:
+        if vers_text is None:
+            ledger.add(
+                BlockType.INFORMATIONAL,
+                "VERS is not declared. The file was parsed as LAS 2.0.",
+            )
+        else:
+            major = "unreadable" if vers_major is None else str(vers_major)
+            ledger.add(
+                BlockType.INFORMATIONAL,
+                (
+                    f"VERS value {vers_text!r} is not major version 3 (major version {major}). "
+                    "The file was parsed as LAS 2.0."
+                ),
+            )
+    for name in dict.fromkeys(repeated_version):
+        used = vers_text if name == "VERS" else wrap_text
+        ledger.add(
+            BlockType.AMBIGUOUS_INTERPRETATION,
+            f"{name} is repeated. The first value {used!r} was used.",
+        )
+    for slot in dict.fromkeys(repeated_well):
+        used = well[slot][1]
+        ledger.add(
+            BlockType.AMBIGUOUS_INTERPRETATION,
+            f"{slot} is repeated. The first value {used!r} was used.",
+        )
+    if "NULL" in well and well["NULL"][2] is None:
+        ledger.add(
+            BlockType.AMBIGUOUS_INTERPRETATION,
+            (
+                f"NULL is declared as {well['NULL'][1]!r}, which is not a finite number. "
+                "No null value was assumed, and no sample was converted."
+            ),
+        )
 
 
 def _pass1(text: str, ledger: _Ledger) -> _Pass1:
@@ -494,6 +594,7 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
     wrap_text: str | None = None
     well: dict[str, tuple[str, str, float | None]] = {}
     repeated_well: list[str] = []
+    repeated_version: list[str] = []
 
     for lineno, line in enumerate(text.splitlines(), start=1):
         letter = _section_letter(line)
@@ -552,10 +653,16 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
         header_lines.append(
             ParsedHeaderLine(lineno, current.letter, mnemonic, unit, value_text, description)
         )
-        if current.letter == "V" and mnemonic.upper() == "VERS" and vers_text is None:
-            vers_text = value_text
-        elif current.letter == "V" and mnemonic.upper() == "WRAP" and wrap_text is None:
-            wrap_text = value_text
+        if current.letter == "V" and mnemonic.upper() == "VERS":
+            if vers_text is None:
+                vers_text = value_text
+            else:
+                repeated_version.append("VERS")
+        elif current.letter == "V" and mnemonic.upper() == "WRAP":
+            if wrap_text is None:
+                wrap_text = value_text
+            else:
+                repeated_version.append("WRAP")
         elif current.letter == "W":
             slot = _well_slot(mnemonic)
             if slot is not None:
@@ -692,7 +799,10 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
         if rows is not None and depth_steps == 0:
             ledger.add(
                 BlockType.STRUCTURAL_DATA_FAILURE,
-                "The ~A section has no data rows after comments and blank lines.",
+                (
+                    "The ~A section has no data rows after comments and blank lines. "
+                    "The depth column has no samples, so there is no adjacent pair to check."
+                ),
             )
             rows = None
             depth_steps = 0
@@ -701,9 +811,25 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
         ):
             ledger.add(
                 BlockType.STRUCTURAL_DATA_FAILURE,
-                "The ~A section has no data rows after comments and blank lines.",
+                (
+                    "The ~A section has no data rows after comments and blank lines. "
+                    "The depth column has no samples, so there is no adjacent pair to check."
+                ),
             )
             depth_steps = 0
+
+    _record_text_conditions(
+        ledger,
+        sections=sections,
+        letter_counts=letter_counts,
+        preamble_lines=preamble_lines,
+        vers_text=vers_text,
+        vers_major=vers_major,
+        wrap_text=wrap_text,
+        well=well,
+        repeated_well=repeated_well,
+        repeated_version=repeated_version,
+    )
 
     audit = TextAudit(
         encoding_name=None,
@@ -732,6 +858,7 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
         curves=tuple(curves),
         duplicate_mnemonics=duplicate_mnemonics,
         repeated_well_mnemonics=tuple(repeated_well),
+        repeated_version_mnemonics=tuple(repeated_version),
         preamble_lines=tuple(preamble_lines),
         column_mismatches=tuple(mismatches),
         data_token_count=token_count,
@@ -788,6 +915,26 @@ def _result(
     return IngestResult(source, dataset, findings, audit, null_indexes, _status(findings))
 
 
+def _halted(result: IngestResult) -> IngestResult:
+    """Status for an unclassified halt. D80, D86.
+
+    COMPLETE would say the stage finished. BLOCKED is the existing status
+    for a stage that cannot complete. A structural finding already recorded
+    stays REFUSED_STRUCTURAL. No block type is chosen for the halt itself.
+    """
+
+    if result.status is not StageStatus.COMPLETE:
+        return result
+    return IngestResult(
+        result.source_file,
+        result.dataset,
+        result.findings,
+        result.audit,
+        result.null_sample_indexes,
+        StageStatus.BLOCKED,
+    )
+
+
 def _direction(depths: numpy.ndarray) -> DepthDirection | None:
     """Strict pairwise direction. No tolerance. D88's test, recorded not reversed."""
 
@@ -801,17 +948,59 @@ def _direction(depths: numpy.ndarray) -> DepthDirection | None:
     return None
 
 
-def _regularity(depths: numpy.ndarray, step: float) -> DepthRegularity:
-    """REGULAR only when every difference equals the declared STEP exactly.
+def _depth_refusal(depths: numpy.ndarray) -> tuple[str, str] | None:
+    """Why the index column cannot be a DepthGrid, or None when it can.
 
-    This is float64 equality, not the Stage 1 rounding rule. OD-10 is not
-    applied here. A grid that is regular only after rounding is IRREGULAR.
+    ``structural`` is an approved STRUCTURAL_DATA_FAILURE. ``unclassified``
+    is a non-finite sample, which has no approved block type. Duplicate
+    depths are reported before a reversal. D3, D88.
     """
 
+    count = int(depths.size)
+    if count < 2:
+        if count == 0:
+            detail = "The depth column has no samples, so there is no adjacent pair to check."
+        else:
+            detail = (
+                f"The depth column has one sample at index 0 (value {depths[0]!r}), "
+                "so there is no adjacent pair to check."
+            )
+        return ("structural", detail)
+    if not bool(numpy.all(numpy.isfinite(depths))):
+        index = int(numpy.flatnonzero(~numpy.isfinite(depths))[0])
+        return (
+            "unclassified",
+            (
+                f"Depth sample at index {index} is not a finite number ({depths[index]!r}). "
+                "This is not an approved ledger condition."
+            ),
+        )
     diffs = numpy.diff(depths)
-    if diffs.size and bool(numpy.all(diffs == step)):
-        return DepthRegularity.REGULAR
-    return DepthRegularity.IRREGULAR
+    equal = numpy.flatnonzero(diffs == 0)
+    if equal.size:
+        index = int(equal[0])
+        return (
+            "structural",
+            (
+                f"Duplicate depth at indexes {index} and {index + 1}: "
+                f"{depths[index]!r} and {depths[index + 1]!r}."
+            ),
+        )
+    if bool(numpy.all(diffs > 0)) or bool(numpy.all(diffs < 0)):
+        return None
+    first = float(diffs[0])
+    if first > 0:
+        broken = numpy.flatnonzero(diffs <= 0)
+    else:
+        broken = numpy.flatnonzero(diffs >= 0)
+    index = int(broken[0])
+    return (
+        "structural",
+        (
+            f"Non-monotonic depth at indexes {index} and {index + 1}: "
+            f"{depths[index]!r} and {depths[index + 1]!r}."
+        ),
+    )
 
 
 def _apply_nulls(
@@ -877,28 +1066,21 @@ def _build_dataset(
     source: SourceFile,
     audit: TextAudit,
     matrix: numpy.ndarray,
+    direction: DepthDirection,
 ) -> Dataset:
-    """Source dataset from pass-1 columns. Arrays are copied read-only. D17, D30, C5, C6."""
+    """Source dataset from pass-1 columns. Arrays are copied read-only. D17, D30, C5, C6.
+
+    ``regularity`` is None. Stage 1 classifies it. ``declared_step`` is the
+    finite header STEP, or None when the header did not state one. A missing
+    STEP is not a finding.
+    """
 
     dataset_id = DatasetId.for_source(source.file_hash)
-    if audit.step_number is None:
-        raise UnclassifiedIngest(
-            "STEP is not a finite number. DepthGrid.declared_step has no approved stand-in, "
-            "and this is not an approved ledger condition.",
-            _placeholder_partial(source, audit),
-        )
     depths = matrix[:, 0]
-    direction = _direction(depths)
-    if direction is None:
-        raise UnclassifiedIngest(
-            "The index curve is not strictly monotonic, or it has fewer than 2 samples. "
-            "Stage 1 owns that finding (P09). It is not in the Stage 0 ledger mapping.",
-            _placeholder_partial(source, audit),
-        )
     grid = DepthGrid(
         depths,
         direction,
-        _regularity(depths, audit.step_number),
+        None,
         audit.step_number,
         audit.curves[0].unit,
     )
@@ -921,7 +1103,7 @@ def _placeholder_partial(source: SourceFile, audit: TextAudit) -> IngestResult:
     Callers replace this with the real result before raising.
     """
 
-    return IngestResult(source, None, (), audit, (), StageStatus.COMPLETE)
+    return IngestResult(source, None, (), audit, (), StageStatus.BLOCKED)
 
 
 def _compare_pass2(
@@ -1172,6 +1354,7 @@ def _with_encoding(audit: TextAudit, name: str | None, method: str) -> TextAudit
         curves=audit.curves,
         duplicate_mnemonics=audit.duplicate_mnemonics,
         repeated_well_mnemonics=audit.repeated_well_mnemonics,
+        repeated_version_mnemonics=audit.repeated_version_mnemonics,
         preamble_lines=audit.preamble_lines,
         column_mismatches=audit.column_mismatches,
         data_token_count=audit.data_token_count,
@@ -1242,7 +1425,7 @@ def ingest(path: Path | str, *, read_at: datetime | None = None) -> IngestResult
         and audit.data_token_count > 0
         and "A" not in audit.absent_section_letters
     ):
-        partial = _result(source, None, ledger, audit, ())
+        partial = _halted(_result(source, None, ledger, audit, ()))
         raise UnclassifiedIngest(
             "WRAP is not YES or NO, so the column layout was not assumed. "
             "This is not an approved ledger condition.",
@@ -1250,7 +1433,7 @@ def ingest(path: Path | str, *, read_at: datetime | None = None) -> IngestResult
         )
     if passed.non_numeric and not structural and not las3_version:
         shown = ", ".join(f"line {lineno} token {token!r}" for lineno, token in passed.non_numeric[:5])
-        partial = _result(source, None, ledger, audit, ())
+        partial = _halted(_result(source, None, ledger, audit, ()))
         raise UnclassifiedIngest(
             "A data token is not a finite number (" + shown + "). "
             "Converting it to NaN would invent a null. This is not an approved ledger condition.",
@@ -1258,7 +1441,7 @@ def ingest(path: Path | str, *, read_at: datetime | None = None) -> IngestResult
         )
     if passed.rows is not None and not structural and not las3_version:
         if audit.wrapped is None:
-            partial = _result(source, None, ledger, audit, ())
+            partial = _halted(_result(source, None, ledger, audit, ()))
             raise UnclassifiedIngest(
                 "WRAP is not YES or NO, so the column layout was not assumed. "
                 "This is not an approved ledger condition.",
@@ -1266,11 +1449,23 @@ def ingest(path: Path | str, *, read_at: datetime | None = None) -> IngestResult
             )
         matrix, null_indexes = _apply_nulls(passed.rows, audit.null_number)
         _sentinel_warnings(matrix, audit.curves, audit.null_number, ledger)
-        try:
-            dataset = _build_dataset(source, audit, matrix)
-        except UnclassifiedIngest as exc:
-            partial = _result(source, None, ledger, audit, null_indexes)
-            raise UnclassifiedIngest(str(exc), partial) from exc
+        depths = matrix[:, 0]
+        refusal = _depth_refusal(depths)
+        if refusal is not None and refusal[0] == "unclassified":
+            partial = _halted(_result(source, None, ledger, audit, null_indexes))
+            raise UnclassifiedIngest(refusal[1], partial)
+        if refusal is not None:
+            ledger.add(BlockType.STRUCTURAL_DATA_FAILURE, refusal[1])
+        else:
+            direction = _direction(depths)
+            if direction is None:
+                partial = _halted(_result(source, None, ledger, audit, null_indexes))
+                raise UnclassifiedIngest(
+                    "The index curve has no strict direction after the depth checks. "
+                    "This is not an approved ledger condition.",
+                    partial,
+                )
+            dataset = _build_dataset(source, audit, matrix, direction)
 
     _compare_pass2(file_path, audit, matrix, passed.header_for_lasio, ledger)
     return _result(source, dataset, ledger, audit, null_indexes)

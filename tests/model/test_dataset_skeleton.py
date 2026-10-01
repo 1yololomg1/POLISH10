@@ -69,6 +69,31 @@ def test_descending_grid_accepts_a_negative_declared_step():
     assert grid.values.flags.writeable is False
 
 
+def test_unclassified_step_and_regularity_are_stored_as_none():
+    # None means the header stated no finite step, and regularity is not classified.
+    grid = DepthGrid(
+        numpy.array([0.0, 1.0], dtype=numpy.float64),
+        DepthDirection.ASCENDING,
+        None,
+        None,
+        "M",
+    )
+    assert grid.regularity is None
+    assert grid.declared_step is None
+    assert grid.direction is DepthDirection.ASCENDING
+
+
+def test_non_finite_declared_step_is_refused():
+    with pytest.raises(TypeError, match="finite"):
+        DepthGrid(
+            numpy.array([0.0, 1.0], dtype=numpy.float64),
+            DepthDirection.ASCENDING,
+            None,
+            float("nan"),
+            "M",
+        )
+
+
 def test_non_monotonic_depth_is_refused():
     with pytest.raises(ValueError, match="strictly increasing"):
         DepthGrid(

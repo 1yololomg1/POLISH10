@@ -31,7 +31,11 @@ def ingest_summary(result: IngestResult) -> dict:
             "curve_count": len(result.dataset.curves),
             "row_count": int(result.dataset.grid.values.size),
             "direction": result.dataset.grid.direction.value,
-            "regularity": result.dataset.grid.regularity.value,
+            "regularity": (
+                None
+                if result.dataset.grid.regularity is None
+                else result.dataset.grid.regularity.value
+            ),
             "declared_step": result.dataset.grid.declared_step,
             "depth_unit": result.dataset.grid.unit,
             "curves": [
@@ -59,6 +63,11 @@ def ingest_summary(result: IngestResult) -> dict:
         "stop": {"text": audit.stop_text, "unit": audit.stop_unit, "number": audit.stop_number},
         "step": {"text": audit.step_text, "unit": audit.step_unit, "number": audit.step_number},
         "duplicate_mnemonics": list(audit.duplicate_mnemonics),
+        "duplicate_sections": list(audit.duplicate_section_letters),
+        "absent_sections": list(audit.absent_section_letters),
+        "preamble_lines": list(audit.preamble_lines),
+        "repeated_well_mnemonics": list(audit.repeated_well_mnemonics),
+        "repeated_version_mnemonics": list(audit.repeated_version_mnemonics),
         "ascii_is_last_section": audit.ascii_is_last,
         "ledger": [
             {"id": finding.id, "stage": finding.stage, "block_type": finding.block_type.value, "message": finding.message}
