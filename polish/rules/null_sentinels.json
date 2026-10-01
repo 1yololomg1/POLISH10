@@ -1,0 +1,14 @@
+{
+  "candidates": [
+    {"text": "-999.25", "value": -999.25},
+    {"text": "-999", "value": -999.0},
+    {"text": "-9999", "value": -9999.0},
+    {"text": "9999", "value": 9999.0},
+    {"text": "1e30", "value": 1e30},
+    {"text": "-1e30", "value": -1e30},
+    {"text": "-1.0e+30", "value": -1.0e+30}
+  ],
+  "source": "D66 as revised by F19, and the P08 sentinel list. A warning heuristic only. A match is never converted to absent.",
+  "source_tier": "PARTIAL",
+  "evidence": "D66, F19. Not verified against the CWLS LAS specification (OD-24). Scientific notation is not a candidate and is not nonconforming."
+}

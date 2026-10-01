@@ -1,1 +1,1 @@
-"""Stage package. P06 places the contract and the runner here. No stage logic."""
+"""Stage package. The contract and the runner live here. Stage 0 is s00_ingest."""

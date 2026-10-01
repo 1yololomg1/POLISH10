@@ -1,0 +1,8 @@
+{
+  "rel_tol": 1e-6,
+  "abs_tol": 0.0,
+  "rule": "math.isclose(value, null, rel_tol=1e-6, abs_tol=0.0)",
+  "source": "Recorded on every tests/golden/*.facts.json null_comparison object. The facts-extractor prompt set this relative tolerance. It is not a petrophysical cutoff.",
+  "source_tier": "PARTIAL",
+  "evidence": "D66. Not verified against the CWLS LAS specification (OD-24)."
+}
