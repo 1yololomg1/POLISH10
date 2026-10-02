@@ -2,4 +2,5 @@
 * text=auto
 tests/fixtures/*.las filter=lfs diff=lfs merge=lfs -text
 # Already tracked as a normal blob; keep it out of LFS.
-tests/fixtures/new_file_null_minus_999.las -filter -diff -merge text
+# eol=lf keeps the working-tree bytes equal to that blob on every OS.
+tests/fixtures/new_file_null_minus_999.las -filter -diff -merge text eol=lf

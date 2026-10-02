@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # The four real fixtures are Git LFS. Without this, checkout leaves
+          # pointer text and the golden and ingest tests parse that text.
+          lfs: true
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
