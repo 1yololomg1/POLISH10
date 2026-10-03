@@ -80,6 +80,9 @@ in code, comments, docs or commit messages.
 - Distinguish: VERIFIED (you ran/read it), INFERRED (reasoned from code),
   NOT CHECKED.
 - If something fails, report the failure. Do not paper over it.
+- Before writing NOT CHECKED or "not verified" for anything, run the command or read the file that would check it, if one exists in this environment. NOT CHECKED is allowed only when (a) you ran the check and it failed: name the command and paste the error, or (b) no command in this environment can reach it: say what is missing. A bare "not verified" is a defect.
+- Read-only checks (git status, git log, git diff, reading and listing files, running pytest and ruff, re-ingesting fixtures to compare results) never need permission. Run them before you report. This does not permit changing files outside the task.
+- After editing any file, read it back (or run the test that covers it) and report what you saw.
 
 ## Report format (end of every task)
 1. Summary — two to four sentences.
@@ -87,5 +90,5 @@ in code, comments, docs or commit messages.
 3. Commands run — with output tails, including pytest and ruff counts before and after.
 4. Decisions I needed but did not make — each with the OD/D number if known.
 5. Deviations from the prompt — and why.
-6. Not verified — anything you could not check.
+6. Not verified — only items that meet the NOT CHECKED rule above, each with the command tried and its error, or what is missing.
 7. Suggested next step — one line.
