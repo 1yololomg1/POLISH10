@@ -209,7 +209,7 @@ A second-opinion review of this plan agreed with the sequencing and architecture
 | **OD-07** | Toolkit: Tkinter or PySide6 (and which plot layer)? | You | P17 onward | PySide6; run P04 before choosing the plot layer |
 | **OD-08** | Numbering: "ten stages" is eleven; two "Phase" schemes | You | P02 | **No preference stated — recommendation used** |
 | **OD-09** | Legacy Cursor rule files and the always-on Aikido rule | You | P02 | **DECIDED 15 Sept:** archive the legacy rules; **keep Aikido** |
-| **OD-10** | D12 — header/data depth tolerance | Dad | P09 | **ANSWERED as a matching rule, not a number** (1.0.2). Second half (processed header states real last depth) unanswered |
+| **OD-10** | D12 — header/data depth tolerance | Dad | P09 | **CLOSED.** The matching rule was answered; the rounding test is recorded under D12. |
 | **OD-11** | D13 — KEOUGH 8 ft discrepancy | Dad | KEOUGH golden assertions over that interval | **ANSWERED:** skip only density 5,326.5–5,334 ft |
 | **OD-12** | D11 / D87 — rule values, split into four rule types | Dad | P12 (non-definitional rules) | **VALUES RECEIVED; types received except PEF blank; SP settled 18 Sept as −150/50 mV at log-level 20%** (1.0.1) |
 | **OD-13** | D41 tool groupings; D49 dropout cutoff and ambiguous threshold | Dad | P12, P23, P25 | — |
@@ -350,7 +350,7 @@ Why not refactor in place: the monolith's size is itself a source of agent error
 
 These go to your dad. None blocks scaffolding; each blocks a specific piece. While pending, the prompts implement the **slot** — the value comes from the rule library, and a missing value produces an honest "not eligible" or "not set" state, never a guessed default.
 
-- **OD-10 (D12) — header/data depth tolerance.** **Answered 14 Sept ("verify whether the difference can be due to rounding; if so correct; otherwise skip") — meaning to confirm, see 1.0.2.** Original note: he needs the measured context in front of him: **83% of 144 audited wells** show sub-sample-interval STOP drift, so zero tolerance refuses five wells in six. Needed: a number, its unit (absolute depth, or a fraction of STEP), whether STRT and STOP differ, and what "grid-inconsistent" means for D8's non-overridable case.
+- **OD-10 (D12) — header/data depth tolerance.** **CLOSED.** The matching rule was answered; the rounding test is recorded under D12. Earlier text: **Answered 14 Sept ("verify whether the difference can be due to rounding; if so correct; otherwise skip") — meaning to confirm, see 1.0.2.** Original note: he needs the measured context in front of him: **83% of 144 audited wells** show sub-sample-interval STOP drift, so zero tolerance refuses five wells in six. Needed: a number, its unit (absolute depth, or a fraction of STEP), whether STRT and STOP differ, and what "grid-inconsistent" means for D8's non-overridable case.
 - **OD-11 (D13) — KEOUGH.** **Answered: skip and notify.** Header `BLI1` says 5,326 ft; density data reads to 5,334 ft. Which governs? P07 excludes that interval from KEOUGH assertions until answered.
 - **OD-12 (D11 / D87) — rule values.** **Values received 14 Sept; rule types to confirm, see 1.0.1.** F15 says "physical limit" conflates four rule types (domain constraint / hard impossibility / plausibility / consistency). **The worksheet asks for min/max and must be re-cut into those four before he answers**, or his answers will be filed under the wrong type. Until then, only definitional rules ship (a fraction can't exceed 1) — consistent with the standing "no guessed physical limits" instruction from 8 Sept.
 - **OD-13 (D41, D49) — gap classification inputs.** Which curves belong to which tool; each tool's vertical resolution (D49 case 3, the dropout cutoff); the threshold for the ambiguous case (case 4); what counts as "shared" absence across a tool group (exact overlap, or some fraction). The register also asks whether there's a fifth case.
@@ -467,7 +467,7 @@ Order inside the read-only engine is deliberate: decisions, staleness and batch 
 | P05 | Every line of the Ready-for-P05 checklist (1.0.6) |
 | P06 | OD-03 |
 | P07 | OD-11 (interval exclusion only), OD-26 |
-| P09 | OD-10 meaning (1.0.2), dad's 2.3 meaning |
+| P09 | OD-10 closed (rounding test under D12), dad's 2.3 meaning |
 | P10 | OD-17 (role name) |
 | P12 | OD-12 rule types (1.0.1), OD-13 (definitional-only until then) |
 | P13, P15 | OD-22 (answered) |
@@ -1125,7 +1125,7 @@ Report in the standard format, including the reuse list.
 
 ### P09 — Stage 1: Depth axis
 
-**Needs:** P08. OD-10, or approve the interim behaviour in the slot.
+**Needs:** P08. OD-10 is closed; the rounding test is recorded under D12.
 
 ````text
 POLISH rebuild — P09: Stage 1 Depth axis.
@@ -1144,8 +1144,10 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
    curves (e.g. DEPTH_MD) are preserved unchanged and are NOT treated as ambiguity.
    Harvest the behaviour from commit dc0bd5d (locate by symbol).
 
-2. Direction: monotonic in EITHER direction is valid (D88). Negative STEP is normal.
-   Record direction. Never reverse or re-sort data.
+2. Direction: Stage 1 accepts strictly ascending depth only (D3). A decrease, or a
+   negative STEP, is a structural failure. Nothing is reversed or reordered; the
+   file is left untouched and later stages do not run. User message: "valid LAS,
+   but POLISH supports increasing depth only."
 
 3. Regularity: REGULAR or IRREGULAR. STEP=0 as the irregular convention is UNVER
    (D67): record what the header says; do not require it.
@@ -1154,8 +1156,8 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
    rounding rule as item 4, record the data-derived step (used in the exported header)
    and raise INFORMATIONAL. Otherwise: ⟦dad's 2.3 meaning — EITHER "skip the well
    (STRUCTURAL_DATA_FAILURE)" OR "accept as irregular (D88) and notify"⟧.
-   Irregular-but-monotonic grids with a declared STEP: accepted as irregular (D88);
-   never pretend they are regular.
+   Irregular-but-ascending grids with a declared STEP: accepted as irregular and
+   recorded as irregular (D88, kept half); a regular step is never invented.
 
 4. Header vs data (D8 as resolved via D86), each producing a Finding with evidence
    (declared value, observed value, difference, difference in sample intervals):
@@ -1166,10 +1168,10 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
    - STRT/STOP differences: per the rounding rule below
    Domain-expert rule (D12, answered 14 Sept): "verify whether the difference can be
    due to a rounding error; if so, correct accordingly; otherwise skip the well."
-   What counts as rounding: ⟦OD-10 — EITHER "decimal rounding only: the difference is
-   no more than half a unit in the last decimal place the header was written to" OR
-   "grid rounding: the declared value lies within one sample interval of the data
-   value"⟧.
+   What counts as rounding is recorded under D12: a depth counts as rounding if it
+   is within one full unit of its own last written decimal place of a grid built
+   from STRT. The comparison is inclusive (exactly one unit passes). The full-unit
+   rule and the per-depth precision rule are awaiting expert review.
    - Explained by rounding → INFORMATIONAL; the result records the data-derived value,
      which the exported header will use (D59); the original file is untouched.
    - Not explained by rounding → STRUCTURAL_DATA_FAILURE: the well is skipped and the
@@ -1189,8 +1191,9 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
 7. C4: any parameter derived here (e.g. observed step) is stored with the unit it was
    derived under, and a helper asserts that unit at point of use.
 
-Tests — tests/stages/test_s01_depth.py: ascending; descending with negative STEP;
-irregular monotonic; duplicate depth; non-monotonic; first curve not a depth curve;
+Tests — tests/stages/test_s01_depth.py: ascending; a decrease or a negative STEP
+is a structural failure and the samples stay as written; irregular ascending;
+duplicate depth; non-monotonic; first curve not a depth curve;
 STOP differing by pure decimal rounding; STOP differing by less than one
 step but not by decimal rounding; STOP differing by more than one step; blank STEP
 with regular data; blank STEP with irregular data; missing depth unit; two depth
@@ -1663,7 +1666,7 @@ Create polish/render/. No toolkit imports.
 Tests — tests/render/: a three-sample synthetic overlay stays visible at full-well
 scale and at every zoom level (the "vanishing fill" failure); a pixel with one created
 sample among 60 measured is marked modified; absent never bins to zero; depth
-positioning is correct for descending logs; hit_test never returns a position between
+positioning follows the recorded ascending depth axis (D3); a decreasing depth file does not reach this view; hit_test never returns a position between
 samples; annotation of a linear-interpolated synthetic sample reads its two inputs and
 NOT_QUANTIFIABLE_FOR_METHOD; performance test marked and reported.
 Report in the standard format.
@@ -1801,8 +1804,8 @@ D84, D88 (display only), C7, UXC5.
 
 7. Density: ⟦OD-25 Q8⟧.
 
-Tests: default track order matches the domain expert's order on every fixture; depth downward for a
-descending synthetic file; hover returns an actual sample; the readout never overlaps
+Tests: default track order matches the domain expert's order on every fixture; an accepted file is drawn with increasing depth (D3); a decreasing synthetic file does not reach this view;
+hover returns an actual sample; the readout never overlaps
 the tracks; presets make no engine state change; C7.3 mismatch shows an in-track
 error.
 Report in the standard format, with screenshots at full-well, ~200 ft and ~10 ft to
