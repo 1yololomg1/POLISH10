@@ -623,6 +623,22 @@ def test_unclassified_halt_is_blocked_and_chooses_no_block_type(tmp_path: Path):
     assert payload["dataset"] is None
 
 
+def test_wrapped_file_is_reread_with_the_normal_engine_without_a_finding(tmp_path: Path, caplog):
+    body = _las(
+        wrap="YES",
+        strt="0.0",
+        stop="1.0",
+        step="1.0",
+        data="0.0\n10.0\n1.0\n20.0\n",
+    )
+    with caplog.at_level("WARNING", logger="lasio.las"):
+        result = _read(_write(tmp_path, body))
+    assert result.dataset is not None
+    assert result.audit.depth_tokens == ("0.0", "1.0")
+    assert not any("engine" in finding.message for finding in result.findings)
+    assert "Only engine='normal' can read wrapped files" not in caplog.text
+
+
 def test_declared_version_two_is_recorded_as_parsed_like_las_2(tmp_path: Path):
     result = _read(_write(tmp_path, _las()))
     messages = _messages(result, BlockType.INFORMATIONAL)

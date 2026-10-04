@@ -46,6 +46,9 @@ that is not major version 3 and is parsed as LAS 2.0 → INFORMATIONAL
 
 Regularity is not classified here. DepthGrid.regularity is None. A blank or
 non-numeric STEP is stored as declared_step None and is not a finding.
+``depth_tokens`` keeps the index-column spellings as written, so Stage 1 can
+see the last decimal place. Pass 2 re-reads a wrapped file with lasio
+engine='normal' and does not record that re-read as a finding.
 
 NULL matching uses polish/rules/null_comparison.json. Sentinel candidates
 live in polish/rules/null_sentinels.json. Stage 4 owns sample status, so a
@@ -56,6 +59,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 from collections import Counter
@@ -244,6 +248,7 @@ class TextAudit:
     column_mismatches: tuple[tuple[int, int, int], ...]
     data_token_count: int
     depth_step_count: int | None
+    depth_tokens: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -482,6 +487,7 @@ def _empty_audit(encoding_name: str | None, encoding_method: str) -> TextAudit:
         column_mismatches=(),
         data_token_count=0,
         depth_step_count=None,
+        depth_tokens=(),
     )
 
 
@@ -721,6 +727,7 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
     non_numeric: list[tuple[int, str]] = []
     token_count = 0
     depth_steps: int | None = None
+    depth_tokens: list[str] = []
     parse_data = vers_major != 3
 
     if parse_data and "A" not in letter_counts:
@@ -762,6 +769,7 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
                 if not bad:
                     rows = built
                     depth_steps = len(built)
+                    depth_tokens = [token for _, token in tokens[0::n_curves]]
         else:
             parsed_rows: list[list[float]] = []
             bad_line = False
@@ -778,6 +786,7 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
                     bad_line = True
                 elif not bad_line:
                     parsed_rows.append(values)
+                    depth_tokens.append(parts[0])
             if mismatches:
                 shown = ", ".join(
                     f"line {lineno} has {actual} tokens where ~C count is {expected}"
@@ -806,6 +815,7 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
             )
             rows = None
             depth_steps = 0
+            depth_tokens = []
         elif content == [] and not any(
             item.block_type is BlockType.STRUCTURAL_DATA_FAILURE for item in ledger.items
         ):
@@ -863,6 +873,7 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
         column_mismatches=tuple(mismatches),
         data_token_count=token_count,
         depth_step_count=depth_steps,
+        depth_tokens=tuple(depth_tokens) if rows is not None else (),
     )
     return _Pass1(audit, rows, tuple(non_numeric), tuple(header_for_lasio))
 
@@ -1106,6 +1117,53 @@ def _placeholder_partial(source: SourceFile, audit: TextAudit) -> IngestResult:
     return IngestResult(source, None, (), audit, (), StageStatus.BLOCKED)
 
 
+class _SilenceWrappedEngine(logging.Filter):
+    """Drop lasio's wrapped-engine notice. It is not a POLISH finding."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen = False
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "Only engine='normal' can read wrapped files" in record.getMessage():
+            self.seen = True
+            return False
+        return True
+
+
+def _read_with_lasio(path: Path, audit: TextAudit, ignore_header_errors: bool) -> object:
+    """Read with lasio. A wrapped file is read with engine='normal' and no finding.
+
+    lasio logs "Only engine='normal' can read wrapped files" and then switches
+    engine when its default allows it. WRAP YES is passed engine='normal' on
+    the first read so that log line is not emitted. If lasio still logs it,
+    the line is dropped and the file is read again with engine='normal'.
+    The user does not see a finding. D64.
+    """
+
+    import lasio
+
+    kwargs: dict[str, object] = {
+        "ignore_header_errors": ignore_header_errors,
+        "mnemonic_case": "preserve",
+    }
+    if audit.wrapped is True:
+        kwargs["engine"] = "normal"
+        return lasio.read(str(path), **kwargs)
+
+    lasio_logger = logging.getLogger("lasio.las")
+    silence = _SilenceWrappedEngine()
+    lasio_logger.addFilter(silence)
+    try:
+        parsed = lasio.read(str(path), **kwargs)
+    finally:
+        lasio_logger.removeFilter(silence)
+    if not silence.seen:
+        return parsed
+    kwargs["engine"] = "normal"
+    return lasio.read(str(path), **kwargs)
+
+
 def _compare_pass2(
     path: Path,
     audit: TextAudit,
@@ -1149,7 +1207,7 @@ def _compare_pass2(
         captured.add(lineno)
     use_ignore = bool(lasio_rejects)
     try:
-        parsed = lasio.read(str(path), ignore_header_errors=use_ignore, mnemonic_case="preserve")
+        parsed = _read_with_lasio(path, audit, use_ignore)
     except LASHeaderError as exc:
         ledger.add(
             BlockType.INFORMATIONAL,
@@ -1359,6 +1417,7 @@ def _with_encoding(audit: TextAudit, name: str | None, method: str) -> TextAudit
         column_mismatches=audit.column_mismatches,
         data_token_count=audit.data_token_count,
         depth_step_count=audit.depth_step_count,
+        depth_tokens=audit.depth_tokens,
     )
 
 

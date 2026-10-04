@@ -61,10 +61,26 @@ class EvidenceSchema:
             raise TypeError("allowed_keys must be a frozenset of str")
 
 
-# Declared per block type. No stage has named an evidence key yet, so each
-# allowed set is empty. Adding a key is a later prompt, in this table.
+# Stage 1 names the header-versus-data evidence. Other block types still have
+# no keys. A finding may omit a key; it may not add one that is not listed.
+_STAGE1_EVIDENCE_KEYS = frozenset(
+    {"declared", "observed", "difference", "difference_in_step_intervals"}
+)
+_STAGE1_EVIDENCE_BLOCKS = frozenset(
+    {
+        BlockType.INFORMATIONAL,
+        BlockType.AMBIGUOUS_INTERPRETATION,
+        BlockType.STRUCTURAL_DATA_FAILURE,
+    }
+)
+
+
 DECLARED_EVIDENCE_SCHEMAS: dict[str, EvidenceSchema] = {
-    block_type.value: EvidenceSchema(block_type.value, frozenset()) for block_type in BlockType
+    block_type.value: EvidenceSchema(
+        block_type.value,
+        _STAGE1_EVIDENCE_KEYS if block_type in _STAGE1_EVIDENCE_BLOCKS else frozenset(),
+    )
+    for block_type in BlockType
 }
 
 
