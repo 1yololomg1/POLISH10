@@ -1163,8 +1163,12 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
    (declared value, observed value, difference, difference in sample intervals):
    - non-monotonic or duplicate depths → STRUCTURAL_DATA_FAILURE, no override
    - first curve not a plausible index → STRUCTURAL_DATA_FAILURE, halt
-   - grid-inconsistent (a declared non-zero STEP that the data increments do not
-     match under the rounding rule) → STRUCTURAL_DATA_FAILURE, no override
+   - grid-inconsistent (a declared non-zero STEP that does not put every depth
+     on STRT + i × STEP within the grid rounding tolerance) → INFORMATIONAL
+     (D88, kept half). The finding message is: "Declared STEP {step} does not
+     put every depth on STRT + i × STEP within the grid rounding tolerance. The
+     ascending grid is irregular and was not modified." Regularity is recorded
+     as irregular. The samples are not modified.
    - STRT/STOP differences: per the rounding rule below
    Domain-expert rule (D12, answered 14 Sept): "verify whether the difference can be
    due to a rounding error; if so, correct accordingly; otherwise skip the well."
@@ -1177,7 +1181,7 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
    - Not explained by rounding → STRUCTURAL_DATA_FAILURE: the well is skipped and the
      user notified, with the declared value, observed value and difference.
    The rule and its interpretation live in the rule library entry
-   "depth.header_data_rounding", with source "domain expert, worksheet 14 Sept".
+   "depth.grid_rounding", with source "derived by rounding analysis, consistent with the domain expert's rule; awaiting expert review of the full-unit and per-depth rules".
    The report must include, for every fixture, which branch it took.
    Create polish/rules/ with a minimal loader and this one entry now; P12 extends it.
 
