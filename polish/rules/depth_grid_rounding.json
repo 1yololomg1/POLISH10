@@ -2,7 +2,7 @@
   "id": "depth.grid_rounding",
   "statement": "Tolerance is one full unit in the last decimal place to which depths in that file are written. Where depths use mixed precisions, use the finest precision seen.",
   "application": "Each written depth is allowed one full unit of its own last decimal place. A depth written at the finest precision in the file is held to that finest unit and is not given a coarser allowance. A coarser spelling is held to its own last place, so rounding a finer grid onto fewer written digits stays inside the unit that was written.",
-  "source": "Derived by rounding analysis, consistent with the domain expert's rule that differences must be checked for rounding error. Not a number he gave. Each written depth is judged at its own last decimal place. STRT carries up to half a unit of rounding and each depth up to half a unit independently, so the worst-case combined error is one full unit. Awaiting expert review of the full-unit rule and the per-depth precision rule.",
+  "source": "Derived by rounding analysis, consistent with the domain expert's rule that differences must be checked for rounding error. Each written depth is judged at its own last decimal place. STRT carries up to half a unit of rounding and each depth up to half a unit independently, so the worst-case combined error is one full unit. The domain expert confirmed the full-unit rule and the per-depth precision rule on 7 Oct 2026 (relayed by owner).",
   "source_tier": "AC",
   "examples": [
     {"decimal_places": 4, "tolerance": "0.0001"},

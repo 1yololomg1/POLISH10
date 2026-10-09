@@ -1154,8 +1154,10 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
    Blank STEP (domain expert, 14 Sept: "verify the depth curve and fill the step if
    appropriate; otherwise skip"): if the depth increments are constant within the same
    rounding rule as item 4, record the data-derived step (used in the exported header)
-   and raise INFORMATIONAL. Otherwise: ⟦dad's 2.3 meaning — EITHER "skip the well
-   (STRUCTURAL_DATA_FAILURE)" OR "accept as irregular (D88) and notify"⟧.
+   and raise INFORMATIONAL. Otherwise accept as irregular (D88): invent no step,
+   raise INFORMATIONAL ("STEP is blank. Depth increments are not constant. The grid is
+   irregular."), samples unchanged, well not skipped. The domain expert's answer is
+   quoted at line 54.
    Irregular-but-ascending grids with a declared STEP: accepted as irregular and
    recorded as irregular (D88, kept half); a regular step is never invented.
 
@@ -1175,13 +1177,22 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
    What counts as rounding is recorded under D12: a depth counts as rounding if it
    is within one full unit of its own last written decimal place of a grid built
    from STRT. The comparison is inclusive (exactly one unit passes). The full-unit
-   rule and the per-depth precision rule are awaiting expert review.
-   - Explained by rounding → INFORMATIONAL; the result records the data-derived value,
-     which the exported header will use (D59); the original file is untouched.
-   - Not explained by rounding → STRUCTURAL_DATA_FAILURE: the well is skipped and the
-     user notified, with the declared value, observed value and difference.
+   rule and the per-depth precision rule were confirmed by the domain expert on
+   7 Oct 2026 (relayed by owner).
+   Declared-STEP grid (_declared_grid, _on_declared_grid): every depth within one
+   full unit of its own last written decimal of STRT + i × STEP is regular, and no
+   finding is raised. Otherwise the finding is INFORMATIONAL, the grid is recorded
+   as irregular, the samples are unchanged, and the well is not skipped. The
+   finding message is the grid-inconsistent bullet above.
+   STRT and STOP against the first and last depth (_one_endpoint): equal values
+   raise no finding. A difference within one sample interval is INFORMATIONAL, with
+   the evidence, and the data value is recorded for the export (D59). Stage 1
+   rewrites no header. A difference of more than one sample interval is
+   STRUCTURAL_DATA_FAILURE ("beyond one step") and the well is refused. When no
+   sample interval is established the finding is INFORMATIONAL ("not compared").
+   This test uses the sample interval, not the decimal-place tolerance.
    The rule and its interpretation live in the rule library entry
-   "depth.grid_rounding", with source "derived by rounding analysis, consistent with the domain expert's rule; awaiting expert review of the full-unit and per-depth rules".
+   "depth.grid_rounding", with source "Derived by rounding analysis, consistent with the domain expert's rule that differences must be checked for rounding error. Each written depth is judged at its own last decimal place. STRT carries up to half a unit of rounding and each depth up to half a unit independently, so the worst-case combined error is one full unit. The domain expert confirmed the full-unit rule and the per-depth precision rule on 7 Oct 2026 (relayed by owner).".
    The report must include, for every fixture, which branch it took.
    Create polish/rules/ with a minimal loader and this one entry now; P12 extends it.
 

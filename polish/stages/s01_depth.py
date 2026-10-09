@@ -24,9 +24,7 @@ onto the samples. Stages 0–4 cannot alter data (D24).
 
 Irregular-but-ascending grids are accepted (D67, the revised D88). A declared
 STEP that the samples do not meet is INFORMATIONAL, not a structural failure.
-The prompt also says a declared non-zero STEP the data does not match is
-STRUCTURAL_DATA_FAILURE. Those two instructions disagree. This stage follows
-the acceptance rule and the required irregular-grid test.
+The build plan says the same (P09 item 4, grid-inconsistent bullet).
 """
 
 from __future__ import annotations
