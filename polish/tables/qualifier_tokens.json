@@ -1,0 +1,30 @@
+{
+  "table_id": "qualifier_tokens",
+  "version": "1",
+  "metadata": {
+    "note": "Trailing tokens only. An unrecognised trailing token is not stripped (D36)."
+  },
+  "entries": [
+    {
+      "token": "_MAIN",
+      "name": "main pass",
+      "role": null,
+      "source": "D39. _MAIN is the main pass, not noise to be dropped.",
+      "source_tier": "DESIGN"
+    },
+    {
+      "token": "_REF",
+      "name": "repeat pass",
+      "role": null,
+      "source": "D39. _REF is the repeat pass, not noise to be dropped.",
+      "source_tier": "DESIGN"
+    },
+    {
+      "token": "_SYNT",
+      "name": "synthetic source",
+      "role": "SYNTHETIC_SOURCE",
+      "source": "D40. A curve whose mnemonic ends in _SYNT is vendor-computed. It is never treated as a measurement and never a derivation input.",
+      "source_tier": "DESIGN"
+    }
+  ]
+}

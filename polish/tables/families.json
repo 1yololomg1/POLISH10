@@ -1,0 +1,391 @@
+{
+  "table_id": "families",
+  "version": "1",
+  "metadata": {
+    "review": "Legacy names reviewed and stated correct by Alvaro Chaveste-Fernandez on 9 Oct 2026, from first-degree sources (chartbooks); not re-verified against them.",
+    "legacy_fields_not_carried": [
+      "range",
+      "units",
+      "physics",
+      "typical_values",
+      "industry_color",
+      "track_scale",
+      "wavelet_type",
+      "filter_params"
+    ],
+    "log_scale": "Copied only to display_log_scale when the legacy entry stated it. Absent legacy log_scale is null here. display_log_scale is not an interpolation domain (F7).",
+    "unit_dimension_rule": "The most specific compatible spelling set that contains every legacy unit. Null when the spellings are not all in one set. The unit list itself is not stored.",
+    "unit_dimension_not_derived": [
+      "GAMMA_RAY_TOTAL",
+      "ACOUSTIC_IMAGING",
+      "CARBON_OXYGEN_RATIO"
+    ],
+    "tool_group": "Null for every family. OD-13 is unanswered.",
+    "interpolation_domain": "LOG where the legacy family id starts with RESISTIVITY_ (D52). Null otherwise, including FORMATION_RESISTIVITY_IMAGING. OD-14 is unanswered."
+  },
+  "entries": [
+    {
+      "id": "RESISTIVITY_DEEP",
+      "display_name": "Deep investigation resistivity",
+      "unit_dimension": "electrical_resistivity",
+      "tool_group": null,
+      "interpolation_domain": "LOG",
+      "display_log_scale": true,
+      "legacy_group": "resistivity",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "RESISTIVITY_MEDIUM",
+      "display_name": "Medium investigation resistivity",
+      "unit_dimension": "electrical_resistivity",
+      "tool_group": null,
+      "interpolation_domain": "LOG",
+      "display_log_scale": true,
+      "legacy_group": "resistivity",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "RESISTIVITY_SHALLOW",
+      "display_name": "Shallow investigation resistivity",
+      "unit_dimension": "electrical_resistivity",
+      "tool_group": null,
+      "interpolation_domain": "LOG",
+      "display_log_scale": true,
+      "legacy_group": "resistivity",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "RESISTIVITY_MICRO",
+      "display_name": "Micro-resistivity / flushed-zone resistivity",
+      "unit_dimension": "electrical_resistivity",
+      "tool_group": null,
+      "interpolation_domain": "LOG",
+      "display_log_scale": true,
+      "legacy_group": "resistivity",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "RESISTIVITY_LATEROLOG",
+      "display_name": "Laterolog electrode-spacing resistivity",
+      "unit_dimension": "electrical_resistivity",
+      "tool_group": null,
+      "interpolation_domain": "LOG",
+      "display_log_scale": true,
+      "legacy_group": "resistivity",
+      "source": "SLB chartbook common mnemonic (LL3/LL7/LL8/LL9)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "GAMMA_RAY_TOTAL",
+      "display_name": "Total gamma ray",
+      "unit_dimension": null,
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": false,
+      "legacy_group": "gamma_ray",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (GR); SLB chartbook common mnemonic (HSGR/ECGR/SGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "GAMMA_RAY_SPECTRAL",
+      "display_name": "Computed spectral gamma ray (Th+K)",
+      "unit_dimension": "gamma_api",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "gamma_ray_spectral",
+      "source": "SLB chartbook common mnemonic (HCGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "THORIUM",
+      "display_name": "Thorium content",
+      "unit_dimension": "concentration",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "gamma_ray_spectral",
+      "source": "SLB chartbook common mnemonic (HTHO/THOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "URANIUM",
+      "display_name": "Uranium content",
+      "unit_dimension": "concentration",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "gamma_ray_spectral",
+      "source": "SLB chartbook common mnemonic (HURA/URAN)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "POTASSIUM",
+      "display_name": "Potassium content",
+      "unit_dimension": "percent",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "gamma_ray_spectral",
+      "source": "SLB chartbook common mnemonic (HPOT/POTA)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "NEUTRON_POROSITY",
+      "display_name": "Neutron porosity",
+      "unit_dimension": "porosity",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "neutron",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (NPHI); SLB chartbook common mnemonic (TNPH/CNL/NPOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "NEUTRON_COMPENSATED",
+      "display_name": "Lithology-referenced compensated neutron porosity",
+      "unit_dimension": "porosity",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "neutron",
+      "source": "SLB chartbook common mnemonic (NPHI_LS/NPHI_SS/NPHI_DOL)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "NEUTRON_EPITHERMAL",
+      "display_name": "Epithermal neutron porosity",
+      "unit_dimension": "porosity",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "neutron",
+      "source": "industry common alias (ENPH/ETNP)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "NEUTRON_DUAL",
+      "display_name": "Dual neutron porosity",
+      "unit_dimension": "porosity",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "neutron",
+      "source": "industry common alias (DPOR/DNPH)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "BULK_DENSITY",
+      "display_name": "Formation bulk density",
+      "unit_dimension": "density",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "density",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RHOB); SLB chartbook common mnemonic (RHOZ/ZDEN)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "PHOTOELECTRIC_FACTOR",
+      "display_name": "Photoelectric absorption factor",
+      "unit_dimension": "photoelectric_factor",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "photoelectric",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "DENSITY_CORRECTION",
+      "display_name": "Density correction",
+      "unit_dimension": "density",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "density",
+      "source": "SLB chartbook common mnemonic (DRHO)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "SONIC_COMPRESSIONAL",
+      "display_name": "Compressional transit time",
+      "unit_dimension": "acoustic_slowness",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "sonic",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (DT); SLB chartbook common mnemonic (DTC/DTCO)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "SONIC_SHEAR",
+      "display_name": "Shear transit time",
+      "unit_dimension": "acoustic_slowness",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "sonic",
+      "source": "SLB chartbook common mnemonic (DTS/DTSH/DTSM)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "SONIC_STONELEY",
+      "display_name": "Stoneley wave transit time",
+      "unit_dimension": "acoustic_slowness",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "sonic",
+      "source": "SLB chartbook common mnemonic (DTST)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "SPONTANEOUS_POTENTIAL",
+      "display_name": "Spontaneous potential",
+      "unit_dimension": "electric_potential",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "spontaneous_potential",
+      "source": "industry common alias (SP/SSP/SPC); merged from both legacy databases",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "CALIPER",
+      "display_name": "Borehole caliper",
+      "unit_dimension": "length",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "caliper",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "DEPTH",
+      "display_name": "Depth measurement",
+      "unit_dimension": "length",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "depth",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "NMR_POROSITY",
+      "display_name": "NMR total porosity",
+      "unit_dimension": "porosity",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "nmr",
+      "source": "SLB chartbook common mnemonic (TCMR/MPHI)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "NMR_PERMEABILITY",
+      "display_name": "NMR permeability",
+      "unit_dimension": "permeability",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": true,
+      "legacy_group": "nmr",
+      "source": "industry common alias (MPERM/KPERM)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "FORMATION_PRESSURE",
+      "display_name": "Formation pressure",
+      "unit_dimension": "pressure",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "pressure",
+      "source": "industry common alias (PRES/FP)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "FORMATION_TEMPERATURE",
+      "display_name": "Formation temperature",
+      "unit_dimension": "temperature",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "temperature",
+      "source": "industry common alias (TEMP/FTEMP)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "BOREHOLE_AZIMUTH",
+      "display_name": "Borehole azimuth",
+      "unit_dimension": "plane_angle",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "geometry",
+      "source": "industry common alias (AZIM/HAZI)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "BOREHOLE_DEVIATION",
+      "display_name": "Borehole deviation",
+      "unit_dimension": "plane_angle",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "geometry",
+      "source": "industry common alias (DEVI/HDEV)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "FORMATION_RESISTIVITY_IMAGING",
+      "display_name": "Formation micro-resistivity imaging",
+      "unit_dimension": "electrical_resistivity",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": true,
+      "legacy_group": "imaging",
+      "source": "SLB chartbook common mnemonic (FMI/HRLA/OBMI)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "ACOUSTIC_IMAGING",
+      "display_name": "Acoustic borehole imaging",
+      "unit_dimension": null,
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "imaging",
+      "source": "SLB chartbook common mnemonic (UBI/BHTV)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "CARBON_OXYGEN_RATIO",
+      "display_name": "Carbon/Oxygen ratio",
+      "unit_dimension": null,
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "geochemical",
+      "source": "industry common alias (COR/C/O)",
+      "source_tier": "CITED"
+    },
+    {
+      "id": "SILICON_CALCIUM_RATIO",
+      "display_name": "Silicon/Calcium ratio",
+      "unit_dimension": "dimensionless_ratio",
+      "tool_group": null,
+      "interpolation_domain": null,
+      "display_log_scale": null,
+      "legacy_group": "geochemical",
+      "source": "industry common alias (SICA/SI/CA)",
+      "source_tier": "CITED"
+    }
+  ]
+}

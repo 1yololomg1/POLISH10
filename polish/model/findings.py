@@ -61,8 +61,9 @@ class EvidenceSchema:
             raise TypeError("allowed_keys must be a frozenset of str")
 
 
-# Stage 1 names the header-versus-data evidence. Other block types still have
-# no keys. A finding may omit a key; it may not add one that is not listed.
+# Stage 1 names the header-versus-data evidence. Stage 2 names the
+# identification evidence. A finding may omit a key; it may not add one
+# that is not listed.
 _STAGE1_EVIDENCE_KEYS = frozenset(
     {"declared", "observed", "difference", "difference_in_step_intervals"}
 )
@@ -73,14 +74,50 @@ _STAGE1_EVIDENCE_BLOCKS = frozenset(
         BlockType.STRUCTURAL_DATA_FAILURE,
     }
 )
+# Stage 2 (P10). Structured lists are JSON text because an evidence value
+# is a string, number, or bool, not a nested object.
+_STAGE2_INFORMATIONAL_KEYS = frozenset(
+    {
+        "mnemonic",
+        "curve_refs",
+        "preserved",
+        "suggested_family",
+        "similarity_score",
+        "method",
+        "suggestion_tier",
+        "suggestions",
+    }
+)
+_STAGE2_AMBIGUOUS_KEYS = frozenset(
+    {
+        "prefix",
+        "table_version",
+        "members",
+        "stripped_matches",
+        "family_id",
+        "scope_options",
+        "base_mnemonic",
+        "passes",
+        "shipped_entry",
+        "local_entry",
+        "mnemonic",
+    }
+)
+
+
+def _evidence_keys(block_type: BlockType) -> frozenset[str]:
+    keys: frozenset[str] = frozenset()
+    if block_type in _STAGE1_EVIDENCE_BLOCKS:
+        keys = keys | _STAGE1_EVIDENCE_KEYS
+    if block_type is BlockType.INFORMATIONAL:
+        keys = keys | _STAGE2_INFORMATIONAL_KEYS
+    if block_type is BlockType.AMBIGUOUS_INTERPRETATION:
+        keys = keys | _STAGE2_AMBIGUOUS_KEYS
+    return keys
 
 
 DECLARED_EVIDENCE_SCHEMAS: dict[str, EvidenceSchema] = {
-    block_type.value: EvidenceSchema(
-        block_type.value,
-        _STAGE1_EVIDENCE_KEYS if block_type in _STAGE1_EVIDENCE_BLOCKS else frozenset(),
-    )
-    for block_type in BlockType
+    block_type.value: EvidenceSchema(block_type.value, _evidence_keys(block_type)) for block_type in BlockType
 }
 
 
