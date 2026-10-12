@@ -32,7 +32,7 @@ Applies to a curve. Rows: D32, D40, F2.
 | `DRILLING` | A drilling measurement carried in the file. | D32 | Not specified in the UXC2 or UXC9 language tables. |
 | `ANCILLARY` | Coordinates, facies labels, or QC flags: loaded and displayed, excluded from processing. | D40 | Not specified in the UXC2 or UXC9 language tables. |
 | `SYNTHETIC_SOURCE` | Vendor-computed (`*_SYNT`): never treated as a measurement, never a derivation input. | D40 | Not specified in the UXC2 or UXC9 language tables. |
-| `GEOMETRIC_REFERENCE` | Computed geometric reference that must track the index. Appendix A's proposed name for TVD (OD-17). | D32, F2, OD-17 | Not specified in the UXC2 or UXC9 language tables. |
+| `GEOMETRIC_REFERENCE` | Computed geometric reference that must track the index. The TVD role. Name decided by the owner 9 Oct 2026 (OD-17). | D32, F2, OD-17 | Not specified in the UXC2 or UXC9 language tables. |
 | `UNKNOWN` | The role is not established. | D32 | Not specified in the UXC2 or UXC9 language tables. |
 
 ## evidence_tier
@@ -57,7 +57,7 @@ Applies to a curve. Rows: D34, D11, F15.
 | `NOT_ELIGIBLE_NO_FAMILY` | No family is established, so automatic range validation does not run. | D34, D11, F15 | Not specified in the UXC2 or UXC9 language tables. |
 | `NOT_ELIGIBLE_LOW_TIER` | The evidence tier is PROPOSED or NO_MATCH, so it does not unlock range validation or gap filling. | D34 | Not specified in the UXC2 or UXC9 language tables. |
 | `NOT_ELIGIBLE_UNIT_UNRESOLVED` | The unit is not resolved, so a range check would be a comparison without a unit. | D34, D11, F15, C1 | Not specified in the UXC2 or UXC9 language tables. |
-| `NOT_ELIGIBLE_ROLE` | The role excludes the curve from processing (ancillary or synthetic source). | D34, D40 | Not specified in the UXC2 or UXC9 language tables. |
+| `NOT_ELIGIBLE_ROLE` | The role excludes the curve from processing (ancillary, synthetic source, or unknown). | D34, D40, C3 | Not specified in the UXC2 or UXC9 language tables. |
 
 ## unit_interpretation
 

@@ -1220,7 +1220,9 @@ Report in the standard format, including how many fixtures raise each finding ki
 
 ### P10 — Stage 2: Identification
 
-**Needs:** P09. OD-17 (TVD role name). Decide whether Cursor may read your audit folder (slot).
+The prompt sent on 9 Oct 2026 (version 2) carried more detail than this text. The code, tables and tests are the record of what was built.
+
+**Needs:** P09. Slots filled 9 Oct 2026 (owner): TVD role name, local tables path, audit folder read (include).
 
 ````text
 POLISH rebuild — P10: Stage 2 Identification.
@@ -1239,17 +1241,17 @@ polish/tables/.
    - mnemonics: mnemonic → family, qualifiers, role, source, source_tier.
    - vendor_prefixes (D35), qualifier tokens (D39: _MAIN = main pass, _REF = repeat
      pass; _SYNT = synthetic source, D40).
-   Values for tool_group and interpolation_domain: ⟦OD-13, OD-14 — until answered,
-   ship null for every family except resistivity interpolation_domain = LOG (stated
-   in D52)⟧.
+   Values for tool_group and interpolation_domain: ship null
+   tool_group for every family; interpolation_domain = LOG for the five RESISTIVITY_*
+   families (D52), null for every other family (OD-13, OD-14 unanswered).
 
 2. Migrate the existing mnemonic database (P01 item 11) into these files. Preserve each
-   entry's source. Do NOT invent a tier: an entry without traceable evidence becomes
-   PROPOSED. Report counts per tier after migration.
+   entry's source. Tier (decided 9 Oct 2026, owner): every migrated legacy mnemonic is
+   CITED; see D33. Assign no other tier to a legacy name. Report counts per tier after
+   migration.
 
 3. Local extension tables (D37, D38): loaded from the user's app-data directory if
-   present, never transmitted, recorded at tier USER_DEFINED. Path: ⟦path, e.g.
-   %APPDATA%\POLISH\tables\⟧. Missing directory is fine; don't create it here.
+   present, never transmitted, recorded at tier USER_DEFINED. Path: %APPDATA%\POLISH\tables\. Missing directory is fine; don't create it here.
 
 4. Output per CurveRef: family (or none), qualifiers, role, evidence_tier,
    processing_eligibility (per the approved D34 mapping in the state glossary), and a
@@ -1257,12 +1259,14 @@ polish/tables/.
    strip proposal).
 
 5. Roles: INDEX (from Stage 1), MEASURED_LOG, DRILLING, ANCILLARY, SYNTHETIC_SOURCE,
-   ⟦OD-17: TVD role name⟧, UNKNOWN. UNKNOWN declines downstream processing (C3) and is
+   GEOMETRIC_REFERENCE (the TVD role, OD-17), UNKNOWN. UNKNOWN declines downstream processing (C3) and is
    preserved.
 
 6. Matching rules: short mnemonics exact-match only (D36); unrecognised trailing
    tokens are never silently stripped (D36); _MAIN/_REF are qualifiers, never noise
    (D39); *_SYNT → SYNTHETIC_SOURCE (D40).
+
+6a. Similarity suggestions (decided 9 Oct 2026, owner): the legacy similarity matcher is kept as a suggestion only, tagged PROPOSED, never applied, never offered for the item 8b list.
 
 7. Vendor prefixes (D35) are NOT stripped automatically. Detect groups of curves
    sharing a recognised prefix and raise ONE AMBIGUOUS_INTERPRETATION finding per
@@ -1283,10 +1287,10 @@ polish/tables/.
    INFORMATIONAL notice. Specifically RM, RD, RACEHM, RACELM, RPCEHM, RPCELM,
    ABDCQF01–04, NBGRCFM and ROP must NOT be mapped to any family, despite their units.
 
-9. Observed-tier candidates: ⟦EITHER "Read
+9. Observed-tier candidates: Read
    C:\Users\achav\Downloads\LAS_AUDIT_OUTPUT\master_audit_curves.csv and write
    docs/review/observed_tier_candidates.md: mnemonic, frequency, units seen,
-   suggested family. Do not add any of them to the tables." OR "Skip."⟧
+   suggested family. Do not add any of them to the tables.
 
 Harvest: core/curve_identification.py (read, reuse correct logic, don't modify).
 Known trap to test against: a family listing both G/CC and KG/M3 with a single range.
@@ -1305,7 +1309,7 @@ total, excluding the index).
 
 ### P11 — Stage 3: Units
 
-**Needs:** P10. OD-05.
+**Needs:** P10. OD-05. Decision needed before sending: how Stage 3 treats a family with no single accepted unit dimension. GAMMA_RAY_TOTAL, ACOUSTIC_IMAGING and CARBON_OXYGEN_RATIO have unit_dimension null in polish/tables/families.json, so item 1's INCOMPATIBLE_WITH_FAMILY check has nothing to compare against for them.
 
 ````text
 POLISH rebuild — P11: Stage 3 Units.

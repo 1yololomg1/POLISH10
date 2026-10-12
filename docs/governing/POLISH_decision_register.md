@@ -130,17 +130,17 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 |---|---|---|---|
 | D30 | Curve identity is the column index, not the mnemonic (mnemonics can legitimately duplicate within one file) | DESIGN | REVISE — F9: index is not stable across files. Provenance and session references must key to (file hash, column index), or (dataset id, column index) after F1. |
 | D31 | Identification output is family **plus qualifiers**, not a single label | DESIGN | — |
-| D32 | Role taxonomy: INDEX / MEASURED_LOG / DRILLING / ANCILLARY / SYNTHETIC_SOURCE / UNKNOWN | DESIGN | REVISE — F2: incomplete. Needs a computed-geometric-reference role for TVD, which must track the index. |
-| D33 | Four source tiers: Cited / Observed / User-defined / Proposed | DESIGN | — |
+| D32 | Role taxonomy: INDEX / MEASURED_LOG / DRILLING / ANCILLARY / SYNTHETIC_SOURCE / UNKNOWN | DESIGN | REVISE — F2: incomplete. Needs a computed-geometric-reference role for TVD, which must track the index. TVD role name decided 9 Oct 2026 (owner): GEOMETRIC_REFERENCE, an internal name. TVD, TVDEPTH and TVDSS carry it in polish/tables/mnemonics.json. This closes the name only; the rest of OD-17 is not closed by it. |
+| D33 | Four source tiers: Cited / Observed / User-defined / Proposed | DESIGN | — 9 Oct 2026 (owner): every legacy mnemonic migrated in P10 is CITED. Basis: the owner states the legacy names were reviewed and are correct, from first-degree sources (chartbooks); not re-verified against them. Each entry keeps its legacy source text verbatim. PROPOSED applies only to similarity suggestions and names not in the shipped tables. A similarity suggestion is never applied automatically and is never offered for the P10 item 8b do-not-map list. |
 | D34 | Tier gates downstream processing — a low-tier match does not unlock range validation or gap filling | DESIGN | — |
 | D35 | Vendor prefix stripping, from a table of recognised prefixes | DESIGN | — |
 | D36 | Short mnemonics remain exact-match only; unrecognised trailing tokens are not silently stripped | DESIGN | — |
 | D37 | The shipped mnemonic table is comprehensive on published industry names; local extension covers only the shop-specific tail | AC | — |
-| D38 | Alias and qualifier tables are local files on the user's disk, never transmitted | AC | — |
+| D38 | Alias and qualifier tables are local files on the user's disk, never transmitted | AC | — Path decided 9 Oct 2026 (owner): %APPDATA%\POLISH\tables\. P10 only loads from it and does not create it; saving is P13. The file name mnemonics.json was chosen by Cursor in P10, not a recorded decision. |
 | D39 | `_MAIN` / `_REF` are pass designators (main pass, repeat pass), not synthetic noise — dropping them in the July merge lost real information | DESIGN | — |
 | D40 | Two new outcomes needed: ANCILLARY (coordinates, facies labels, QC flags — loaded, displayed, excluded from processing) and SYNTHETIC_SOURCE (`*_SYNT`, vendor-computed — never treated as measurement, never a derivation input) | DESIGN | — |
-| D41 | Families need a **tool-grouping** property (RHOB/DRHO/PEF = density tool) | DESIGN (F6) | NEW — added by the review. Must land in Stage 2 before Stage 4 is built. |
-| D42 | Families need an **interpolation_domain** property, distinct from display log-scale | DESIGN (F7) | NEW — added by the review. |
+| D41 | Families need a **tool-grouping** property (RHOB/DRHO/PEF = density tool) | DESIGN (F6) | NEW — added by the review. Must land in Stage 2 before Stage 4 is built. As built in P10: tool_group is null on every family until OD-13 is answered. |
+| D42 | Families need an **interpolation_domain** property, distinct from display log-scale | DESIGN (F7) | NEW — added by the review. As built in P10: interpolation_domain is LOG on the five RESISTIVITY_* families (D52) and null on all others, including FORMATION_RESISTIVITY_IMAGING, until OD-14 is answered. display_log_scale is not used to set it (F7). |
 
 ## 7. Data model
 
