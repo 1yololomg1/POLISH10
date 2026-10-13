@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D88**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D90**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -522,7 +522,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D88, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D90, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1309,7 +1309,7 @@ total, excluding the index).
 
 ### P11 — Stage 3: Units
 
-**Needs:** P10. OD-05. Decision needed before sending: how Stage 3 treats a family with no single accepted unit dimension. GAMMA_RAY_TOTAL, ACOUSTIC_IMAGING and CARBON_OXYGEN_RATIO have unit_dimension null in polish/tables/families.json, so item 1's INCOMPATIBLE_WITH_FAMILY check has nothing to compare against for them.
+**Needs:** P10. OD-05. Decided 12 Oct 2026 (owner): a family stores a list of accepted dimensions (D90).
 
 ````text
 POLISH rebuild — P11: Stage 3 Units.

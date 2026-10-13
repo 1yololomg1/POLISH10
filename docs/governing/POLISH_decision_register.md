@@ -1,4 +1,4 @@
-# POLISH — Decision Register (D1–D88)
+# POLISH — Decision Register (D1–D90)
 
 **Compiled 13 September 2026. Revision 2** — external review folded in.
 Companion document to the four-pass review.
@@ -219,7 +219,13 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 |---|---|---|---|
 | D89 | A well is corrected to the standard step only if max bottom displacement \|original last depth − (STRT + (n−1)×S)\| ≤ 0.5 × S; otherwise the correction is invalidated, the well is left verbatim, and the end user is notified ("bad well"). | DAD | NEW — Alvaro Sr. 23 Sept, eligibility. Does **not** modify D12. D12 Part Two still governs wells that pass. Split (domain expert, written): a well with a consistent but non-standard step (34_10-19 and 30_3-5 S, step 0.152 m) is left as written, no correction, with an informational notice that the step differs from 0.1524. "Bad well" means an actually irregular well only (derived by analysis). |
 
-*(Register ends at D89. See the Count section below for verified tallies. The
+## 13. Added 12 October 2026 (owner)
+
+| ID | Decision | Source | Status |
+|---|---|---|---|
+| D90 | A family may accept more than one unit dimension. Units in different dimensions of one family are never converted between; a curve in any accepted dimension is compatible with its family. | AC | NEW — Decided 12 Oct 2026 (owner). GAMMA_RAY_TOTAL accepts gamma_api and count_rate (OD-05 case 4). ACOUSTIC_IMAGING and CARBON_OXYGEN_RATIO take their dimensions from the legacy unit lists, not reviewed by the domain expert. A curve whose unit is recognised but not in its family's accepted dimensions stays eligible and carries a RULE_DEPENDENT_WARNING (owner, 12 Oct 2026). |
+
+*(Register ends at D90. See the Count section below for verified tallies. The
 "44 decisions" figure in the four-pass review was an estimate stated as a count
 and is wrong.)*
 
@@ -231,7 +237,7 @@ Verified by parsing this document, not estimated.
 
 | | Count |
 |---|---|
-| **Total register entries** | **89** (D1–D89, continuous, plus struck D20a) |
+| **Total register entries** | **90** (D1–D90, continuous, plus struck D20a) |
 | Decisions made during the project week | 82 |
 | Added by the internal four-pass review | 2 (D41, D42) |
 | Added by external review | 4 (D85–D88) |
@@ -242,7 +248,7 @@ Verified by parsing this document, not estimated.
 | Source | Count |
 |---|---|
 | DESIGN — Claude's proposals, unchallenged | 56 |
-| AC — project owner | 19 |
+| AC — project owner | 20 |
 | DAD — domain expert | 7 |
 | REVIEW — external review | 4 |
 | REPO — verified in code | 3 |
@@ -253,7 +259,7 @@ Verified by parsing this document, not estimated.
 |---|---|
 | — not flagged | 55 |
 | REVISE | 14 |
-| NEW | 7 |
+| NEW | 8 |
 | RESOLVED | 7 |
 | OPEN | 2 |
 | PARTIAL | 3 |
@@ -263,7 +269,7 @@ Verified by parsing this document, not estimated.
 
 Counts parsed from the table rows, not tallied by hand. All three CONFLICT rows
 from revision 1 are now RESOLVED, plus D8. D12 Part Two is RESOLVED (CLOSED 23 Sept).
-D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW.
+D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW. D90 is NEW.
 D20a is struck and excluded from these counts.
 
 ### Findings

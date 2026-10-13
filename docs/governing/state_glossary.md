@@ -69,7 +69,7 @@ Applies to a curve. Rows: C1, D87.
 | `ABSENT` | The file declares no unit. | C1, D87 | Not specified in the UXC2 or UXC9 language tables. |
 | `EMPTY` | A unit field is present and empty. | C1, D87 | Not specified in the UXC2 or UXC9 language tables. |
 | `UNRECOGNISED` | A unit text is present and is not a known unit. | C1, D87 | Not specified in the UXC2 or UXC9 language tables. |
-| `INCOMPATIBLE_WITH_FAMILY` | The unit is recognised and is not a unit of the identified family. | C1, D87 | Not specified in the UXC2 or UXC9 language tables. |
+| `INCOMPATIBLE_WITH_FAMILY` | The unit is recognised and its dimension is not one of the family's accepted dimensions. | C1, D87, D90 | Not specified in the UXC2 or UXC9 language tables. |
 
 ## validation_outcome
 
