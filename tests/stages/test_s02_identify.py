@@ -35,7 +35,7 @@ from polish.stages.s02_identify import (
     processing_eligibility_for,
     registered_stage,
 )
-from polish.tables.loader import load_shipped_tables
+from polish.tables.loader import load_shipped_tables, load_unit_spellings
 
 _REPO = Path(__file__).resolve().parents[2]
 _FIXTURES = _REPO / "tests" / "fixtures"
@@ -474,7 +474,9 @@ def test_migrated_mnemonics_are_cited_once_and_families_carry_no_range():
         assert "units" not in entry
         assert "unit" not in entry
     bulk = next(entry for entry in raw["entries"] if entry["id"] == "BULK_DENSITY")
-    assert bulk["unit_dimension"] == "density"
+    assert bulk["accepted_dimensions"] == ["density"]
+    assert bulk["accepted_dimensions_note"] is None
+    assert "unit_dimension" not in bulk
     assert "range" not in bulk
     imaging = tables.family("FORMATION_RESISTIVITY_IMAGING")
     assert imaging is not None
@@ -486,7 +488,25 @@ def test_migrated_mnemonics_are_cited_once_and_families_carry_no_range():
     assert permeability.interpolation_domain is None
     gamma = tables.family("GAMMA_RAY_TOTAL")
     assert gamma is not None
-    assert gamma.unit_dimension is None
+    assert gamma.accepted_dimensions == ("gamma_api", "count_rate")
+    assert gamma.accepted_dimensions_note is not None
+
+
+def test_every_family_accepts_at_least_one_dimension():
+    tables = load_shipped_tables()
+    assert tables.families_version == "2"
+    for family in tables.families:
+        assert len(family.accepted_dimensions) >= 1
+        assert len(set(family.accepted_dimensions)) == len(family.accepted_dimensions)
+        assert "unit_dimension" not in family.__dict__
+
+
+def test_family_dimensions_are_in_the_spellings_table():
+    tables = load_shipped_tables()
+    names = {row.dimension for row in load_unit_spellings().spellings}
+    for family in tables.families:
+        for name in family.accepted_dimensions:
+            assert name in names
 
 
 def test_lfp_prefix_group_size_matches_golden_facts(tmp_path: Path):

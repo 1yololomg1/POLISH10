@@ -1,6 +1,6 @@
 {
   "table_id": "families",
-  "version": "1",
+  "version": "2",
   "metadata": {
     "review": "Legacy names reviewed and stated correct by Alvaro Chaveste-Fernandez on 9 Oct 2026, from first-degree sources (chartbooks); not re-verified against them.",
     "legacy_fields_not_carried": [
@@ -14,20 +14,18 @@
       "filter_params"
     ],
     "log_scale": "Copied only to display_log_scale when the legacy entry stated it. Absent legacy log_scale is null here. display_log_scale is not an interpolation domain (F7).",
-    "unit_dimension_rule": "The most specific compatible spelling set that contains every legacy unit. Null when the spellings are not all in one set. The unit list itself is not stored.",
-    "unit_dimension_not_derived": [
-      "GAMMA_RAY_TOTAL",
-      "ACOUSTIC_IMAGING",
-      "CARBON_OXYGEN_RATIO"
-    ],
     "tool_group": "Null for every family. OD-13 is unanswered.",
-    "interpolation_domain": "LOG where the legacy family id starts with RESISTIVITY_ (D52). Null otherwise, including FORMATION_RESISTIVITY_IMAGING. OD-14 is unanswered."
+    "interpolation_domain": "LOG where the legacy family id starts with RESISTIVITY_ (D52). Null otherwise, including FORMATION_RESISTIVITY_IMAGING. OD-14 is unanswered.",
+    "accepted_dimensions_rule": "A family accepts a non-empty list of unit dimensions (owner, 12 Oct 2026). A curve in any accepted dimension is compatible with the family, and units in different dimensions of one family are never converted between. GAMMA_RAY_TOTAL accepts gamma_api and count_rate. ACOUSTIC_IMAGING and CARBON_OXYGEN_RATIO accept the dimensions the spellings table gives DB, AMP, RATIO and V/V; those two lists were not reviewed by the domain expert."
   },
   "entries": [
     {
       "id": "RESISTIVITY_DEEP",
       "display_name": "Deep investigation resistivity",
-      "unit_dimension": "electrical_resistivity",
+      "accepted_dimensions": [
+        "electrical_resistivity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": "LOG",
       "display_log_scale": true,
@@ -38,7 +36,10 @@
     {
       "id": "RESISTIVITY_MEDIUM",
       "display_name": "Medium investigation resistivity",
-      "unit_dimension": "electrical_resistivity",
+      "accepted_dimensions": [
+        "electrical_resistivity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": "LOG",
       "display_log_scale": true,
@@ -49,7 +50,10 @@
     {
       "id": "RESISTIVITY_SHALLOW",
       "display_name": "Shallow investigation resistivity",
-      "unit_dimension": "electrical_resistivity",
+      "accepted_dimensions": [
+        "electrical_resistivity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": "LOG",
       "display_log_scale": true,
@@ -60,7 +64,10 @@
     {
       "id": "RESISTIVITY_MICRO",
       "display_name": "Micro-resistivity / flushed-zone resistivity",
-      "unit_dimension": "electrical_resistivity",
+      "accepted_dimensions": [
+        "electrical_resistivity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": "LOG",
       "display_log_scale": true,
@@ -71,7 +78,10 @@
     {
       "id": "RESISTIVITY_LATEROLOG",
       "display_name": "Laterolog electrode-spacing resistivity",
-      "unit_dimension": "electrical_resistivity",
+      "accepted_dimensions": [
+        "electrical_resistivity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": "LOG",
       "display_log_scale": true,
@@ -82,7 +92,11 @@
     {
       "id": "GAMMA_RAY_TOTAL",
       "display_name": "Total gamma ray",
-      "unit_dimension": null,
+      "accepted_dimensions": [
+        "gamma_api",
+        "count_rate"
+      ],
+      "accepted_dimensions_note": "API gamma units and count rate. No fixed factor converts between them (OD-05 case 4); a curve in either is compatible with this family and is never converted to the other.",
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": false,
@@ -93,7 +107,10 @@
     {
       "id": "GAMMA_RAY_SPECTRAL",
       "display_name": "Computed spectral gamma ray (Th+K)",
-      "unit_dimension": "gamma_api",
+      "accepted_dimensions": [
+        "gamma_api"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -104,7 +121,10 @@
     {
       "id": "THORIUM",
       "display_name": "Thorium content",
-      "unit_dimension": "concentration",
+      "accepted_dimensions": [
+        "concentration"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -115,7 +135,10 @@
     {
       "id": "URANIUM",
       "display_name": "Uranium content",
-      "unit_dimension": "concentration",
+      "accepted_dimensions": [
+        "concentration"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -126,7 +149,10 @@
     {
       "id": "POTASSIUM",
       "display_name": "Potassium content",
-      "unit_dimension": "percent",
+      "accepted_dimensions": [
+        "percent"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -137,7 +163,10 @@
     {
       "id": "NEUTRON_POROSITY",
       "display_name": "Neutron porosity",
-      "unit_dimension": "porosity",
+      "accepted_dimensions": [
+        "porosity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -148,7 +177,10 @@
     {
       "id": "NEUTRON_COMPENSATED",
       "display_name": "Lithology-referenced compensated neutron porosity",
-      "unit_dimension": "porosity",
+      "accepted_dimensions": [
+        "porosity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -159,7 +191,10 @@
     {
       "id": "NEUTRON_EPITHERMAL",
       "display_name": "Epithermal neutron porosity",
-      "unit_dimension": "porosity",
+      "accepted_dimensions": [
+        "porosity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -170,7 +205,10 @@
     {
       "id": "NEUTRON_DUAL",
       "display_name": "Dual neutron porosity",
-      "unit_dimension": "porosity",
+      "accepted_dimensions": [
+        "porosity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -181,7 +219,10 @@
     {
       "id": "BULK_DENSITY",
       "display_name": "Formation bulk density",
-      "unit_dimension": "density",
+      "accepted_dimensions": [
+        "density"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -192,7 +233,10 @@
     {
       "id": "PHOTOELECTRIC_FACTOR",
       "display_name": "Photoelectric absorption factor",
-      "unit_dimension": "photoelectric_factor",
+      "accepted_dimensions": [
+        "photoelectric_factor"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -203,7 +247,10 @@
     {
       "id": "DENSITY_CORRECTION",
       "display_name": "Density correction",
-      "unit_dimension": "density",
+      "accepted_dimensions": [
+        "density"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -214,7 +261,10 @@
     {
       "id": "SONIC_COMPRESSIONAL",
       "display_name": "Compressional transit time",
-      "unit_dimension": "acoustic_slowness",
+      "accepted_dimensions": [
+        "acoustic_slowness"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -225,7 +275,10 @@
     {
       "id": "SONIC_SHEAR",
       "display_name": "Shear transit time",
-      "unit_dimension": "acoustic_slowness",
+      "accepted_dimensions": [
+        "acoustic_slowness"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -236,7 +289,10 @@
     {
       "id": "SONIC_STONELEY",
       "display_name": "Stoneley wave transit time",
-      "unit_dimension": "acoustic_slowness",
+      "accepted_dimensions": [
+        "acoustic_slowness"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -247,7 +303,10 @@
     {
       "id": "SPONTANEOUS_POTENTIAL",
       "display_name": "Spontaneous potential",
-      "unit_dimension": "electric_potential",
+      "accepted_dimensions": [
+        "electric_potential"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -258,7 +317,10 @@
     {
       "id": "CALIPER",
       "display_name": "Borehole caliper",
-      "unit_dimension": "length",
+      "accepted_dimensions": [
+        "length"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -269,7 +331,10 @@
     {
       "id": "DEPTH",
       "display_name": "Depth measurement",
-      "unit_dimension": "length",
+      "accepted_dimensions": [
+        "length"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -280,7 +345,10 @@
     {
       "id": "NMR_POROSITY",
       "display_name": "NMR total porosity",
-      "unit_dimension": "porosity",
+      "accepted_dimensions": [
+        "porosity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -291,7 +359,10 @@
     {
       "id": "NMR_PERMEABILITY",
       "display_name": "NMR permeability",
-      "unit_dimension": "permeability",
+      "accepted_dimensions": [
+        "permeability"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": true,
@@ -302,7 +373,10 @@
     {
       "id": "FORMATION_PRESSURE",
       "display_name": "Formation pressure",
-      "unit_dimension": "pressure",
+      "accepted_dimensions": [
+        "pressure"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -313,7 +387,10 @@
     {
       "id": "FORMATION_TEMPERATURE",
       "display_name": "Formation temperature",
-      "unit_dimension": "temperature",
+      "accepted_dimensions": [
+        "temperature"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -324,7 +401,10 @@
     {
       "id": "BOREHOLE_AZIMUTH",
       "display_name": "Borehole azimuth",
-      "unit_dimension": "plane_angle",
+      "accepted_dimensions": [
+        "plane_angle"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -335,7 +415,10 @@
     {
       "id": "BOREHOLE_DEVIATION",
       "display_name": "Borehole deviation",
-      "unit_dimension": "plane_angle",
+      "accepted_dimensions": [
+        "plane_angle"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -346,7 +429,10 @@
     {
       "id": "FORMATION_RESISTIVITY_IMAGING",
       "display_name": "Formation micro-resistivity imaging",
-      "unit_dimension": "electrical_resistivity",
+      "accepted_dimensions": [
+        "electrical_resistivity"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": true,
@@ -357,7 +443,11 @@
     {
       "id": "ACOUSTIC_IMAGING",
       "display_name": "Acoustic borehole imaging",
-      "unit_dimension": null,
+      "accepted_dimensions": [
+        "decibel",
+        "amplitude"
+      ],
+      "accepted_dimensions_note": "From the legacy unit list; not reviewed by the domain expert.",
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -368,7 +458,11 @@
     {
       "id": "CARBON_OXYGEN_RATIO",
       "display_name": "Carbon/Oxygen ratio",
-      "unit_dimension": null,
+      "accepted_dimensions": [
+        "dimensionless_ratio",
+        "porosity"
+      ],
+      "accepted_dimensions_note": "From the legacy unit list; not reviewed by the domain expert.",
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,
@@ -379,7 +473,10 @@
     {
       "id": "SILICON_CALCIUM_RATIO",
       "display_name": "Silicon/Calcium ratio",
-      "unit_dimension": "dimensionless_ratio",
+      "accepted_dimensions": [
+        "dimensionless_ratio"
+      ],
+      "accepted_dimensions_note": null,
       "tool_group": null,
       "interpolation_domain": null,
       "display_log_scale": null,

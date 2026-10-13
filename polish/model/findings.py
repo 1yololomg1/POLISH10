@@ -103,6 +103,28 @@ _STAGE2_AMBIGUOUS_KEYS = frozenset(
         "mnemonic",
     }
 )
+# Stage 3 (P11). A candidate list is JSON text. RULE_DEPENDENT_WARNING had
+# no evidence keys before this stage.
+_STAGE3_AMBIGUOUS_KEYS = frozenset(
+    {
+        "declared_unit",
+        "outcome",
+        "candidates",
+        "family_id",
+        "mnemonic",
+    }
+)
+_STAGE3_RULE_DEPENDENT_KEYS = frozenset(
+    {
+        "declared_unit",
+        "outcome",
+        "canonical_unit",
+        "dimension",
+        "family_id",
+        "accepted_dimensions",
+        "mnemonic",
+    }
+)
 
 
 def _evidence_keys(block_type: BlockType) -> frozenset[str]:
@@ -113,6 +135,9 @@ def _evidence_keys(block_type: BlockType) -> frozenset[str]:
         keys = keys | _STAGE2_INFORMATIONAL_KEYS
     if block_type is BlockType.AMBIGUOUS_INTERPRETATION:
         keys = keys | _STAGE2_AMBIGUOUS_KEYS
+        keys = keys | _STAGE3_AMBIGUOUS_KEYS
+    if block_type is BlockType.RULE_DEPENDENT_WARNING:
+        keys = keys | _STAGE3_RULE_DEPENDENT_KEYS
     return keys
 
 

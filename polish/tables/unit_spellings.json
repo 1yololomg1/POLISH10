@@ -1,0 +1,598 @@
+{
+  "table_id": "unit_spellings",
+  "version": "1",
+  "metadata": {
+    "review": "Spellings are the legacy mnemonic unit lists and the factor-and-offset rows of UnitStandardizer.unit_conversions. Conductivity to resistivity, API gravity to kg/m3, and SG to kg/m3 were not ported.",
+    "case_matching": "Match without regard to case. The table has no pair of spellings that differ only by case and mean different units. MV and mV in the legacy SP list are both millivolts, so only MV is stored.",
+    "pu": "PU is recognised as porosity and has no conversion. The legacy factor 1.0 onto V/V was not copied."
+  },
+  "spellings": [
+    {
+      "spelling": "OHMM",
+      "canonical_unit": "OHMM",
+      "dimension": "electrical_resistivity",
+      "source": "core/curve_identification.py build_mnemonic_database OHM_M_UNITS; core/unit_standardization.py UnitStandardizer.unit_conversions resistivity",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "ohm.m",
+      "canonical_unit": "OHMM",
+      "dimension": "electrical_resistivity",
+      "source": "core/curve_identification.py build_mnemonic_database OHM_M_UNITS; core/unit_standardization.py UnitStandardizer.unit_conversions resistivity",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "OHM-M",
+      "canonical_unit": "OHMM",
+      "dimension": "electrical_resistivity",
+      "source": "core/curve_identification.py build_mnemonic_database OHM_M_UNITS; core/unit_standardization.py UnitStandardizer.unit_conversions resistivity",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "GAPI",
+      "canonical_unit": "GAPI",
+      "dimension": "gamma_api",
+      "source": "core/curve_identification.py build_mnemonic_database GAMMA_RAY_TOTAL units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "API",
+      "canonical_unit": "GAPI",
+      "dimension": "gamma_api",
+      "source": "core/curve_identification.py build_mnemonic_database GAMMA_RAY_TOTAL units; one meaning of API",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "API",
+      "canonical_unit": "API",
+      "dimension": "api_gravity",
+      "source": "core/unit_standardization.py UnitStandardizer.unit_conversions fluid_density API. The conversion to kg/m3 was not ported; it is not a factor-and-offset re-expression of one quantity.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "CPS",
+      "canonical_unit": "CPS",
+      "dimension": "count_rate",
+      "source": "core/curve_identification.py build_mnemonic_database GAMMA_RAY_TOTAL units cps and CPS",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "PPM",
+      "canonical_unit": "PPM",
+      "dimension": "concentration",
+      "source": "core/curve_identification.py build_mnemonic_database THORIUM and URANIUM units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "%",
+      "canonical_unit": "%",
+      "dimension": "percent",
+      "source": "core/curve_identification.py build_mnemonic_database POTASSIUM units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "PERCENT",
+      "canonical_unit": "PERCENT",
+      "dimension": "percent",
+      "source": "core/curve_identification.py build_mnemonic_database POTASSIUM units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "%",
+      "canonical_unit": "%",
+      "dimension": "porosity",
+      "source": "core/curve_identification.py build_mnemonic_database NEUTRON_POROSITY units; percent of porosity, not the potassium percent",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "PERCENT",
+      "canonical_unit": "PERCENT",
+      "dimension": "porosity",
+      "source": "core/curve_identification.py build_mnemonic_database NEUTRON_POROSITY units; percent of porosity, not the potassium percent",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "V/V",
+      "canonical_unit": "V/V",
+      "dimension": "porosity",
+      "source": "core/curve_identification.py build_mnemonic_database neutron family units. CARBON_OXYGEN_RATIO also lists V/V; this spelling has one dimension.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "m3/m3",
+      "canonical_unit": "V/V",
+      "dimension": "porosity",
+      "source": "observed in tests/fixtures/30_3-5 S.las, ~Curve section; observed in tests/fixtures/34_10-19.las, ~Curve section",
+      "source_tier": "OBSERVED"
+    },
+    {
+      "spelling": "v/v_decimal",
+      "canonical_unit": "V/V",
+      "dimension": "porosity",
+      "source": "observed in tests/fixtures/159-19A_LFP.las, ~Curve section",
+      "source_tier": "OBSERVED"
+    },
+    {
+      "spelling": "PU",
+      "canonical_unit": "PU",
+      "dimension": "porosity",
+      "source": "core/curve_identification.py build_mnemonic_database neutron family units. core/unit_standardization.py UnitStandardizer.unit_conversions porosity PU used factor 1.0 onto V/V; that factor was not copied. No conversion is recorded.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "FRAC",
+      "canonical_unit": "V/V",
+      "dimension": "porosity",
+      "source": "core/unit_standardization.py UnitStandardizer.unit_conversions porosity FRAC. A fraction is the volume ratio V/V, so the canonical unit is V/V.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "G/CC",
+      "canonical_unit": "G/CC",
+      "dimension": "density",
+      "source": "core/curve_identification.py build_mnemonic_database BULK_DENSITY units; core/unit_standardization.py UnitStandardizer.unit_conversions density G/CC",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "G/CM3",
+      "canonical_unit": "G/CC",
+      "dimension": "density",
+      "source": "core/curve_identification.py build_mnemonic_database BULK_DENSITY units; core/unit_standardization.py UnitStandardizer.unit_conversions density G/CM3",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "g/cm3",
+      "canonical_unit": "G/CC",
+      "dimension": "density",
+      "source": "core/curve_identification.py build_mnemonic_database BULK_DENSITY units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "G/C3",
+      "canonical_unit": "G/CC",
+      "dimension": "density",
+      "source": "core/curve_identification.py build_mnemonic_database BULK_DENSITY units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "KG/M3",
+      "canonical_unit": "KG/M3",
+      "dimension": "density",
+      "source": "core/curve_identification.py build_mnemonic_database BULK_DENSITY units; core/unit_standardization.py UnitStandardizer.unit_conversions density KG/M3",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "LB/FT3",
+      "canonical_unit": "LB/FT3",
+      "dimension": "density",
+      "source": "core/unit_standardization.py UnitStandardizer.unit_conversions density LB/FT3. The legacy factor 16.0185 was rounded and was not copied.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "PPG",
+      "canonical_unit": "PPG",
+      "dimension": "density",
+      "source": "core/unit_standardization.py UnitStandardizer.unit_conversions mud_weight PPG",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "B/E",
+      "canonical_unit": "B/E",
+      "dimension": "photoelectric_factor",
+      "source": "core/curve_identification.py build_mnemonic_database PHOTOELECTRIC_FACTOR units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "BARNS/ELECTRON",
+      "canonical_unit": "B/E",
+      "dimension": "photoelectric_factor",
+      "source": "core/curve_identification.py build_mnemonic_database PHOTOELECTRIC_FACTOR units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "BARN/E",
+      "canonical_unit": "B/E",
+      "dimension": "photoelectric_factor",
+      "source": "core/curve_identification.py build_mnemonic_database PHOTOELECTRIC_FACTOR units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "b/elec",
+      "canonical_unit": "B/E",
+      "dimension": "photoelectric_factor",
+      "source": "observed in tests/fixtures/WLC_PETRO_COMPUTED_INPUT_1_15_9-F-1B.las, ~Curve section",
+      "source_tier": "OBSERVED"
+    },
+    {
+      "spelling": "US/FT",
+      "canonical_unit": "US/FT",
+      "dimension": "acoustic_slowness",
+      "source": "core/curve_identification.py build_mnemonic_database sonic family units; core/unit_standardization.py UnitStandardizer.unit_conversions sonic US/FT",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "USEC/FT",
+      "canonical_unit": "US/FT",
+      "dimension": "acoustic_slowness",
+      "source": "core/curve_identification.py build_mnemonic_database sonic family units; core/unit_standardization.py UnitStandardizer.unit_conversions sonic USEC/FT. The legacy factor 3.28084 was rounded and was not copied.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "US/F",
+      "canonical_unit": "US/FT",
+      "dimension": "acoustic_slowness",
+      "source": "core/curve_identification.py build_mnemonic_database sonic family units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "US/M",
+      "canonical_unit": "US/M",
+      "dimension": "acoustic_slowness",
+      "source": "core/unit_standardization.py UnitStandardizer.unit_conversions sonic US/M. Conductivity US/M was not ported, so this spelling is only acoustic slowness.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "USEC/M",
+      "canonical_unit": "US/M",
+      "dimension": "acoustic_slowness",
+      "source": "core/unit_standardization.py UnitStandardizer.unit_conversions sonic USEC/M",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "MV",
+      "canonical_unit": "MV",
+      "dimension": "electric_potential",
+      "source": "core/curve_identification.py build_mnemonic_database SPONTANEOUS_POTENTIAL units MV, mV and MILLIVOLT. In that list both MV and mV are millivolts.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "MILLIVOLT",
+      "canonical_unit": "MV",
+      "dimension": "electric_potential",
+      "source": "core/curve_identification.py build_mnemonic_database SPONTANEOUS_POTENTIAL units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "M",
+      "canonical_unit": "M",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database DEPTH units; core/unit_standardization.py UnitStandardizer.unit_conversions depth M",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "METER",
+      "canonical_unit": "M",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database DEPTH units; core/unit_standardization.py UnitStandardizer.unit_conversions depth METER",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "METERS",
+      "canonical_unit": "M",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database DEPTH units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "FT",
+      "canonical_unit": "FT",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database DEPTH units; core/unit_standardization.py UnitStandardizer.unit_conversions depth FT",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "FEET",
+      "canonical_unit": "FT",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database DEPTH units; core/unit_standardization.py UnitStandardizer.unit_conversions depth FEET",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "IN",
+      "canonical_unit": "IN",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database CALIPER units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "INCH",
+      "canonical_unit": "IN",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database CALIPER units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "inches",
+      "canonical_unit": "IN",
+      "dimension": "length",
+      "source": "observed in tests/fixtures/WLC_PETRO_COMPUTED_INPUT_1_15_9-F-1B.las, ~Curve section; observed in tests/fixtures/159-19A_LFP.las, ~Curve section",
+      "source_tier": "OBSERVED"
+    },
+    {
+      "spelling": "MM",
+      "canonical_unit": "MM",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database CALIPER units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "CM",
+      "canonical_unit": "CM",
+      "dimension": "length",
+      "source": "core/curve_identification.py build_mnemonic_database CALIPER units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "MD",
+      "canonical_unit": "MD",
+      "dimension": "permeability",
+      "source": "core/curve_identification.py build_mnemonic_database NMR_PERMEABILITY units MD, mD and MILLIDARCY",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "MILLIDARCY",
+      "canonical_unit": "MD",
+      "dimension": "permeability",
+      "source": "core/curve_identification.py build_mnemonic_database NMR_PERMEABILITY units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "PSI",
+      "canonical_unit": "PSI",
+      "dimension": "pressure",
+      "source": "core/curve_identification.py build_mnemonic_database FORMATION_PRESSURE units; core/unit_standardization.py UnitStandardizer.unit_conversions pressure PSI",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "PA",
+      "canonical_unit": "PA",
+      "dimension": "pressure",
+      "source": "core/curve_identification.py build_mnemonic_database FORMATION_PRESSURE units; core/unit_standardization.py UnitStandardizer.unit_conversions pressure PA",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "BAR",
+      "canonical_unit": "BAR",
+      "dimension": "pressure",
+      "source": "core/curve_identification.py build_mnemonic_database FORMATION_PRESSURE units; core/unit_standardization.py UnitStandardizer.unit_conversions pressure BAR",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "KPA",
+      "canonical_unit": "KPA",
+      "dimension": "pressure",
+      "source": "core/curve_identification.py build_mnemonic_database FORMATION_PRESSURE units; core/unit_standardization.py UnitStandardizer.unit_conversions pressure KPA",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "MPA",
+      "canonical_unit": "MPA",
+      "dimension": "pressure",
+      "source": "core/unit_standardization.py UnitStandardizer.unit_conversions pressure MPA",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "DEGC",
+      "canonical_unit": "DEGC",
+      "dimension": "temperature",
+      "source": "core/curve_identification.py build_mnemonic_database FORMATION_TEMPERATURE units; core/unit_standardization.py UnitStandardizer.unit_conversions temperature DEGC",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "C",
+      "canonical_unit": "DEGC",
+      "dimension": "temperature",
+      "source": "core/curve_identification.py build_mnemonic_database FORMATION_TEMPERATURE units; core/unit_standardization.py UnitStandardizer.unit_conversions temperature C",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "DEGF",
+      "canonical_unit": "DEGF",
+      "dimension": "temperature",
+      "source": "core/curve_identification.py build_mnemonic_database FORMATION_TEMPERATURE units; core/unit_standardization.py UnitStandardizer.unit_conversions temperature DEGF",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "F",
+      "canonical_unit": "DEGF",
+      "dimension": "temperature",
+      "source": "core/curve_identification.py build_mnemonic_database FORMATION_TEMPERATURE units; core/unit_standardization.py UnitStandardizer.unit_conversions temperature F",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "F",
+      "canonical_unit": "FT",
+      "dimension": "length",
+      "source": "P11b item 7 (owner, 12 Oct 2026): F also means feet, so the spelling resolves by the curve's family.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "K",
+      "canonical_unit": "K",
+      "dimension": "temperature",
+      "source": "core/unit_standardization.py UnitStandardizer.unit_conversions temperature K",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "DEG",
+      "canonical_unit": "DEG",
+      "dimension": "plane_angle",
+      "source": "core/curve_identification.py build_mnemonic_database BOREHOLE_AZIMUTH and BOREHOLE_DEVIATION units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "DEGREE",
+      "canonical_unit": "DEG",
+      "dimension": "plane_angle",
+      "source": "core/curve_identification.py build_mnemonic_database BOREHOLE_AZIMUTH and BOREHOLE_DEVIATION units",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "RATIO",
+      "canonical_unit": "RATIO",
+      "dimension": "dimensionless_ratio",
+      "source": "core/curve_identification.py build_mnemonic_database SILICON_CALCIUM_RATIO and CARBON_OXYGEN_RATIO units. The dimension name is the one SILICON_CALCIUM_RATIO already uses. Not reviewed by the domain expert on CARBON_OXYGEN_RATIO.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "DB",
+      "canonical_unit": "DB",
+      "dimension": "decibel",
+      "source": "core/curve_identification.py build_mnemonic_database ACOUSTIC_IMAGING units. Not reviewed by the domain expert.",
+      "source_tier": "CITED"
+    },
+    {
+      "spelling": "AMP",
+      "canonical_unit": "AMP",
+      "dimension": "amplitude",
+      "source": "core/curve_identification.py build_mnemonic_database ACOUSTIC_IMAGING units. Not reviewed by the domain expert.",
+      "source_tier": "CITED"
+    }
+  ],
+  "conversions": [
+    {
+      "from_unit": "G/CC",
+      "to_unit": "KG/M3",
+      "factor": "1000/1",
+      "offset": "0/1",
+      "dimension": "density",
+      "source": "1 g/cm3 = 1000 kg/m3 exactly. core/unit_standardization.py UnitStandardizer.unit_conversions density G/CC.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "LB/FT3",
+      "to_unit": "KG/M3",
+      "factor": "28349523125/1769802912",
+      "offset": "0/1",
+      "dimension": "density",
+      "source": "1 lb = 0.45359237 kg exactly (international pound, 1959); 1 ft = 0.3048 m exactly (international foot, 1959). 1 lb/ft3 = 0.45359237 / 0.3048^3 kg/m3. The legacy factor 16.0185 was not copied.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "PPG",
+      "to_unit": "KG/M3",
+      "factor": "736351250/6145149",
+      "offset": "0/1",
+      "dimension": "density",
+      "source": "1 lb = 0.45359237 kg exactly (international pound, 1959); 1 in = 0.0254 m exactly; 1 US gallon = 231 in^3 exactly. core/unit_standardization.py UnitStandardizer.unit_conversions mud_weight PPG. The legacy factor 119.8264273 was rounded and was not copied.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "FT",
+      "to_unit": "M",
+      "factor": "381/1250",
+      "offset": "0/1",
+      "dimension": "length",
+      "source": "1 ft = 0.3048 m exactly (international foot, 1959). core/unit_standardization.py UnitStandardizer.unit_conversions depth FT.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "IN",
+      "to_unit": "M",
+      "factor": "127/5000",
+      "offset": "0/1",
+      "dimension": "length",
+      "source": "1 in = 0.0254 m exactly. core/curve_identification.py build_mnemonic_database CALIPER units IN.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "MM",
+      "to_unit": "M",
+      "factor": "1/1000",
+      "offset": "0/1",
+      "dimension": "length",
+      "source": "1 mm = 1/1000 m exactly.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "CM",
+      "to_unit": "M",
+      "factor": "1/100",
+      "offset": "0/1",
+      "dimension": "length",
+      "source": "1 cm = 1/100 m exactly.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "US/FT",
+      "to_unit": "US/M",
+      "factor": "1250/381",
+      "offset": "0/1",
+      "dimension": "acoustic_slowness",
+      "source": "Microseconds per foot to microseconds per metre scales by 1/0.3048. 1 ft = 0.3048 m exactly (international foot, 1959). The legacy factor 3.28084 was not copied.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "%",
+      "to_unit": "V/V",
+      "factor": "1/100",
+      "offset": "0/1",
+      "dimension": "porosity",
+      "source": "1 percent = 1/100 of the quantity. core/unit_standardization.py UnitStandardizer.unit_conversions porosity PERCENT. This conversion is only for the porosity meaning of %.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "PERCENT",
+      "to_unit": "V/V",
+      "factor": "1/100",
+      "offset": "0/1",
+      "dimension": "porosity",
+      "source": "1 percent = 1/100 of the quantity. core/unit_standardization.py UnitStandardizer.unit_conversions porosity PERCENT. This conversion is only for the porosity meaning of PERCENT.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "PSI",
+      "to_unit": "PA",
+      "factor": "8896443230521/1290320000",
+      "offset": "0/1",
+      "dimension": "pressure",
+      "source": "1 psi = 1 lbf/in^2. 1 lb = 0.45359237 kg exactly (international pound, 1959); standard gravity 9.80665 m/s^2 exactly, which defines the pound-force; 1 in = 0.0254 m exactly.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "BAR",
+      "to_unit": "PA",
+      "factor": "100000/1",
+      "offset": "0/1",
+      "dimension": "pressure",
+      "source": "1 bar = 100000 Pa exactly.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "KPA",
+      "to_unit": "PA",
+      "factor": "1000/1",
+      "offset": "0/1",
+      "dimension": "pressure",
+      "source": "1 kPa = 1000 Pa exactly.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "MPA",
+      "to_unit": "PA",
+      "factor": "1000000/1",
+      "offset": "0/1",
+      "dimension": "pressure",
+      "source": "1 MPa = 1000000 Pa exactly.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "DEGF",
+      "to_unit": "DEGC",
+      "factor": "5/9",
+      "offset": "-160/9",
+      "dimension": "temperature",
+      "source": "Celsius = (Fahrenheit - 32) * 5/9. core/unit_standardization.py UnitStandardizer.unit_conversions temperature DEGF. Same quantity, factor and offset.",
+      "source_tier": "CITED"
+    },
+    {
+      "from_unit": "K",
+      "to_unit": "DEGC",
+      "factor": "1/1",
+      "offset": "-5463/20",
+      "dimension": "temperature",
+      "source": "0 deg C = 273.15 K exactly. core/unit_standardization.py UnitStandardizer.unit_conversions temperature K.",
+      "source_tier": "CITED"
+    }
+  ]
+}

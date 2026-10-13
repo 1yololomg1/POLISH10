@@ -1,11 +1,16 @@
-"""Load the shipped and local mnemonic tables. D31, D35, D37, D38, D39, D41, D42.
+"""Load the shipped and local mnemonic tables, and the unit spellings. D31, D35, D37, D38, D39, D41, D42, D90, C1.
 
 Structure
 ---------
 FamilyRecord, MnemonicRecord, QualifierToken, VendorPrefix, ShippedTables
     The rows as read. No scientific field is filled in when the file omits it.
+SpellingRecord, ConversionRecord, UnitSpellings
+    spelling to canonical unit and dimension, and exact factor-and-offset
+    conversions inside one dimension.
 load_shipped_tables
-    Read the four JSON files under polish/tables. Read-only.
+    Read the four mnemonic JSON files under polish/tables. Read-only.
+load_unit_spellings
+    Read unit_spellings.json. Read-only.
 default_local_tables_directory
     %APPDATA%\\POLISH\\tables . This function does not create it.
 load_local_mnemonics
@@ -20,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 from polish.model.states import CurveRole
@@ -103,16 +109,20 @@ def _versioned(path: Path) -> tuple[str, list[object], dict[str, object]]:
 
 @dataclass(frozen=True)
 class FamilyRecord:
-    """One shipped family. D31, D41, D42, F7.
+    """One shipped family. D31, D41, D42, D90, F7.
 
-    ``display_log_scale`` is a display attribute. It is not an interpolation
-    domain. ``tool_group`` and ``interpolation_domain`` stay null where OD-13
-    and OD-14 are unanswered. A family has no range and no unit list.
+    ``accepted_dimensions`` is a non-empty list. A curve in any of those
+    dimensions is compatible with the family. Dimensions are not converted
+    between. ``display_log_scale`` is a display attribute. It is not an
+    interpolation domain. ``tool_group`` and ``interpolation_domain`` stay
+    null where OD-13 and OD-14 are unanswered. A family has no range and no
+    unit list.
     """
 
     id: str
     display_name: str
-    unit_dimension: str | None
+    accepted_dimensions: tuple[str, ...]
+    accepted_dimensions_note: str | None
     tool_group: str | None
     interpolation_domain: str | None
     display_log_scale: bool | None
@@ -196,6 +206,19 @@ class ShippedTables:
         return None
 
 
+def _dimension_list(value: object, what: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) == 0:
+        raise ValueError(f"{what} must be a non-empty list of dimension names.")
+    names: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or item.strip() == "":
+            raise ValueError(f"{what} must contain only non-empty strings.")
+        names.append(item)
+    if len(set(names)) != len(names):
+        raise ValueError(f"{what} contains a duplicate dimension name.")
+    return tuple(names)
+
+
 def _family_record(entry: object, seen: set[str]) -> FamilyRecord:
     row = _object(entry, "family entry")
     family_id = _no_delimiter(_text(row.get("id"), "family id"), "family id")
@@ -204,9 +227,12 @@ def _family_record(entry: object, seen: set[str]) -> FamilyRecord:
     seen.add(family_id)
     if "range" in row or "units" in row or "unit" in row:
         raise ValueError(f"Family {family_id} carries a range or a unit list.")
-    dimension = row.get("unit_dimension")
-    if dimension is not None:
-        dimension = _text(dimension, f"{family_id} unit_dimension")
+    if "unit_dimension" in row:
+        raise ValueError(f"Family {family_id} still carries unit_dimension.")
+    if "accepted_dimensions" not in row:
+        raise ValueError(f"{family_id} must state accepted_dimensions.")
+    if "accepted_dimensions_note" not in row:
+        raise ValueError(f"{family_id} must state accepted_dimensions_note, using null when there is none.")
     tool_group = row.get("tool_group")
     if tool_group is not None:
         tool_group = _text(tool_group, f"{family_id} tool_group")
@@ -220,7 +246,10 @@ def _family_record(entry: object, seen: set[str]) -> FamilyRecord:
     return FamilyRecord(
         id=family_id,
         display_name=_text(row.get("display_name"), f"{family_id} display_name"),
-        unit_dimension=dimension,
+        accepted_dimensions=_dimension_list(row.get("accepted_dimensions"), f"{family_id} accepted_dimensions"),
+        accepted_dimensions_note=_optional_text(
+            row.get("accepted_dimensions_note"), f"{family_id} accepted_dimensions_note"
+        ),
         tool_group=tool_group,
         interpolation_domain=domain,
         display_log_scale=_bool_or_null(row.get("display_log_scale"), f"{family_id} display_log_scale"),
@@ -402,3 +431,222 @@ def load_local_mnemonics(directory: Path | None, family_ids: frozenset[str]) -> 
             )
         )
     return tuple(rows)
+
+
+@dataclass(frozen=True)
+class SpellingRecord:
+    """One spelling of a unit. C1, D87.
+
+    The same spelling may appear twice when it has two meanings. Those rows
+    differ in ``dimension``. A conversion, when one exists, is a separate
+    ``ConversionRecord`` and stays inside one dimension.
+    """
+
+    spelling: str
+    canonical_unit: str
+    dimension: str
+    source: str
+    source_tier: str
+
+
+@dataclass(frozen=True)
+class ConversionRecord:
+    """Exact re-expression y = factor * x + offset. OD-05, C1.
+
+    ``factor`` and ``offset`` are rational. The source names where the
+    numbers come from. This record does not change stored samples.
+    """
+
+    from_unit: str
+    to_unit: str
+    factor: Fraction
+    offset: Fraction
+    dimension: str
+    source: str
+    source_tier: str
+
+
+@dataclass(frozen=True)
+class UnitSpellings:
+    """The shipped spelling table and the conversions inside one dimension. C1, D87.
+
+    ``case_conflicts`` lists pairs of spellings that differ only by case and
+    do not mean the same units. Lookup keeps case only for those spellings.
+    Everywhere else the match ignores case.
+    """
+
+    version: str
+    spellings: tuple[SpellingRecord, ...]
+    conversions: tuple[ConversionRecord, ...]
+    case_conflicts: tuple[tuple[str, str], ...]
+
+    def meanings(self, text: str) -> tuple[SpellingRecord, ...]:
+        """Spellings that match ``text``. One entry per canonical unit and dimension.
+
+        Case is ignored unless ``text`` is one of a pair that differs only by
+        case and means different units.
+        """
+
+        if not isinstance(text, str):
+            raise TypeError("A unit spelling must be a str.")
+        conflicted = {name for pair in self.case_conflicts for name in pair}
+        folded = text.casefold()
+        if text in conflicted or any(row.spelling in conflicted and row.spelling.casefold() == folded for row in self.spellings):
+            chosen = [row for row in self.spellings if row.spelling == text]
+        else:
+            chosen = [row for row in self.spellings if row.spelling.casefold() == folded]
+        seen: set[tuple[str, str]] = set()
+        unique: list[SpellingRecord] = []
+        for row in chosen:
+            key = (row.canonical_unit, row.dimension)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(row)
+        return tuple(unique)
+
+    def conversion(self, from_unit: str, to_unit: str, dimension: str) -> ConversionRecord | None:
+        """The recorded factor from one canonical unit to another, or None.
+
+        The inverse of a stored conversion is included. A missing conversion
+        is not invented.
+        """
+
+        for record in self.conversions:
+            if record.dimension == dimension and record.from_unit == from_unit and record.to_unit == to_unit:
+                return record
+        return None
+
+
+def _fraction(value: object, what: str) -> Fraction:
+    if not isinstance(value, str) or value.count("/") != 1:
+        raise ValueError(f"{what} must be an exact fraction written as numerator/denominator.")
+    numerator, denominator = value.split("/")
+    if numerator in {"", "+", "-"} or not _integer_text(numerator) or not _integer_text(denominator):
+        raise ValueError(f"{what} must be an exact integer fraction.")
+    try:
+        return Fraction(int(numerator), int(denominator))
+    except ZeroDivisionError as exc:
+        raise ValueError(f"{what} has a zero denominator.") from exc
+
+
+def _integer_text(text: str) -> bool:
+    body = text[1:] if text.startswith(("+", "-")) else text
+    return body.isdigit() and body != ""
+
+
+def _case_conflicts(rows: tuple[SpellingRecord, ...]) -> tuple[tuple[str, str], ...]:
+    grouped: dict[str, dict[str, set[tuple[str, str]]]] = {}
+    for row in rows:
+        written = grouped.setdefault(row.spelling.casefold(), {})
+        written.setdefault(row.spelling, set()).add((row.canonical_unit, row.dimension))
+    conflicts: list[tuple[str, str]] = []
+    for written in grouped.values():
+        names = sorted(written)
+        if len(names) < 2:
+            continue
+        for index, left in enumerate(names):
+            for right in names[index + 1 :]:
+                if written[left] != written[right]:
+                    conflicts.append((left, right))
+    return tuple(conflicts)
+
+
+def _inverse(record: ConversionRecord) -> ConversionRecord:
+    if record.factor == 0:
+        raise ValueError(f"Conversion {record.from_unit} to {record.to_unit} has a zero factor.")
+    return ConversionRecord(
+        from_unit=record.to_unit,
+        to_unit=record.from_unit,
+        factor=1 / record.factor,
+        offset=-(record.offset / record.factor),
+        dimension=record.dimension,
+        source=f"Inverse of the recorded conversion from {record.from_unit} to {record.to_unit}. {record.source}",
+        source_tier=record.source_tier,
+    )
+
+
+def load_unit_spellings() -> UnitSpellings:
+    """Read the shipped unit spellings. C1, D87, OD-05.
+
+    Opened for reading only. A spelling without a source is rejected. A
+    conversion that leaves its dimension, or that names a unit the table
+    does not carry in that dimension, is rejected. The inverse of each
+    stored conversion is added so a round trip uses the same exact factor.
+    """
+
+    path = _TABLES / "unit_spellings.json"
+    payload = _read_json(path)
+    version = _text(payload.get("version"), f"{path.name} version")
+    metadata = payload.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise ValueError(f"{path.name} metadata must be an object when present.")
+    spelling_rows = payload.get("spellings")
+    conversion_rows = payload.get("conversions")
+    if not isinstance(spelling_rows, list) or len(spelling_rows) == 0:
+        raise ValueError("unit_spellings.json spellings must be a non-empty list.")
+    if not isinstance(conversion_rows, list):
+        raise ValueError("unit_spellings.json conversions must be a list.")
+    if not isinstance(metadata.get("review"), str) or str(metadata.get("review")).strip() == "":
+        raise ValueError("unit_spellings.json metadata.review must be a non-empty string.")
+    spellings: list[SpellingRecord] = []
+    seen_meaning: set[tuple[str, str, str]] = set()
+    for entry in spelling_rows:
+        row = _object(entry, "spelling entry")
+        text = _text(row.get("spelling"), "spelling")
+        canonical = _text(row.get("canonical_unit"), f"{text} canonical_unit")
+        dimension = _text(row.get("dimension"), f"{text} dimension")
+        key = (text, canonical, dimension)
+        if key in seen_meaning:
+            raise ValueError(f"Duplicate spelling {text!r} for {canonical} {dimension}.")
+        seen_meaning.add(key)
+        spellings.append(
+            SpellingRecord(
+                spelling=text,
+                canonical_unit=canonical,
+                dimension=dimension,
+                source=_text(row.get("source"), f"{text} source"),
+                source_tier=_text(row.get("source_tier"), f"{text} source_tier"),
+            )
+        )
+    known = {(row.canonical_unit, row.dimension) for row in spellings}
+    conversions: list[ConversionRecord] = []
+    seen_edge: set[tuple[str, str, str]] = set()
+    for entry in conversion_rows:
+        row = _object(entry, "conversion entry")
+        frm = _text(row.get("from_unit"), "conversion from_unit")
+        to = _text(row.get("to_unit"), "conversion to_unit")
+        dimension = _text(row.get("dimension"), "conversion dimension")
+        if frm == to:
+            raise ValueError(f"Conversion {frm} to itself is not a re-expression.")
+        if (frm, dimension) not in known or (to, dimension) not in known:
+            raise ValueError(f"Conversion {frm} to {to} is not inside dimension {dimension}.")
+        edge = (frm, to, dimension)
+        if edge in seen_edge:
+            raise ValueError(f"Duplicate conversion {frm} to {to} in {dimension}.")
+        seen_edge.add(edge)
+        conversions.append(
+            ConversionRecord(
+                from_unit=frm,
+                to_unit=to,
+                factor=_fraction(row.get("factor"), f"{frm} to {to} factor"),
+                offset=_fraction(row.get("offset"), f"{frm} to {to} offset"),
+                dimension=dimension,
+                source=_text(row.get("source"), f"{frm} to {to} source"),
+                source_tier=_text(row.get("source_tier"), f"{frm} to {to} source_tier"),
+            )
+        )
+    completed = list(conversions)
+    for record in conversions:
+        back = (record.to_unit, record.from_unit, record.dimension)
+        if back in seen_edge:
+            continue
+        completed.append(_inverse(record))
+        seen_edge.add(back)
+    rows = tuple(spellings)
+    return UnitSpellings(
+        version=version,
+        spellings=rows,
+        conversions=tuple(completed),
+        case_conflicts=_case_conflicts(rows),
+    )
