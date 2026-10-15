@@ -125,6 +125,59 @@ _STAGE3_RULE_DEPENDENT_KEYS = frozenset(
         "mnemonic",
     }
 )
+# Stage 4 (P12). Depth lists and sharing lists are JSON text. A finding may
+# omit a key; the hard-violation question and the gap notice do not share keys.
+_STAGE4_AMBIGUOUS_KEYS = frozenset(
+    {
+        "rule_id",
+        "library_version",
+        "depths",
+        "sample_indexes",
+        "sample_count",
+        "question",
+        "output_inclusion",
+        "violation_effect",
+        "minimum",
+        "maximum",
+        "mnemonic",
+        "family_id",
+    }
+)
+_STAGE4_RULE_DEPENDENT_KEYS = frozenset(
+    {
+        "rule_id",
+        "library_version",
+        "depths",
+        "sample_indexes",
+        "sample_count",
+        "outside_count",
+        "non_absent_count",
+        "outside_fraction_more_than",
+        "log_level",
+        "minimum",
+        "maximum",
+        "mnemonic",
+        "family_id",
+    }
+)
+_STAGE4_INFORMATIONAL_KEYS = frozenset(
+    {
+        "reason",
+        "eligibility_evidence",
+        "gap_class",
+        "gap_evidence",
+        "confidence",
+        "not_fillable",
+        "sharing_curves",
+        "overlap_measure",
+        "depth_at_start",
+        "depth_at_end",
+        "sample_start",
+        "sample_end",
+        "mnemonic",
+        "family_id",
+    }
+)
 
 
 def _evidence_keys(block_type: BlockType) -> frozenset[str]:
@@ -133,11 +186,14 @@ def _evidence_keys(block_type: BlockType) -> frozenset[str]:
         keys = keys | _STAGE1_EVIDENCE_KEYS
     if block_type is BlockType.INFORMATIONAL:
         keys = keys | _STAGE2_INFORMATIONAL_KEYS
+        keys = keys | _STAGE4_INFORMATIONAL_KEYS
     if block_type is BlockType.AMBIGUOUS_INTERPRETATION:
         keys = keys | _STAGE2_AMBIGUOUS_KEYS
         keys = keys | _STAGE3_AMBIGUOUS_KEYS
+        keys = keys | _STAGE4_AMBIGUOUS_KEYS
     if block_type is BlockType.RULE_DEPENDENT_WARNING:
         keys = keys | _STAGE3_RULE_DEPENDENT_KEYS
+        keys = keys | _STAGE4_RULE_DEPENDENT_KEYS
     return keys
 
 
