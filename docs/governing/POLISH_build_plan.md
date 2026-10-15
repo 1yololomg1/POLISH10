@@ -100,6 +100,7 @@ Two of the remaining numbers would flag real data:
 | PEF −2–270 | `30_3-5 S`: 1 above (334.5 at 3,898.5 m) · KEOUGH's PE has no unit in the header |
 | Resistivity −0.02–20,000 | `WLC…F-1B` RT: 40 above (max 97,540) · KEOUGH RILD 442 and RILM 1,394 above, reaching 100,000 |
 | SP −150–50 mV, log-level 20% | `34_10-19`: 6,703 of 13,224 above 50 mV (~51%) — this log flags for review · KEOUGH: 866 above, 60 below (min −200 at 4.5 ft) |
+Note 15 Oct 2026: Stage 4 (P12) also flags one NPHI sample in 30_3-5 S.las, 0.6204 m3/m3 at 4,126.16 m, above the 0.6 limit; the 15 Sept scan did not list it. It is in the same 4,126 m interval as the four low RHOB samples above.
 
 ### 1.0.2 Follow-up on the rounding rule — measured on 144 wells
 
@@ -1359,7 +1360,7 @@ Report in the standard format.
 
 ### P12 — Stage 4: Validity, rule library, gap inventory
 
-**Needs:** P11. OD-12 and OD-13 answered — or accept definitional-only rules and "not eligible" everywhere else for now.
+**Needs:** P11. OD-12 and OD-13 answered — or accept definitional-only rules and "not eligible" everywhere else for now. Sent 14 Oct 2026 with the fallback (owner): OD-12 types per 1.0.1, PEF as PLAUSIBILITY until classified, OD-13 unset (cases 2 and 3 cannot apply; remaining interior gaps AMBIGUOUS); non-finite values INVALID as a definitional rule.
 
 ````text
 POLISH rebuild — P12: Stage 4 Validity assessment, rule library, gap inventory.
