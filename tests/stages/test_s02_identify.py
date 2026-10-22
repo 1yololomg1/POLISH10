@@ -208,10 +208,12 @@ def test_unknown_mnemonic_is_preserved_and_not_eligible(tmp_path: Path):
     assert unknown.label is None
     assert ingested.dataset is not None
     assert ingested.dataset.curves[1].original_mnemonic == "ZZTOP"
-    notices = _of_type(result, BlockType.INFORMATIONAL)
+    notices = _of_type(result, BlockType.RULE_DEPENDENT_WARNING)
     assert len(notices) == 1
     assert notices[0].evidence.as_dict()["mnemonic"] == "ZZTOP"
     assert notices[0].evidence.as_dict()["preserved"] is True
+    assert "which family it behaves as" in notices[0].message
+    assert _of_type(result, BlockType.INFORMATIONAL) == []
 
 
 def test_item_8b_mnemonics_are_not_mapped_and_get_no_suggestion(tmp_path: Path):
@@ -256,7 +258,8 @@ def test_main_and_repeat_passes_ask_once_and_choose_no_default(tmp_path: Path):
     assert len(ambiguous) == 1
     evidence = ambiguous[0].evidence.as_dict()
     assert evidence["family_id"] == "GAMMA_RAY_TOTAL"
-    assert json.loads(str(evidence["scope_options"])) == ["THIS_WELL", "ALL_WELLS"]
+    assert json.loads(str(evidence["scope_options"])) == ["THIS_ITEM", "LOCAL_RULE"]
+    assert "this well" in ambiguous[0].message and "all wells" in ambiguous[0].message
     assert "default" not in evidence
     assert "chosen" not in evidence
     assert "No default is chosen" in ambiguous[0].message
@@ -281,7 +284,11 @@ def test_similarity_suggests_without_identifying(tmp_path: Path):
     assert near.suggestions[0].tier is EvidenceTier.PROPOSED
     assert isinstance(near.suggestions[0].score, float)
     assert near.suggestions[0].score >= 0.7
-    notice = next(item for item in _of_type(result, BlockType.INFORMATIONAL) if item.evidence.as_dict().get("mnemonic") == "AT91")
+    notice = next(
+        item
+        for item in _of_type(result, BlockType.RULE_DEPENDENT_WARNING)
+        if item.evidence.as_dict().get("mnemonic") == "AT91"
+    )
     evidence = notice.evidence.as_dict()
     assert evidence["suggested_family"] == "RESISTIVITY_DEEP"
     assert evidence["method"] == "similarity"
@@ -362,6 +369,13 @@ def test_family_less_local_entry_loads(tmp_path: Path):
     assert flag.label == USER_MAPPED_LABEL
     assert flag.user_label == "shop flag"
     assert flag.processing_eligibility is ProcessingEligibility.NOT_ELIGIBLE_NO_FAMILY
+    warnings = [
+        item
+        for item in _of_type(result, BlockType.RULE_DEPENDENT_WARNING)
+        if item.evidence.as_dict().get("mnemonic") == "SHOP_FLAG"
+    ]
+    assert len(warnings) == 1
+    assert "no family" in warnings[0].message
 
 
 def test_missing_local_directory_is_not_created(tmp_path: Path):

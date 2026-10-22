@@ -122,9 +122,11 @@ class SampleStatus(Enum):
 
 
 class OutputInclusion(Enum):
-    """Whether an invalid sample is written to the processed file. D17, D44.
+    """Whether an invalid sample, or a measured sample outside a plausibility limit (D92), is written to the processed file.
 
-    The original file is never altered. Applies to an invalid sample.
+    EXCLUDED also means a suspicious sample is not used by later stages.
+    The original file is never altered. How later stages treat a suspicious
+    sample that is still PENDING_DECISION is not decided here (P23 onward).
     """
 
     PENDING_DECISION = "PENDING_DECISION"

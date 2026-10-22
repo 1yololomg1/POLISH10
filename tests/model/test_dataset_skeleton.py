@@ -7,7 +7,14 @@ import numpy
 import pytest
 
 from polish.model.dataset import DepthDirection, DepthGrid, DepthRegularity
-from polish.model.findings import DecisionRecord, Evidence, FindingRecord, project_for_export
+from polish.model.findings import (
+    DecisionActor,
+    DecisionRecord,
+    DecisionScope,
+    Evidence,
+    FindingRecord,
+    project_for_export,
+)
 from polish.model.ids import DatasetId, FileHash
 from polish.model.states import (
     BlockType,
@@ -136,6 +143,14 @@ def test_projection_feeds_the_existing_export_gate():
         finding.id,
         Disposition(IssueDisposition.ACCEPTED),
         UserAction.ACKNOWLEDGE,
+        None,
+        DecisionScope.THIS_ITEM,
+        DecisionActor.USER,
+        created_at,
+        "0.0.0",
+        (("families", "1"),),
+        FileHash("a" * 64),
+        None,
     )
     accepted = project_for_export(finding, decision)
     assert export_permission((accepted,), ()).allowed is True
@@ -161,6 +176,14 @@ def test_decision_for_another_finding_is_refused():
         "dec-9",
         "other-finding",
         Disposition(IssueDisposition.UNDISPOSITIONED),
+        None,
+        None,
+        DecisionScope.THIS_ITEM,
+        DecisionActor.USER,
+        created_at,
+        "0.0.0",
+        (("families", "1"),),
+        FileHash("b" * 64),
         None,
     )
     with pytest.raises(ValueError, match="does not match"):

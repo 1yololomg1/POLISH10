@@ -297,8 +297,11 @@ def test_sp_flags_only_above_one_fifth_and_never_invalidates_a_sample(tmp_path: 
     flagged = _one(over, "SP")
     assert flagged.outcome is ValidationOutcome.PLAUSIBILITY_WARNING
     assert all(sample.status is not SampleStatus.INVALID for sample in flagged.samples)
-    warning = _findings(over, BlockType.RULE_DEPENDENT_WARNING, "SP")
+    warning = _findings(over, BlockType.INFORMATIONAL, "SP")
     assert len(warning) == 1
+    assert _findings(over, BlockType.RULE_DEPENDENT_WARNING, "SP") == []
+    assert "flagged for review" in warning[0].message
+    assert all(sample.output_inclusion is None for sample in flagged.samples)
     evidence = warning[0].evidence.as_dict()
     assert evidence["log_level"] is True
     assert evidence["outside_count"] == 2
@@ -330,7 +333,8 @@ def test_dt_below_40_is_invalid_visible_and_unclipped(tmp_path: Path):
     evidence = findings[0].evidence.as_dict()
     assert evidence["rule_id"] == "SONIC_COMPRESSIONAL"
     assert evidence["output_inclusion"] == "PENDING_DECISION"
-    assert json.loads(evidence["scope_options"]) == ["THIS_WELL", "ALL_WELLS"]
+    assert json.loads(evidence["scope_options"]) == ["THIS_ITEM", "LOCAL_RULE"]
+    assert json.loads(evidence["options"]) == ["KEEP", "EXCLUDE"]
     assert json.loads(evidence["depths"]) == [0.0, 3.0]
     assert evidence["sample_count"] == 2
     assert "Exclude these samples" in findings[0].message
@@ -363,8 +367,11 @@ def test_exact_conversion_is_required(tmp_path: Path):
     assert rhob.outcome is ValidationOutcome.PLAUSIBILITY_WARNING
     assert rhob.samples[0].status is SampleStatus.MEASURED
     assert rhob.samples[1].status is SampleStatus.MEASURED
-    warning = _findings(result, BlockType.RULE_DEPENDENT_WARNING, "RHOB")
+    warning = _findings(result, BlockType.AMBIGUOUS_INTERPRETATION, "RHOB")
     assert json.loads(warning[0].evidence.as_dict()["sample_indexes"]) == [1]
+    assert json.loads(warning[0].evidence.as_dict()["options"]) == ["KEEP", "EXCLUDE"]
+    assert rhob.samples[1].status is SampleStatus.MEASURED
+    assert rhob.samples[1].output_inclusion is OutputInclusion.PENDING_DECISION
     assert list(density.dataset.curves[1].values) == [2650.0, 1000.0]
 
     percent = _pipeline(tmp_path / "percent", _las([("NPHI", "PERCENT")], [["45", "45"]]))[4]
@@ -520,13 +527,13 @@ def _fixture_report() -> dict[str, object]:
                 for rule_id in sample.invalid_rules:
                     flags[rule_id] = flags.get(rule_id, 0) + 1
         for finding in result.findings:
-            if finding.block_type is not BlockType.RULE_DEPENDENT_WARNING:
-                continue
             evidence = finding.evidence.as_dict()
+            if "rule_id" not in evidence:
+                continue
             rule_id = str(evidence["rule_id"])
-            if evidence.get("log_level") is True:
+            if finding.block_type is BlockType.INFORMATIONAL and evidence.get("log_level") is True:
                 flags[rule_id] = flags.get(rule_id, 0) + int(evidence["outside_count"])
-            else:
+            elif finding.block_type is BlockType.AMBIGUOUS_INTERPRETATION and evidence.get("violation_effect") == "WARNING":
                 flags[rule_id] = flags.get(rule_id, 0) + int(evidence["sample_count"])
         report[path.name] = {
             "outcomes": outcomes,

@@ -1,7 +1,7 @@
 """Stage 4: validity, the rule library, and the gap inventory. It does not rewrite samples.
 
 Implements D11 (as revised by F15), D87, D44, D49 (as revised by F6), D50, D66,
-D26, C2, C3, UXC6, and UXC9. This is the keystone stage (D26).
+D26, D92, C2, C3, UXC4, UXC6, and UXC9. This is the keystone stage (D26).
 
 Structure
 ---------
@@ -29,6 +29,12 @@ The non-finite rule applies to every curve. It does not, by itself, make a
 curve PASSED. A family rule applies only when the curve is eligible and its
 unit is the rule's unit or converts to it exactly (OD-05, read_values and
 require_unit). A GAPI rule is never applied to a CPS curve.
+
+A sample outside a suspicious limit stays MEASURED, with output inclusion
+PENDING_DECISION until the user answers keep or exclude (D92). How a later
+stage treats a suspicious sample that is still PENDING_DECISION is not
+decided here (P23 onward). The SP rule stays a log-level review flag. It
+does not mark a sample.
 """
 
 from __future__ import annotations
@@ -40,7 +46,7 @@ from dataclasses import dataclass
 import numpy
 
 from polish.model.dataset import Curve, Dataset
-from polish.model.findings import Evidence, FindingRecord
+from polish.model.findings import DecisionScope, Evidence, FindingRecord
 from polish.model.ids import CurveRef
 from polish.model.states import (
     BlockType,
@@ -74,7 +80,8 @@ _LEGACY_GAP_SIZE_DEPTH_FT = {
 }
 
 _NON_FINITE_ID = "non_finite_value"
-_SCOPE_OPTIONS = ("THIS_WELL", "ALL_WELLS")
+_SCOPE_OPTIONS = (DecisionScope.THIS_ITEM.value, DecisionScope.LOCAL_RULE.value)
+_KEEP_OR_EXCLUDE = ("KEEP", "EXCLUDE")
 _QUESTION = "Exclude these samples from the processed output, or keep them?"
 
 # OD-13 sentences. They are the record that the case cannot apply.
@@ -173,8 +180,11 @@ class SampleMark:
     """Status of one sample, stored beside the array. D44, D66.
 
     The source value is not in this record. INVALID carries
-    PENDING_DECISION and the rule ids that marked it. MEASURED and ABSENT
-    carry neither. EXCLUDED and KEPT are not set in this stage.
+    PENDING_DECISION and the rule ids that marked it. A measured sample
+    outside a plausibility limit also carries PENDING_DECISION and no rule
+    id (D92). ABSENT carries neither. EXCLUDED and KEPT are not set in this
+    stage. How a later stage treats PENDING_DECISION on a suspicious sample
+    is not decided here (P23 onward).
     """
 
     status: SampleStatus
@@ -190,10 +200,14 @@ class SampleMark:
             if not self.invalid_rules or not all(isinstance(rule_id, str) and rule_id for rule_id in self.invalid_rules):
                 raise ValueError("An INVALID sample names the rule that marked it.")
             return
+        if self.status is SampleStatus.MEASURED and self.output_inclusion is OutputInclusion.PENDING_DECISION:
+            if self.invalid_rules:
+                raise ValueError("A suspicious sample stays MEASURED and does not carry an invalid-rule id.")
+            return
         if self.status not in (SampleStatus.MEASURED, SampleStatus.ABSENT):
             raise ValueError("Stage 4 sets MEASURED, INVALID, or ABSENT.")
         if self.output_inclusion is not None or self.invalid_rules:
-            raise ValueError("Only an INVALID sample carries output inclusion and a rule id.")
+            raise ValueError("Only an invalid or suspicious sample carries output inclusion.")
 
 
 @dataclass(frozen=True)
@@ -524,7 +538,10 @@ def _outside_finite(values: numpy.ndarray, minimum: float, maximum: float) -> nu
 def _marks(
     stored: numpy.ndarray,
     hard_indexes: dict[int, list[str]],
+    warning_indexes: frozenset[int],
 ) -> tuple[SampleMark, ...]:
+    """INVALID for a hard limit. MEASURED and pending for a suspicious limit. D92."""
+
     marks: list[SampleMark] = []
     for index, value in enumerate(stored):
         number = float(value)
@@ -536,6 +553,8 @@ def _marks(
             rules = (_NON_FINITE_ID,) + tuple(rule_id for rule_id in rules if rule_id != _NON_FINITE_ID)
         if rules:
             marks.append(SampleMark(SampleStatus.INVALID, OutputInclusion.PENDING_DECISION, rules))
+        elif index in warning_indexes:
+            marks.append(SampleMark(SampleStatus.MEASURED, OutputInclusion.PENDING_DECISION, ()))
         else:
             marks.append(SampleMark(SampleStatus.MEASURED, None, ()))
     return tuple(marks)
@@ -557,6 +576,7 @@ def _prepare_curve(
     applied: list[str] = []
     hits: list[_Hit] = []
     hard_indexes: dict[int, list[str]] = {}
+    warning_indexes: set[int] = set()
     unit_blocked = False
     for rule in family_rules:
         if curve_units.processing_eligibility is not ProcessingEligibility.ELIGIBLE:
@@ -595,9 +615,10 @@ def _prepare_curve(
         elif rule.violation_effect == "WARNING":
             if indexes:
                 hits.append(_Hit(rule, indexes, len(indexes), 0))
+                warning_indexes.update(indexes)
         else:
             raise ValueError(f"{rule.id} effect {rule.violation_effect} is not applied to samples.")
-    samples = _marks(stored, hard_indexes)
+    samples = _marks(stored, hard_indexes, frozenset(warning_indexes))
     return _Prepared(
         curve=curve,
         identification=identification,
@@ -768,6 +789,14 @@ def _outcome(
     return ValidationOutcome.NOT_ELIGIBLE, None, reason, evidence
 
 
+def _number_text(value: float) -> str:
+    """A bound as written, without a trailing decimal on a whole number."""
+
+    if value.is_integer():
+        return str(int(value))
+    return format(value, "g")
+
+
 def _fraction_text(rule: ValidityRule) -> str:
     fraction = rule.bound_values.outside_fraction_more_than
     if fraction is None:
@@ -822,6 +851,7 @@ def _add_findings(
             "output_inclusion": OutputInclusion.PENDING_DECISION.value,
             "violation_effect": rule.violation_effect,
             "scope_options": json.dumps(list(_SCOPE_OPTIONS)),
+            "options": json.dumps(list(_KEEP_OR_EXCLUDE)),
             "mnemonic": mnemonic,
             "family_id": family_id,
         }
@@ -832,12 +862,16 @@ def _add_findings(
         message = (
             f"Curve {mnemonic} has {len(indexes)} samples marked INVALID by {name}. "
             "They stay visible. Exclude these samples from the processed output, or keep them? "
-            "Scope is THIS_WELL or ALL_WELLS. Nothing is excluded until that choice is recorded. "
+            "Scope is this well or all wells. Nothing is excluded until that choice is recorded. "
             "Nothing is clipped. The original file is not altered. Every affected depth is listed."
         )
         ledger.add(BlockType.AMBIGUOUS_INTERPRETATION, message, ref, fields)
     for hit in item.hits:
+        low = _required_bound(hit.rule, "minimum")
+        high = _required_bound(hit.rule, "maximum")
         if hit.rule.log_level:
+            # The library token is MV. The review sentence uses mV (D92, 18 Sept).
+            unit = "mV" if hit.rule.canonical_unit == "MV" else hit.rule.canonical_unit
             fields = {
                 "rule_id": hit.rule.id,
                 "library_version": hit.rule.library_version,
@@ -846,36 +880,41 @@ def _add_findings(
                 "non_absent_count": hit.non_absent_count,
                 "outside_fraction_more_than": _fraction_text(hit.rule),
                 "log_level": True,
-                "minimum": _required_bound(hit.rule, "minimum"),
-                "maximum": _required_bound(hit.rule, "maximum"),
+                "minimum": low,
+                "maximum": high,
                 "mnemonic": mnemonic,
                 "family_id": family_id,
             }
             message = (
-                f"Curve {mnemonic} has more than {_fraction_text(hit.rule)} of its non-absent samples "
-                f"outside {hit.rule.bound_values.minimum} to {hit.rule.bound_values.maximum} "
-                f"{hit.rule.canonical_unit} ({hit.outside_count} of {hit.non_absent_count}). "
-                "The log is flagged for review. No sample is marked INVALID by this rule."
+                f"Curve {mnemonic}: more than {_fraction_text(hit.rule)} of its samples are outside "
+                f"{_number_text(low)} to {_number_text(high)} {unit}. The log is flagged for review."
             )
-        else:
-            fields = {
-                "rule_id": hit.rule.id,
-                "library_version": hit.rule.library_version,
-                "depths": _depths(grid, hit.indexes),
-                "sample_indexes": json.dumps(list(hit.indexes)),
-                "sample_count": len(hit.indexes),
-                "log_level": False,
-                "minimum": _required_bound(hit.rule, "minimum"),
-                "maximum": _required_bound(hit.rule, "maximum"),
-                "mnemonic": mnemonic,
-                "family_id": family_id,
-            }
-            message = (
-                f"Curve {mnemonic} has {len(hit.indexes)} samples outside "
-                f"{hit.rule.bound_values.minimum} to {hit.rule.bound_values.maximum} "
-                f"{hit.rule.canonical_unit} ({hit.rule.rule_type}). The samples stay MEASURED."
-            )
-        ledger.add(BlockType.RULE_DEPENDENT_WARNING, message, ref, fields)
+            ledger.add(BlockType.INFORMATIONAL, message, ref, fields)
+            continue
+        unit = hit.rule.canonical_unit if hit.rule.canonical_unit is not None else ""
+        fields = {
+            "rule_id": hit.rule.id,
+            "library_version": hit.rule.library_version,
+            "depths": _depths(grid, hit.indexes),
+            "sample_indexes": json.dumps(list(hit.indexes)),
+            "sample_count": len(hit.indexes),
+            "output_inclusion": OutputInclusion.PENDING_DECISION.value,
+            "violation_effect": hit.rule.violation_effect,
+            "scope_options": json.dumps(list(_SCOPE_OPTIONS)),
+            "options": json.dumps(list(_KEEP_OR_EXCLUDE)),
+            "minimum": low,
+            "maximum": high,
+            "mnemonic": mnemonic,
+            "family_id": family_id,
+        }
+        message = (
+            f"Curve {mnemonic} has {len(hit.indexes)} samples outside "
+            f"{_number_text(low)} to {_number_text(high)} {unit} (suspicious). "
+            "Keep them (used by later stages, stays flagged) or exclude them "
+            "(not used by later stages, still shown, listed in the export)? "
+            "A reason is required. Scope: this well or all wells."
+        )
+        ledger.add(BlockType.AMBIGUOUS_INTERPRETATION, message, ref, fields)
     if outcome is ValidationOutcome.NOT_ELIGIBLE:
         if reason is None or evidence_text is None:
             raise ValueError("A NOT_ELIGIBLE curve needs a reason and the evidence that would make it eligible.")

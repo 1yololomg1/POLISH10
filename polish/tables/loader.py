@@ -15,9 +15,11 @@ default_local_tables_directory
     %APPDATA%\\POLISH\\tables . This function does not create it.
 load_local_mnemonics
     Read mnemonics.json from a directory that already exists. Missing is empty.
+load_local_decisions
+    Read local_decisions.json the same way. Missing is empty.
 
-A local row is tier USER_DEFINED. Saving local rows is not this module (P13).
-Nothing here is sent off the machine (D38).
+A local mnemonic row is tier USER_DEFINED. ``decision_id`` is optional.
+Saving rows is polish.decisions (P13). Nothing here is sent off the machine (D38).
 """
 
 from __future__ import annotations
@@ -32,8 +34,14 @@ from polish.model.states import CurveRole
 
 _TABLES = Path(__file__).resolve().parent
 _LOCAL_FILE_NAME = "mnemonics.json"
+LOCAL_MNEMONICS_FILE = _LOCAL_FILE_NAME
+LOCAL_DECISIONS_FILE = "local_decisions.json"
 _INTERPOLATION_DOMAINS = frozenset({"LINEAR", "LOG"})
-_LOCAL_KEYS = frozenset({"mnemonic", "family", "user_label", "unit", "role", "tier"})
+_LOCAL_KEYS = frozenset({"mnemonic", "family", "user_label", "unit", "role", "tier", "decision_id"})
+_LOCAL_DECISION_KEYS = frozenset(
+    {"decision_id", "question_kind", "match_key", "chosen_option", "reason", "created"}
+)
+_LOCAL_DECISIONS_NAME = LOCAL_DECISIONS_FILE
 _EVIDENCE_DELIMITER = frozenset({";", "|", "\n", "\r"})
 
 
@@ -149,6 +157,7 @@ class MnemonicRecord:
     origin: str
     user_label: str | None = None
     unit: str | None = None
+    decision_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -428,6 +437,84 @@ def load_local_mnemonics(directory: Path | None, family_ids: frozenset[str]) -> 
                 origin="local",
                 user_label=_optional_text(row.get("user_label"), f"{mnemonic} user_label"),
                 unit=_optional_text(row.get("unit"), f"{mnemonic} unit"),
+                decision_id=_optional_text(row.get("decision_id"), f"{mnemonic} decision_id"),
+            )
+        )
+    return tuple(rows)
+
+
+@dataclass(frozen=True)
+class LocalDecisionRecord:
+    """One rule saved for all wells that is not a mnemonic mapping. D92, OD-22.
+
+    ``question_kind`` is a rule id, or ``pass_selection``. ``match_key`` is
+    a family id. The row carries the decision that wrote it.
+    """
+
+    decision_id: str
+    question_kind: str
+    match_key: str
+    chosen_option: str
+    reason: str
+    created: str
+
+
+def load_local_decisions(directory: Path | None) -> tuple[LocalDecisionRecord, ...]:
+    """Load saved all-wells decisions if ``directory`` already exists. D47, D92, OD-22.
+
+    A missing directory or a missing local_decisions.json is an empty tuple.
+    This function does not create the directory. Unknown keys are rejected.
+    A repeated decision id, or a repeated question kind and match key, is
+    rejected. Nothing is filled in when a field is absent.
+
+    Parameters
+    ----------
+    directory:
+        The local tables directory, or None when there is no app-data path.
+
+    Returns
+    -------
+    tuple[LocalDecisionRecord, ...]
+        The rows in file order.
+    """
+
+    if directory is None or not directory.is_dir():
+        return ()
+    path = directory / _LOCAL_DECISIONS_NAME
+    if not path.is_file():
+        return ()
+    payload = _read_json(path)
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError(f"{path.name} entries must be a list.")
+    rows: list[LocalDecisionRecord] = []
+    seen_ids: set[str] = set()
+    seen_questions: set[tuple[str, str]] = set()
+    for entry in entries:
+        row = _object(entry, "local decision entry")
+        unknown = set(row) - _LOCAL_DECISION_KEYS
+        if unknown:
+            raise ValueError(f"Local decision entry has unknown keys: {sorted(unknown)}.")
+        decision_id = _text(row.get("decision_id"), "local decision_id")
+        if decision_id in seen_ids:
+            raise ValueError(f"Duplicate local decision {decision_id!r}.")
+        seen_ids.add(decision_id)
+        question_kind = _text(row.get("question_kind"), "local question_kind")
+        match_key = _text(row.get("match_key"), "local match_key")
+        question = (question_kind, match_key)
+        if question in seen_questions:
+            raise ValueError(
+                f"Duplicate local decision for {question_kind!r} on {match_key!r}."
+            )
+        seen_questions.add(question)
+        rows.append(
+            LocalDecisionRecord(
+                decision_id=decision_id,
+                question_kind=question_kind,
+                match_key=match_key,
+                chosen_option=_text(row.get("chosen_option"), "local chosen_option"),
+                reason=_text(row.get("reason"), "local reason"),
+                created=_text(row.get("created"), "local created"),
             )
         )
     return tuple(rows)

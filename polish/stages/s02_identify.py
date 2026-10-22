@@ -1,7 +1,7 @@
 """Stage 2: identify each curve. It does not rewrite samples.
 
 Implements D31, D32 (with F2), D33, D34, D35, D36, D37, D38, D39, D40, D41,
-D42, C3, UXC1, and UXC9.
+D42, D91, C3, UXC1, UXC4, and UXC9.
 
 Structure
 ---------
@@ -34,7 +34,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from polish.model.findings import Evidence, FindingRecord
+from polish.model.mapping import ExplicitMapping, roles_stated_by_family
+from polish.model.findings import DecisionScope, Evidence, FindingRecord
 from polish.model.ids import CurveRef
 from polish.model.states import (
     USER_MAPPED_LABEL,
@@ -113,7 +114,7 @@ UNCHANGED_MNEMONICS = frozenset(
 _LOW_TIER = frozenset({EvidenceTier.PROPOSED, EvidenceTier.NO_MATCH})
 _ROLE_EXCLUDED = frozenset({CurveRole.ANCILLARY, CurveRole.SYNTHETIC_SOURCE, CurveRole.UNKNOWN})
 _APPLIED_RULES = frozenset({"exact", "qualifier_split"})
-_PASS_OPTIONS = ("THIS_WELL", "ALL_WELLS")
+_PASS_OPTIONS = (DecisionScope.THIS_ITEM.value, DecisionScope.LOCAL_RULE.value)
 
 
 def _is_short_or_exact_only_mnemonic(mnemonic: str) -> bool:
@@ -552,8 +553,62 @@ def _hypothetical(match: _TextMatch) -> HypotheticalMatch:
     )
 
 
-def _identify_curve(curve_ref: CurveRef, mnemonic: str, index_ref: CurveRef, catalog: _Catalog) -> CurveIdentification:
-    text = _match_text(mnemonic, catalog, similarity=True)
+def _stated_roles(catalog: _Catalog, family_id: str) -> tuple[CurveRole, ...]:
+    """Roles the shipped mnemonics of this family state, in table order. D91.
+
+    UNKNOWN is not a mapping role. A family that states more than one role
+    does not have one chosen here. The list is ``roles_stated_by_family``
+    on the shipped tables this catalog already holds.
+    """
+
+    if not isinstance(catalog, _Catalog):
+        raise TypeError("catalog must be a _Catalog")
+    return roles_stated_by_family(catalog.shipped, family_id)
+
+
+def _explicit_text(mnemonic: str, mapping: ExplicitMapping, catalog: _Catalog) -> _TextMatch:
+    """A this-well mapping. The mnemonic is kept. D91.
+
+    The role is the one on the mapping. It is never UNKNOWN, and it is one
+    of the roles this family's shipped mnemonics state.
+    """
+
+    if mapping.role is CurveRole.UNKNOWN:
+        raise ValueError("A mapped curve cannot have role UNKNOWN.")
+    stated = _stated_roles(catalog, mapping.family_id)
+    if mapping.role not in stated:
+        shown = ", ".join(item.value for item in stated) if stated else "none"
+        raise ValueError(f"Role {mapping.role.value} is not one of {mapping.family_id}'s roles ({shown}).")
+    trace = (TraceStep("session_mapping", mnemonic.strip(), "map_explicitly", True),)
+    return _TextMatch(
+        family_id=mapping.family_id,
+        matched_mnemonic=mnemonic.strip(),
+        role=mapping.role,
+        tier=EvidenceTier.USER_DEFINED,
+        qualifiers=(),
+        label=USER_MAPPED_LABEL,
+        user_label=mapping.user_label,
+        trace=trace,
+        suggestions=(),
+        origin="session",
+    )
+
+
+def _identify_curve(
+    curve_ref: CurveRef,
+    mnemonic: str,
+    index_ref: CurveRef,
+    catalog: _Catalog,
+    mapping: ExplicitMapping | None,
+) -> CurveIdentification:
+    if mapping is not None:
+        if mnemonic.upper().strip() in UNCHANGED_MNEMONICS:
+            raise ValueError(f"{mnemonic} is on the leave-unchanged list and is never mappable.")
+        if catalog.shipped.family(mapping.family_id) is None:
+            raise ValueError(f"Family {mapping.family_id!r} is not in the shipped tables.")
+        text = _explicit_text(mnemonic, mapping, catalog)
+    else:
+        text = _match_text(mnemonic, catalog, similarity=True)
     trace = list(text.trace)
     proposal: PrefixProposal | None = None
     prefix = _prefix_for(mnemonic, catalog.shipped.prefixes)
@@ -652,7 +707,28 @@ def _add_unknown_notices(ledger: _Ledger, curves: tuple[CurveIdentification, ...
             "mnemonic": ident.mnemonic,
             "preserved": True,
         }
-        if ident.suggestions:
+        unchanged = ident.mnemonic.upper().strip() in UNCHANGED_MNEMONICS
+        no_family = ident.evidence_tier is EvidenceTier.USER_DEFINED
+        if unchanged:
+            block = BlockType.INFORMATIONAL
+            message = (
+                f"Mnemonic {ident.mnemonic} is not recognised. It is preserved exactly and is not processed."
+            )
+        elif no_family:
+            block = BlockType.RULE_DEPENDENT_WARNING
+            if ident.user_label is not None:
+                fields["user_label"] = ident.user_label
+            message = (
+                f"Curve {ident.mnemonic} was mapped by you with no family. "
+                "POLISH cannot process it until you choose which family it behaves as."
+            )
+        else:
+            block = BlockType.RULE_DEPENDENT_WARNING
+            message = (
+                f"Mnemonic {ident.mnemonic} is not recognised. It is preserved exactly and is not "
+                "processed until you choose which family it behaves as."
+            )
+        if ident.suggestions and not unchanged and not no_family:
             best = ident.suggestions[0]
             fields["suggested_family"] = best.family_id
             fields["similarity_score"] = best.score
@@ -670,14 +746,7 @@ def _add_unknown_notices(ledger: _Ledger, curves: tuple[CurveIdentification, ...
                     for item in ident.suggestions
                 ]
             )
-        ledger.add(
-            BlockType.INFORMATIONAL,
-            (
-                f"Mnemonic {ident.mnemonic} is not recognised. It is preserved exactly and is not processed."
-            ),
-            (ident.curve,),
-            fields,
-        )
+        ledger.add(block, message, (ident.curve,), fields)
 
 
 def _add_duplicates(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> None:
@@ -726,7 +795,7 @@ def _add_passes(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> Non
             BlockType.AMBIGUOUS_INTERPRETATION,
             (
                 f"More than one pass of {family_id} is present ({', '.join(bases)}). "
-                "Which pass should be used by default? Scope options are THIS_WELL and ALL_WELLS. "
+                "Which pass should be used by default? Scope options are this well and all wells. "
                 "No default is chosen. Every pass is preserved."
             ),
             tuple(item.curve for item in members),
@@ -734,6 +803,7 @@ def _add_passes(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> Non
                 "family_id": family_id,
                 "base_mnemonic": ",".join(bases),
                 "scope_options": _json(list(_PASS_OPTIONS)),
+                "options": _json(sorted({_pass_name(item) for item in members})),
                 "passes": _json(
                     [
                         {
@@ -864,12 +934,16 @@ def identify(
     ingest: IngestResult,
     depth: DepthAxisResult,
     local_tables_directory: Path | None = None,
+    explicit_mappings: tuple[ExplicitMapping, ...] = (),
 ) -> IdentificationResult:
-    """Identify every curve. D31–D42, C3, UXC1, UXC9.
+    """Identify every curve. D31–D42, D91, C3, UXC1, UXC4, UXC9.
 
     Does not write the dataset, the overlay, or the local tables directory.
     When ``local_tables_directory`` is omitted, the app-data path is used if
     APPDATA is set. A missing directory is empty. It is not created.
+    ``explicit_mappings`` are THIS_ITEM mappings from a session. They are
+    applied only because the caller passed them. Marking an earlier result
+    stale is not done here.
 
     Parameters
     ----------
@@ -879,6 +953,8 @@ def identify(
         A completed Stage 1 result. Its alias is the INDEX curve.
     local_tables_directory:
         Directory of local mnemonic tables, or None to use the default path.
+    explicit_mappings:
+        THIS_ITEM mappings to apply on this call. Empty applies none.
 
     Returns
     -------
@@ -910,9 +986,11 @@ def identify(
     shipped = load_shipped_tables()
     local = load_local_mnemonics(directory, frozenset(record.id for record in shipped.families))
     catalog = _catalog(shipped, local)
+    by_curve = _mapping_index(explicit_mappings, tuple(curve.ref for curve in dataset.curves))
     index_ref = depth.alias.source
     identified = tuple(
-        _identify_curve(curve.ref, curve.original_mnemonic, index_ref, catalog) for curve in dataset.curves
+        _identify_curve(curve.ref, curve.original_mnemonic, index_ref, catalog, by_curve.get(curve.ref))
+        for curve in dataset.curves
     )
     ledger = _Ledger(ingest)
     _add_unknown_notices(ledger, identified)
@@ -923,10 +1001,32 @@ def identify(
     return IdentificationResult(StageStatus.COMPLETE, tuple(ledger.items), identified)
 
 
+def _mapping_index(
+    mappings: tuple[ExplicitMapping, ...],
+    curves: tuple[CurveRef, ...],
+) -> dict[CurveRef, ExplicitMapping]:
+    """Index THIS_ITEM mappings by curve. A curve not in this file is refused. D91."""
+
+    if type(mappings) is not tuple:
+        raise TypeError("explicit_mappings must be a tuple of ExplicitMapping")
+    known = set(curves)
+    found: dict[CurveRef, ExplicitMapping] = {}
+    for mapping in mappings:
+        if not isinstance(mapping, ExplicitMapping):
+            raise TypeError("explicit_mappings must be a tuple of ExplicitMapping")
+        if mapping.curve not in known:
+            raise ValueError(f"Explicit mapping {mapping.curve} is not a curve of this dataset.")
+        if mapping.curve in found:
+            raise ValueError(f"Two explicit mappings name {mapping.curve}.")
+        found[mapping.curve] = mapping
+    return found
+
+
 def registered_stage(
     ingest: IngestResult,
     depth: DepthAxisResult,
     local_tables_directory: Path | None = None,
+    explicit_mappings: tuple[ExplicitMapping, ...] = (),
 ) -> RegisteredStage:
     """A runner stage that identifies ``ingest`` and does not replace it. D24, C5.
 
@@ -944,7 +1044,12 @@ def registered_stage(
         return ()
 
     def run(_context: RunContext) -> StageOutcome:
-        result = identify(ingest, depth, local_tables_directory=local_tables_directory)
+        result = identify(
+            ingest,
+            depth,
+            local_tables_directory=local_tables_directory,
+            explicit_mappings=explicit_mappings,
+        )
         return StageOutcome(result.status, result.findings)
 
     return RegisteredStage(CONTRACT, run, unmet)
