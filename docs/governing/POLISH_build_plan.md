@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D90**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D92**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -523,7 +523,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D90, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D92, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1463,7 +1463,7 @@ Report in the standard format, including per-fixture counts of each gap class.
 
 ### P13 — Decisions, dispositions and sessions (engine)
 
-**Needs:** P12. OD-22.
+**Needs:** P12. OD-22. Sent 15 Oct 2026 with the owner's 15 Oct decisions (D91, D92). Slots filled: session file <input-stem>.polish-session.json; preferences %APPDATA%\POLISH\preferences.json; scopes per P13 A4.
 
 ````text
 POLISH rebuild — P13: Decisions, dispositions and sessions.

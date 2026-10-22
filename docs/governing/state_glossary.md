@@ -99,13 +99,13 @@ Applies to a sample. Rows: D44. There is no `REFUSED` value.
 
 ## output_inclusion
 
-Applies to an invalid sample. Rows: D17, D44 (dad, 1.2). The original file is never opened for writing.
+Applies to an invalid sample, and to a measured sample outside a plausibility limit (D92). Rows: D17, D44, D92 (dad, 1.2). The original file is never opened for writing.
 
 | Value | Meaning | Rows | Preferred user-facing wording |
 |---|---|---|---|
-| `PENDING_DECISION` | The invalid sample has no recorded include-or-exclude decision yet. | D44 | Not specified in the UXC2 or UXC9 language tables. |
-| `EXCLUDED` | The invalid sample is left out of the processed file. The original file is unchanged. | D17, D44 | Not specified in the UXC2 or UXC9 language tables. |
-| `KEPT` | A recorded decision keeps the invalid sample in the processed file. | D44 | Not specified in the UXC2 or UXC9 language tables. |
+| `PENDING_DECISION` | The sample has no recorded include-or-exclude decision yet. | D44, D92 | Not specified in the UXC2 or UXC9 language tables. |
+| `EXCLUDED` | The sample is left out of the processed file and not used by later stages. It stays visible and marked. The original file is unchanged. | D17, D44, D92 | Not specified in the UXC2 or UXC9 language tables. |
+| `KEPT` | A recorded decision keeps the sample in the processed file; a kept suspicious sample is used by later stages and stays flagged. | D44, D92 | Not specified in the UXC2 or UXC9 language tables. |
 
 ## gap_class
 
@@ -202,7 +202,7 @@ Actions a person may take. Rows: D79, D86, UXC2. Which of these a block type per
 | `DEFER` | Defer the finding with a reason. Terminal, and listed in the export. | D79, Appendix A.3 | Not specified in the UXC2 or UXC9 language tables. |
 | `CHOOSE_OPTION` | Choose among interpretations. A rationale is recorded. Yields `RESOLVED`. | D86, Appendix A.3 | Not specified in the UXC2 or UXC9 language tables. |
 | `REJECT_PROPOSAL` | Reject POLISH's proposal. The rejection is the recorded choice. Yields `RESOLVED`. | Appendix A.2, D79 | Not specified in the UXC2 or UXC9 language tables. |
-| `MAP_EXPLICITLY` | Map the curve explicitly, with a label. Yields `RESOLVED`. | D86, Appendix A.3 | Map explicitly to continue this analysis |
+| `MAP_EXPLICITLY` | Map the curve explicitly: choose the family it behaves as (required) and, optionally, your own name for it. Yields `RESOLVED`. | D86, D91, Appendix A.3 | Map explicitly to continue this analysis |
 
 ## Block type, actions, disposition, export
 
