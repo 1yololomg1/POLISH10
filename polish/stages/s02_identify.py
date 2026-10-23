@@ -1,7 +1,7 @@
 """Stage 2: identify each curve. It does not rewrite samples.
 
 Implements D31, D32 (with F2), D33, D34, D35, D36, D37, D38, D39, D40, D41,
-D42, D91, C3, UXC1, UXC4, and UXC9.
+D42, D91, D94, C3, UXC1, UXC4, and UXC9.
 
 Structure
 ---------
@@ -9,9 +9,12 @@ CONTRACT
     Stage 2 contract. alters_data is False. depends_on_stages is (0, 1).
 processing_eligibility_for
     The D34 mapping from tier, family, and role. Units are not an input.
+DefaultPass
+    The pass a recorded choice names for one family. Curves stay as identified.
 identify
     Read a Stage 0 result and a completed Stage 1 result. Return one
-    identification per curve, plus findings.
+    identification per curve, plus findings. A pass choice is applied only
+    when the caller passes it.
 registered_stage
     The same identification behind the stage runner.
 
@@ -35,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from polish.model.mapping import ExplicitMapping, roles_stated_by_family
+from polish.model.pass_choice import PassChoice
 from polish.model.findings import DecisionScope, Evidence, FindingRecord
 from polish.model.ids import CurveRef
 from polish.model.states import (
@@ -283,12 +287,50 @@ class CurveIdentification:
 
 
 @dataclass(frozen=True)
+class DefaultPass:
+    """The pass a recorded choice names for one family. D94.
+
+    ``curves`` are the members of the pass question whose pass name equals
+    ``pass_name``, in column order. Every pass stays in the identification.
+    Nothing here changes a curve's family, role, tier, or eligibility.
+    """
+
+    family_id: str
+    pass_name: str
+    curves: tuple[CurveRef, ...]
+    decision_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.family_id, str) or self.family_id.strip() == "":
+            raise ValueError("A default pass requires a family id.")
+        if not isinstance(self.pass_name, str) or self.pass_name.strip() == "":
+            raise ValueError("A default pass requires a pass name.")
+        if not isinstance(self.decision_id, str) or self.decision_id.strip() == "":
+            raise ValueError("A default pass requires a decision id.")
+        if type(self.curves) is not tuple or not self.curves:
+            raise ValueError("A default pass names the curves of that pass.")
+        if any(not isinstance(ref, CurveRef) for ref in self.curves):
+            raise TypeError("A default pass's curves must be CurveRef values.")
+
+
+@dataclass(frozen=True)
 class IdentificationResult:
-    """What Stage 2 records. Source arrays are not in this result. C5, D17."""
+    """What Stage 2 records. Source arrays are not in this result. C5, D17, D94.
+
+    ``default_passes`` is empty when no pass choice applies. Nothing downstream
+    reads it yet.
+    """
 
     status: StageStatus
     findings: tuple[FindingRecord, ...]
     curves: tuple[CurveIdentification, ...]
+    default_passes: tuple[DefaultPass, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.default_passes) is not tuple or any(
+            not isinstance(item, DefaultPass) for item in self.default_passes
+        ):
+            raise TypeError("default_passes must be a tuple of DefaultPass")
 
 
 @dataclass(frozen=True)
@@ -770,7 +812,40 @@ def _add_duplicates(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) ->
         )
 
 
-def _add_passes(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> None:
+def _unmatched_pass(ledger: _Ledger, choice: PassChoice, refs: tuple[CurveRef, ...]) -> None:
+    """The recorded pass is not one this file lists. It is reported and not applied. D94."""
+
+    ledger.add(
+        BlockType.INFORMATIONAL,
+        (
+            f"Family {choice.family_id} has a recorded pass {choice.pass_name} "
+            f"from decision {choice.decision_id}. "
+            "That pass is not one of this family's passes in this file, so the choice is not applied."
+        ),
+        refs,
+        {
+            "family_id": choice.family_id,
+            "pass_name": choice.pass_name,
+            "decision_id": choice.decision_id,
+        },
+    )
+
+
+def _add_passes(
+    ledger: _Ledger,
+    curves: tuple[CurveIdentification, ...],
+    choices: dict[str, PassChoice],
+) -> tuple[DefaultPass, ...]:
+    """Pass questions, and a default when a choice names one of the options. D39, D94.
+
+    A choice whose pass is one of the question's options is recorded and the
+    question is not raised. A choice whose pass is not an option, or whose
+    family has no question in this run, is reported. The question, when there
+    is one, is still raised. No curve's identification changes.
+    """
+
+    defaults: list[DefaultPass] = []
+    consumed: set[str] = set()
     by_family: dict[str, list[tuple[CurveIdentification, str]]] = {}
     for ident in curves:
         base = _base_mnemonic(ident)
@@ -791,6 +866,14 @@ def _add_passes(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> Non
                 bases.append(base)
         if len(members) < 2:
             continue
+        options = sorted({_pass_name(item) for item in members})
+        choice = choices.get(family_id)
+        if choice is not None and choice.pass_name in options:
+            consumed.add(family_id)
+            ordered = sorted(members, key=lambda item: item.curve.column_index)
+            selected = tuple(item.curve for item in ordered if _pass_name(item) == choice.pass_name)
+            defaults.append(DefaultPass(family_id, choice.pass_name, selected, choice.decision_id))
+            continue
         ledger.add(
             BlockType.AMBIGUOUS_INTERPRETATION,
             (
@@ -803,7 +886,7 @@ def _add_passes(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> Non
                 "family_id": family_id,
                 "base_mnemonic": ",".join(bases),
                 "scope_options": _json(list(_PASS_OPTIONS)),
-                "options": _json(sorted({_pass_name(item) for item in members})),
+                "options": _json(options),
                 "passes": _json(
                     [
                         {
@@ -816,6 +899,16 @@ def _add_passes(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> Non
                 ),
             },
         )
+        if choice is not None:
+            consumed.add(family_id)
+            ordered = tuple(sorted(members, key=lambda item: item.curve.column_index))
+            _unmatched_pass(ledger, choice, tuple(item.curve for item in ordered))
+    for family_id in sorted(choices):
+        if family_id in consumed:
+            continue
+        refs = tuple(item.curve for item in curves if item.family_id == family_id)
+        _unmatched_pass(ledger, choices[family_id], refs)
+    return tuple(defaults)
 
 
 def _add_prefixes(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> None:
@@ -935,15 +1028,18 @@ def identify(
     depth: DepthAxisResult,
     local_tables_directory: Path | None = None,
     explicit_mappings: tuple[ExplicitMapping, ...] = (),
+    pass_choices: tuple[PassChoice, ...] = (),
 ) -> IdentificationResult:
-    """Identify every curve. D31–D42, D91, C3, UXC1, UXC4, UXC9.
+    """Identify every curve. D31–D42, D91, D94, C3, UXC1, UXC4, UXC9.
 
     Does not write the dataset, the overlay, or the local tables directory.
     When ``local_tables_directory`` is omitted, the app-data path is used if
     APPDATA is set. A missing directory is empty. It is not created.
     ``explicit_mappings`` are THIS_ITEM mappings from a session. They are
-    applied only because the caller passed them. Marking an earlier result
-    stale is not done here.
+    applied only because the caller passed them. ``pass_choices`` are pass
+    answers for this well, including one saved for all wells and applied
+    here. They are applied only because the caller passed them. Marking an
+    earlier result stale is not done here.
 
     Parameters
     ----------
@@ -955,18 +1051,23 @@ def identify(
         Directory of local mnemonic tables, or None to use the default path.
     explicit_mappings:
         THIS_ITEM mappings to apply on this call. Empty applies none.
+    pass_choices:
+        Pass choices to apply on this call. Empty applies none.
 
     Returns
     -------
     IdentificationResult
-        One CurveIdentification per curve, in column order, and the findings.
+        One CurveIdentification per curve, in column order, the findings,
+        and any default pass a choice recorded.
 
     Raises
     ------
     TypeError
-        If ``ingest`` or ``depth`` has the wrong type.
+        If ``ingest`` or ``depth`` has the wrong type, or a pass choice is
+        not a PassChoice.
     ValueError
-        If Stage 0 has no dataset or Stage 1 did not complete with an index.
+        If Stage 0 has no dataset, Stage 1 did not complete with an index,
+        or two pass choices name one family.
     """
 
     if not isinstance(ingest, IngestResult):
@@ -987,6 +1088,7 @@ def identify(
     local = load_local_mnemonics(directory, frozenset(record.id for record in shipped.families))
     catalog = _catalog(shipped, local)
     by_curve = _mapping_index(explicit_mappings, tuple(curve.ref for curve in dataset.curves))
+    by_family = _pass_index(pass_choices)
     index_ref = depth.alias.source
     identified = tuple(
         _identify_curve(curve.ref, curve.original_mnemonic, index_ref, catalog, by_curve.get(curve.ref))
@@ -995,10 +1097,10 @@ def identify(
     ledger = _Ledger(ingest)
     _add_unknown_notices(ledger, identified)
     _add_duplicates(ledger, identified)
-    _add_passes(ledger, identified)
+    defaults = _add_passes(ledger, identified, by_family)
     _add_prefixes(ledger, identified)
     _add_clashes(ledger, identified, catalog)
-    return IdentificationResult(StageStatus.COMPLETE, tuple(ledger.items), identified)
+    return IdentificationResult(StageStatus.COMPLETE, tuple(ledger.items), identified, defaults)
 
 
 def _mapping_index(
@@ -1022,16 +1124,32 @@ def _mapping_index(
     return found
 
 
+def _pass_index(choices: tuple[PassChoice, ...]) -> dict[str, PassChoice]:
+    """Index pass choices by family. Two choices for one family are refused. D94."""
+
+    if type(choices) is not tuple:
+        raise TypeError("pass_choices must be a tuple of PassChoice")
+    found: dict[str, PassChoice] = {}
+    for choice in choices:
+        if not isinstance(choice, PassChoice):
+            raise TypeError("pass_choices must be a tuple of PassChoice")
+        if choice.family_id in found:
+            raise ValueError(f"Two pass choices name {choice.family_id}.")
+        found[choice.family_id] = choice
+    return found
+
+
 def registered_stage(
     ingest: IngestResult,
     depth: DepthAxisResult,
     local_tables_directory: Path | None = None,
     explicit_mappings: tuple[ExplicitMapping, ...] = (),
+    pass_choices: tuple[PassChoice, ...] = (),
 ) -> RegisteredStage:
-    """A runner stage that identifies ``ingest`` and does not replace it. D24, C5.
+    """A runner stage that identifies ``ingest`` and does not replace it. D24, C5, D94.
 
     ``local_tables_directory`` is forwarded to ``identify``. None uses the
-    app-data path and does not create it.
+    app-data path and does not create it. ``pass_choices`` is forwarded too.
     """
 
     def unmet(context: RunContext) -> tuple[str, ...]:
@@ -1049,6 +1167,7 @@ def registered_stage(
             depth,
             local_tables_directory=local_tables_directory,
             explicit_mappings=explicit_mappings,
+            pass_choices=pass_choices,
         )
         return StageOutcome(result.status, result.findings)
 

@@ -14,7 +14,11 @@ from pathlib import Path
 import pytest
 
 from core.curve_identification import build_mnemonic_database
+from polish.decisions.apply import apply_decision, pass_choices
+from polish.decisions.session import open_session
 from polish.model.ids import CurveRef
+from polish.model.overlay import Overlay
+from polish.model.pass_choice import PassChoice
 from polish.model.states import (
     USER_MAPPED_LABEL,
     BlockType,
@@ -22,9 +26,10 @@ from polish.model.states import (
     EvidenceTier,
     ProcessingEligibility,
     StageStatus,
+    UserAction,
 )
 from polish.stages.contract import StageContract, StageGuarantees, StageRequires
-from polish.stages.runner import RegisteredStage, Runner, StageOutcome
+from polish.stages.runner import RegisteredStage, RunContext, Runner, StageOutcome
 from polish.stages.s00_ingest import ingest
 from polish.stages.s01_depth import CONTRACT as DEPTH_CONTRACT
 from polish.stages.s01_depth import classify, registered_stage as depth_stage
@@ -598,3 +603,128 @@ def test_runner_leaves_source_arrays_unchanged(tmp_path: Path):
     ]
     assert tuple(curve.values.tobytes() for curve in ingested.dataset.curves) == before
     assert not missing.exists()
+
+
+def _pass_question(result):
+    matches = [item for item in result.findings if "passes" in item.evidence.as_dict()]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _again(ingested, directory: Path, choices: tuple[PassChoice, ...] = ()):
+    return identify(
+        ingested,
+        classify(ingested),
+        local_tables_directory=directory / "no-local-tables",
+        pass_choices=choices,
+    )
+
+
+def test_no_pass_choice_matches_an_omitted_argument(tmp_path: Path):
+    """GR_MAIN and GR_REF list main pass and repeat pass. unqualified is not an option."""
+
+    ingested, plain = _identify(tmp_path, [("GR_MAIN", "GAPI"), ("GR_REF", "GAPI")])
+    again = _again(ingested, tmp_path)
+    assert again == plain
+    assert again.default_passes == ()
+    options = json.loads(str(_pass_question(plain).evidence.as_dict()["options"]))
+    assert options == ["main pass", "repeat pass"]
+
+
+def test_a_this_well_main_pass_is_recorded_and_the_question_is_not_raised(tmp_path: Path):
+    ingested, plain = _identify(tmp_path, [("GR_MAIN", "GAPI"), ("GR_REF", "GAPI")])
+    assert json.loads(str(_pass_question(plain).evidence.as_dict()["options"])) == ["main pass", "repeat pass"]
+    choice = PassChoice("GAMMA_RAY_TOTAL", "main pass", "dec-main")
+    chosen = _again(ingested, tmp_path, (choice,))
+    assert chosen.curves == plain.curves
+    assert [item for item in chosen.findings if "passes" in item.evidence.as_dict()] == []
+    assert len(chosen.default_passes) == 1
+    recorded = chosen.default_passes[0]
+    assert recorded.family_id == "GAMMA_RAY_TOTAL"
+    assert recorded.pass_name == "main pass"
+    assert recorded.decision_id == "dec-main"
+    assert recorded.curves == (_one(chosen, "GR_MAIN").curve,)
+    assert _one(chosen, "GR_REF").mnemonic == "GR_REF"
+    stage = registered_stage(
+        ingested,
+        classify(ingested),
+        tmp_path / "no-local-tables",
+        pass_choices=(choice,),
+    )
+    ran = stage.run(RunContext(ingested.dataset, Overlay()))
+    assert ran.status is StageStatus.COMPLETE
+    assert ran.findings == chosen.findings
+
+
+def test_a_pass_that_is_not_present_is_reported_and_the_question_stays(tmp_path: Path):
+    ingested, plain = _identify(tmp_path, [("GR_MAIN", "GAPI"), ("GR_REF", "GAPI")])
+    choice = PassChoice("GAMMA_RAY_TOTAL", "unqualified", "dec-absent")
+    result = _again(ingested, tmp_path, (choice,))
+    assert result.curves == plain.curves
+    assert result.default_passes == ()
+    question = _pass_question(result)
+    assert json.loads(str(question.evidence.as_dict()["options"])) == ["main pass", "repeat pass"]
+    assert question.evidence == _pass_question(plain).evidence
+    notices = [
+        item
+        for item in result.findings
+        if item.block_type is BlockType.INFORMATIONAL and item.evidence.as_dict().get("pass_name") == "unqualified"
+    ]
+    assert len(notices) == 1
+    evidence = notices[0].evidence.as_dict()
+    assert evidence["family_id"] == "GAMMA_RAY_TOTAL"
+    assert evidence["decision_id"] == "dec-absent"
+    assert "GAMMA_RAY_TOTAL" in notices[0].message
+    assert "unqualified" in notices[0].message
+    assert "dec-absent" in notices[0].message
+
+
+def test_a_pass_choice_for_a_family_with_no_question_is_reported(tmp_path: Path):
+    ingested, plain = _identify(tmp_path, [("GR_MAIN", "GAPI"), ("GR_REF", "GAPI")])
+    choice = PassChoice("BULK_DENSITY", "main pass", "dec-other")
+    result = _again(ingested, tmp_path, (choice,))
+    assert result.default_passes == ()
+    assert _pass_question(result).evidence == _pass_question(plain).evidence
+    notices = [item for item in result.findings if item.evidence.as_dict().get("family_id") == "BULK_DENSITY"]
+    assert len(notices) == 1
+    assert notices[0].block_type is BlockType.INFORMATIONAL
+    assert notices[0].evidence.as_dict()["pass_name"] == "main pass"
+    assert notices[0].evidence.as_dict()["decision_id"] == "dec-other"
+    assert "BULK_DENSITY" in notices[0].message
+    assert "dec-other" in notices[0].message
+
+
+def test_two_pass_choices_for_one_family_are_refused(tmp_path: Path):
+    ingested, _plain = _identify(tmp_path, [("GR_MAIN", "GAPI"), ("GR_REF", "GAPI")])
+    choices = (
+        PassChoice("GAMMA_RAY_TOTAL", "main pass", "dec-1"),
+        PassChoice("GAMMA_RAY_TOTAL", "repeat pass", "dec-2"),
+    )
+    with pytest.raises(ValueError, match="Two pass choices name GAMMA_RAY_TOTAL"):
+        _again(ingested, tmp_path, choices)
+
+
+def test_a_recorded_pass_decision_is_what_stage_2_reads(tmp_path: Path):
+    ingested, plain = _identify(tmp_path, [("GR_MAIN", "GAPI"), ("GR_REF", "GAPI")])
+    question = _pass_question(plain)
+    session = open_session(ingested.source_file.path, plain.findings)
+    decided = apply_decision(
+        session,
+        question,
+        UserAction.CHOOSE_OPTION,
+        reason="the main pass is the one to use",
+        chosen_option="main pass",
+        timestamp=_WHEN,
+    )
+    choices = pass_choices(decided)
+    assert len(choices) == 1
+    assert choices[0].family_id == "GAMMA_RAY_TOTAL"
+    assert choices[0].pass_name == "main pass"
+    assert choices[0].decision_id == decided.decisions[-1].decision_id
+    chosen = _again(ingested, tmp_path, choices)
+    assert chosen.curves == plain.curves
+    assert [item for item in chosen.findings if "passes" in item.evidence.as_dict()] == []
+    assert len(chosen.default_passes) == 1
+    assert chosen.default_passes[0].pass_name == "main pass"
+    assert chosen.default_passes[0].curves == (_one(chosen, "GR_MAIN").curve,)
+    assert chosen.default_passes[0].decision_id == choices[0].decision_id

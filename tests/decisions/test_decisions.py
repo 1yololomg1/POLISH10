@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from polish.decisions.apply import apply_decision, explicit_mappings, listed_options, unit_choices
+from polish.decisions.apply import apply_decision, explicit_mappings, listed_options, pass_choices, unit_choices
 from polish.decisions.local_store import tables_directory
 from polish.model.mapping import ExplicitMapping, roles_stated_by_family
 from polish.decisions.session import (
@@ -32,6 +32,7 @@ from polish.decisions.session import (
     session_path,
 )
 from polish.model.findings import DecisionActor, DecisionScope, Evidence, FindingRecord
+from polish.model.pass_choice import PassChoice
 from polish.model.ids import CurveRef, DatasetId, FileHash
 from polish.model.states import (
     USER_MAPPED_LABEL,
@@ -939,6 +940,125 @@ def test_a_local_rule_unit_choice_is_refused(tmp_path: Path):
         )
 
 
+def _pass_finding(finding_id: str = "pass-1", family: str = "GAMMA_RAY_TOTAL") -> FindingRecord:
+    return _finding(
+        BlockType.AMBIGUOUS_INTERPRETATION,
+        finding_id,
+        (
+            ("family_id", family),
+            ("base_mnemonic", "GR"),
+            ("options", json.dumps(["main pass", "repeat pass"])),
+            ("passes", json.dumps([{"curve": "curve:x#1", "mnemonic": "GR_MAIN", "pass": "main pass"}])),
+        ),
+        message="Which pass should be used by default?",
+    )
+
+
+def test_pass_choices_returns_only_a_stage_2_pass_answer(tmp_path: Path):
+    finding = _pass_finding()
+    keep = _ambiguous("keep-1")
+    session = open_session(_file(tmp_path), (finding, keep))
+    session = _apply(session, finding, UserAction.CHOOSE_OPTION, reason="main pass", chosen_option="main pass")
+    session = _apply(session, keep, UserAction.CHOOSE_OPTION, reason="keep them", chosen_option="KEEP")
+    choices = pass_choices(session)
+    assert len(choices) == 1
+    assert choices[0] == PassChoice("GAMMA_RAY_TOTAL", "main pass", session.decisions[0].decision_id)
+
+    saved = replace(session.decisions[0], actor=DecisionActor.DEFAULT_APPLIED, scope=DecisionScope.LOCAL_RULE)
+    assert pass_choices(replace(session, decisions=(saved, session.decisions[1]))) == (
+        PassChoice("GAMMA_RAY_TOTAL", "main pass", saved.decision_id),
+    )
+    bare = replace(
+        finding,
+        evidence=Evidence(finding.block_type.value, (("family_id", "GAMMA_RAY_TOTAL"), ("options", json.dumps(["main pass"])))),
+    )
+    assert pass_choices(replace(session, findings=(bare, keep))) == ()
+    assert pass_choices(replace(session, findings=(replace(finding, stage=3), keep))) == ()
+    assert pass_choices(replace(session, hold=True)) == ()
+
+
+def test_a_superseded_or_held_pass_choice_is_not_returned(tmp_path: Path):
+    finding = _pass_finding()
+    session = open_session(_file(tmp_path), (finding,))
+    first = _apply(session, finding, UserAction.CHOOSE_OPTION, reason="main pass", chosen_option="main pass")
+    second = _apply(first, finding, UserAction.CHOOSE_OPTION, reason="repeat pass", chosen_option="repeat pass")
+    choices = pass_choices(second)
+    assert len(choices) == 1
+    assert choices[0].pass_name == "repeat pass"
+    assert choices[0].decision_id == second.decisions[1].decision_id
+    held = replace(second, held_ids=frozenset({second.decisions[1].decision_id}))
+    assert pass_choices(held) == ()
+    assert pass_choices(replace(second, hold=True)) == ()
+
+
+def test_a_pass_choice_outside_the_listed_options_is_refused(tmp_path: Path):
+    finding = _pass_finding()
+    session = open_session(_file(tmp_path), (finding,))
+    decided = _apply(session, finding, UserAction.CHOOSE_OPTION, reason="main pass", chosen_option="main pass")
+    stale = replace(decided.decisions[0], chosen_option="unqualified")
+    with pytest.raises(ValueError, match="not an option this finding lists"):
+        pass_choices(replace(decided, decisions=(stale,)))
+
+
+def test_two_in_force_pass_choices_for_one_family_are_refused(tmp_path: Path):
+    one = _pass_finding("pass-a")
+    two = _pass_finding("pass-b")
+    session = open_session(_file(tmp_path), (one, two))
+    session = _apply(session, one, UserAction.CHOOSE_OPTION, reason="main pass", chosen_option="main pass")
+    session = _apply(session, two, UserAction.CHOOSE_OPTION, reason="repeat pass", chosen_option="repeat pass")
+    with pytest.raises(ValueError, match="Two pass choices name GAMMA_RAY_TOTAL"):
+        pass_choices(session)
+
+
+def test_an_all_wells_pass_choice_is_the_default_on_the_next_well(tmp_path: Path):
+    app = tmp_path / "app"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    ingested, plain = _identify(first, [("GR_MAIN", "GAPI"), ("GR_REF", "GAPI")])
+    question = next(item for item in plain.findings if "passes" in item.evidence.as_dict())
+    assert json.loads(str(question.evidence.as_dict()["options"])) == ["main pass", "repeat pass"]
+    saved = _apply(
+        open_session(ingested.source_file.path, plain.findings),
+        question,
+        UserAction.CHOOSE_OPTION,
+        reason="use the main pass on every well",
+        chosen_option="main pass",
+        scope=DecisionScope.LOCAL_RULE,
+        app_data=app,
+    )
+    on_this_well = pass_choices(saved)
+    assert len(on_this_well) == 1
+    assert on_this_well[0].pass_name == "main pass"
+    assert saved.decisions[-1].actor is DecisionActor.USER
+    assert saved.decisions[-1].scope is DecisionScope.LOCAL_RULE
+
+    other, other_plain = _identify(second, [("GR_MAIN", "GAPI"), ("GR_REF", "GAPI")])
+    loaded = load_session(other.source_file.path, other_plain.findings, app_data=app)
+    assert len(loaded.defaults_applied) == 1
+    assert loaded.defaults_applied[0].actor is DecisionActor.DEFAULT_APPLIED
+    assert loaded.defaults_applied[0].scope is DecisionScope.LOCAL_RULE
+    assert loaded.defaults_applied[0].chosen_option == "main pass"
+    choices = pass_choices(loaded.session)
+    assert choices == (
+        PassChoice("GAMMA_RAY_TOTAL", "main pass", loaded.defaults_applied[0].decision_id),
+    )
+    chosen = identify(
+        other,
+        classify(other),
+        local_tables_directory=second / "no-local",
+        pass_choices=choices,
+    )
+    main = next(item for item in chosen.curves if item.mnemonic == "GR_MAIN")
+    assert len(chosen.default_passes) == 1
+    assert chosen.default_passes[0].pass_name == "main pass"
+    assert chosen.default_passes[0].curves == (main.curve,)
+    assert chosen.default_passes[0].decision_id == choices[0].decision_id
+    assert chosen.curves == other_plain.curves
+    assert [item for item in chosen.findings if "passes" in item.evidence.as_dict()] == []
+
+
 @pytest.mark.parametrize(
     "module",
     [
@@ -948,6 +1068,7 @@ def test_a_local_rule_unit_choice_is_refused(tmp_path: Path):
         "polish.decisions.apply",
         "polish.decisions.session",
         "polish.model.mapping",
+        "polish.model.pass_choice",
         "polish.model.unit_choice",
     ],
 )

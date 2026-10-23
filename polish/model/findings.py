@@ -1,6 +1,6 @@
 """Finding records and the decisions linked to them.
 
-Implements D46, D47, D63, D79, D86, D91, D92, UXC2, UXC4. ``block_type`` is
+Implements D46, D47, D63, D79, D86, D91, D92, D94, UXC2, UXC4. ``block_type`` is
 ``states.BlockType``. This module does not define a second finding type for
 the export gate: ``project_for_export`` builds the existing ``states.Finding``.
 
@@ -103,7 +103,10 @@ _STAGE2_NOTICE_KEYS = frozenset(
         "user_label",
     }
 )
-_STAGE2_INFORMATIONAL_KEYS = _STAGE2_NOTICE_KEYS
+# A recorded pass that this file does not list names the family, the pass,
+# and the decision (D94). family_id and decision_id are already permitted on
+# INFORMATIONAL through later sets; pass_name is declared for this notice.
+_STAGE2_INFORMATIONAL_KEYS = _STAGE2_NOTICE_KEYS | frozenset({"decision_id", "family_id", "pass_name"})
 _STAGE2_AMBIGUOUS_KEYS = frozenset(
     {
         "prefix",

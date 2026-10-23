@@ -1,4 +1,4 @@
-"""Apply one decision to one finding. D79, D86, D91, D92, D93, UXC2, UXC4, OD-22.
+"""Apply one decision to one finding. D79, D86, D91, D92, D93, D94, UXC2, UXC4, OD-22.
 
 Structure
 ---------
@@ -8,6 +8,8 @@ explicit_mappings
     THIS_ITEM mappings Stage 2 takes as an input.
 unit_choices
     THIS_ITEM unit choices Stage 3 takes as an input.
+pass_choices
+    Pass choices Stage 2 takes as an input, this well or all wells.
 listed_options
     The options a finding already lists.
 current_decisions
@@ -30,6 +32,7 @@ from polish.decisions.local_store import (
     update_mnemonic,
 )
 from polish.model.mapping import ExplicitMapping, roles_stated_by_family
+from polish.model.pass_choice import PassChoice
 from polish.model.unit_choice import UnitChoice
 from polish.decisions.versions import versions_in_force
 from polish.model.findings import DecisionActor, DecisionRecord, DecisionScope, FindingRecord
@@ -206,6 +209,76 @@ def unit_choices(session: object) -> tuple[UnitChoice, ...]:
                 f"which is not an option this finding lists ({shown})."
             )
         built.append(UnitChoice(curves[0], option, decision.decision_id))
+    return tuple(built)
+
+
+def pass_choices(session: object) -> tuple[PassChoice, ...]:
+    """Pass choices for a later Stage 2 call. D94.
+
+    A choice in force qualifies when it is CHOOSE_OPTION on a Stage 2
+    ambiguous finding that lists passes and a family id. Scope is THIS_ITEM
+    or LOCAL_RULE. Actor is USER or DEFAULT_APPLIED. Those are the ways a
+    pass answer for this well exists. A held session contributes none.
+    Two in-force choices for one family are refused. The chosen option must
+    be one the finding lists.
+
+    Parameters
+    ----------
+    session:
+        A Session. Typed as object here so this module can import Session
+        without a cycle; the attribute check is the guard.
+
+    Returns
+    -------
+    tuple[PassChoice, ...]
+        One choice per family, in decision order.
+
+    Raises
+    ------
+    ValueError
+        The chosen option is not one the finding lists, or two choices in
+        force name one family.
+    """
+
+    from polish.decisions.session import Session
+
+    if not isinstance(session, Session):
+        raise TypeError("session must be a Session")
+    if session.hold:
+        return ()
+    by_id = {finding.id: finding for finding in session.findings}
+    built: list[PassChoice] = []
+    seen: set[str] = set()
+    allowed_scopes = (DecisionScope.THIS_ITEM, DecisionScope.LOCAL_RULE)
+    allowed_actors = (DecisionActor.USER, DecisionActor.DEFAULT_APPLIED)
+    for decision in current_decisions(session.decisions, session.held_ids).values():
+        if decision.action is not UserAction.CHOOSE_OPTION:
+            continue
+        if decision.scope not in allowed_scopes or decision.actor not in allowed_actors:
+            continue
+        finding = by_id.get(decision.finding_id)
+        if finding is None or finding.stage != 2:
+            continue
+        if finding.block_type is not BlockType.AMBIGUOUS_INTERPRETATION:
+            continue
+        evidence = finding.evidence.as_dict()
+        if "passes" not in evidence:
+            continue
+        family_id = evidence.get("family_id")
+        if not isinstance(family_id, str) or family_id.strip() == "":
+            continue
+        options = listed_options(finding)
+        option = decision.chosen_option
+        if not isinstance(option, str) or option not in options:
+            shown = ", ".join(options) if options else "none"
+            raise ValueError(
+                f"Decision {decision.decision_id} chooses {option!r}, "
+                f"which is not an option this finding lists ({shown})."
+            )
+        if family_id in seen:
+            raise ValueError(f"Two pass choices name {family_id}.")
+        seen.add(family_id)
+        built.append(PassChoice(family_id, option, decision.decision_id))
     return tuple(built)
 
 
