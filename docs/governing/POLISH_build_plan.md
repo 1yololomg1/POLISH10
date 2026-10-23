@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D93**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D94**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -523,7 +523,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D93, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D94, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1608,6 +1608,102 @@ Report in the standard format. Include: the spelling used in the tests; what
 Stage 2 does with the original finding for a mapped curve and what Stage 3 now does;
 the new CurveUnits field name; every test added or changed; the register Count
 before and after; pytest and ruff results; git status at the end.
+````
+
+### P13g — Stage 2 reads a recorded pass choice (engine)
+
+**Needs:** P13. D94.
+
+````text
+POLISH rebuild — P13g: Stage 2 reads a recorded pass choice.
+
+Starting state (checked 23 Oct 2026): branch rebuild, HEAD 8696902 = origin/rebuild,
+working tree clean, pytest 317 passed, 1 skipped. Confirm with git status and pytest;
+if it differs, stop and report. Do not commit. Keep each file's encoding and line
+endings. If anything needs a decision not stated here, stop and report it.
+(P13f is parked and superseded; it changed no files. Do not build any of it.)
+
+Problem (read in the code at 8696902): Stage 2 raises one AMBIGUOUS_INTERPRETATION
+finding per family that has more than one pass ("Which pass should be used by
+default?", _add_passes, s02_identify.py lines 773-818; evidence family_id,
+base_mnemonic, scope_options, options = the pass names, passes = JSON list of
+{curve, mnemonic, pass}). A user can answer it (CHOOSE_OPTION, this well or all
+wells), but identify() takes only explicit_mappings, so the answer never reaches
+Stage 2, and Stage 2's output (CurveIdentification, IdentificationResult) has no place
+to record a default pass. An all-wells pass answer reaches a later well only as a
+DEFAULT_APPLIED decision built by _defaults (session.py lines 497-540); unlike
+mappings, Stage 2 has no local table for passes. Build the read-back following
+P13e's pattern (unit_choices -> interpret) wherever it applies. Where it does not
+cover something below, stop and report.
+
+1. New polish/model/pass_choice.py: frozen PassChoice(family_id: str, pass_name: str,
+   decision_id: str), each a non-empty string, validated like UnitChoice. It imports
+   nothing from polish.decisions or polish.stages.
+
+2. polish/decisions/apply.py: pass_choices(session) -> tuple[PassChoice, ...]. Only
+   decisions in force (current_decisions, held ids excluded); action CHOOSE_OPTION; on
+   a finding with stage 2, block type AMBIGUOUS_INTERPRETATION, a "passes" evidence
+   field and a string family_id. Unlike unit_choices, take scope THIS_ITEM or
+   LOCAL_RULE and actor USER or DEFAULT_APPLIED: those are the ways a pass answer for
+   this well exists. The chosen option must be in listed_options(finding); otherwise
+   raise. Two in-force choices for one family raise. A held session contributes none.
+   Export it from polish.decisions.
+
+3. polish/stages/s02_identify.py:
+   - identify(..., explicit_mappings=(), pass_choices=()) and registered_stage(...,
+     pass_choices=()) forwarding it. Two choices for one family raise.
+   - New frozen DefaultPass(family_id: str, pass_name: str, curves: tuple[CurveRef,
+     ...], decision_id: str) in this module. IdentificationResult gains
+     default_passes: tuple[DefaultPass, ...], empty when no choice applies.
+   - In _add_passes, for a family whose pass question would be raised: if a choice
+     for that family names one of that question's options, the question is not
+     raised and a DefaultPass is recorded, with curves = the members whose pass name
+     equals the choice, in column order. Every pass stays preserved; no curve's
+     identification, role, tier or eligibility changes.
+   - A choice whose family has no pass question in this run, or whose pass is not one
+     of the question's options, is not applied and not dropped silently: one
+     INFORMATIONAL finding naming the family, the recorded pass and the decision id;
+     the pass question, if any, is still raised. Add the evidence keys this needs to
+     Stage 2's INFORMATIONAL key set in findings.py, the same way P13e added Stage 3's,
+     and report the keys added.
+   - With no choices passed, Stage 2's output is identical to today apart from
+     default_passes == ().
+   - Nothing downstream reads default_passes yet; change no other stage.
+
+4. Layering: no file under polish/stages/ imports polish.decisions (test_layering and
+   the fresh-interpreter import tests must keep passing; add polish.model.pass_choice
+   to the fresh-interpreter list).
+
+5. Docs: register row D94 (owner AC, 23 Oct 2026, status NEW): "Stage 2 reads a
+   recorded pass choice, for this well or saved for all wells, and records it as that
+   family's default pass. Every pass stays preserved. A recorded choice whose pass is
+   no longer present is reported, not applied." Re-parse the Count section; update
+   every "D1–D93" range (register title, build plan lines 24 and 526,
+   docs/governing/README.md line 5). In the build plan add a P13g entry before P14
+   with this prompt's text. Report every line changed.
+
+Tests (tests/stages/test_s02_identify.py, tests/decisions/test_decisions.py), using a
+synthetic LAS file with GR_MAIN and GR_REF (add a plain GR too if the pass question
+then lists "unqualified"; report which options it lists):
+- no choices: Stage 2 output identical to today, default_passes == (), existing tests
+  unchanged;
+- a this-well choice of "main pass": no pass question, one DefaultPass with the
+  GR_MAIN curve and the decision id;
+- an all-wells choice saved in a temporary app-data directory, then a second well
+  opened with it: the DEFAULT_APPLIED decision reaches pass_choices and Stage 2
+  records the default;
+- a choice whose pass is not present in the re-run: not applied, one INFORMATIONAL
+  finding, pass question still raised;
+- pass_choices(session): returns only qualifying decisions; a superseded or held
+  decision is not returned; an option not listed raises; two for one family raise;
+- end to end: apply_decision on the pass question -> pass_choices(session) ->
+  identify: default_passes as expected;
+- the fresh-interpreter import of polish.model.pass_choice and
+  polish.stages.s02_identify succeeds.
+
+Report in the standard format. Include: the options the test file's pass question
+lists; the INFORMATIONAL evidence keys added; every test added or changed; the
+register Count before and after; pytest and ruff results; git status at the end.
 ````
 
 ### P14 — Dependency graph and staleness (engine)
