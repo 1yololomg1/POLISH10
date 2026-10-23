@@ -24,6 +24,27 @@ def _banned(name: str) -> bool:
     return any(name == prefix or name.startswith(prefix + ".") for prefix in _LAYER_PREFIXES)
 
 
+def test_stages_model_and_decisions_do_not_import_provenance():
+    """Stages, the model, and decisions do not import the describe report. D95."""
+
+    offenders: list[str] = []
+    for folder in ("stages", "model", "decisions"):
+        for path, line, name in imported_names(_REPO / "polish" / folder):
+            if name == "polish.provenance" or name.startswith("polish.provenance."):
+                offenders.append(f"{path.relative_to(_REPO)}:{line} imports {name}")
+    assert offenders == []
+
+
+def test_polish_does_not_import_jsonschema():
+    """jsonschema is a test dependency. The application does not import it. D95."""
+
+    offenders: list[str] = []
+    for path, line, name in imported_names(_REPO / "polish"):
+        if name == "jsonschema" or name.startswith("jsonschema."):
+            offenders.append(f"{path.relative_to(_REPO)}:{line} imports {name}")
+    assert offenders == []
+
+
 def test_polish_sources_do_not_import_ui_or_legacy_modules():
     offenders: list[str] = []
     for path, line, name in imported_names(_REPO / "polish"):

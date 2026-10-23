@@ -1,7 +1,9 @@
-"""Command line for POLISH. Stage 0 ingest writes nothing.
+"""Command line for POLISH.
 
-Implements D64 and C6 for the read-only ingest command. ``python -m polish
-ingest FILE --json`` prints the ledger and a dataset summary to stdout.
+Implements D64 and C6 for the read-only ingest command, and D95, D19, D22,
+UXC1, and UXC9 for describe. ``python -m polish ingest FILE --json`` prints
+the ledger and a dataset summary. ``python -m polish describe FILE --out DIR``
+writes the describe report into that directory and nowhere else.
 
 Structure
 ---------
@@ -83,10 +85,13 @@ def _print_summary(result: IngestResult) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the POLISH command line. Ingest prints JSON and writes no file.
+    """Run the POLISH command line.
 
-    Implements D64, C6. A structural refusal exits 1. An unclassified
-    condition exits 2 and is not given a block type.
+    Implements D64, C6 for ingest, and D95, D19 for describe. Ingest: a
+    structural refusal exits 1, and an unclassified condition exits 2 and is
+    not given a block type. Describe: 0 when the report is written, 2 when
+    that report is a structural refusal, 1 when the path or the output is
+    refused or an unexpected error is reported on stderr.
     """
 
     parser = argparse.ArgumentParser(prog="polish")
@@ -94,10 +99,26 @@ def main(argv: list[str] | None = None) -> int:
     ingest_parser = sub.add_parser("ingest", help="Read a LAS file and print the audit ledger.")
     ingest_parser.add_argument("file", type=Path)
     ingest_parser.add_argument("--json", action="store_true", help="Print the ledger and dataset summary as JSON.")
+    describe_parser = sub.add_parser("describe", help="Write a read-only describe report. No session is read.")
+    describe_parser.add_argument("file", type=Path)
+    describe_parser.add_argument("--out", type=Path, required=True, help="Directory for the two report files.")
+    describe_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing describe report in the output directory.",
+    )
     args = parser.parse_args(argv)
-    if args.command != "ingest":
-        parser.error(f"Unknown command {args.command}")
-        return 2
+    if args.command == "ingest":
+        return _ingest(parser, args)
+    if args.command == "describe":
+        return _describe(args)
+    parser.error(f"Unknown command {args.command}")
+    return 2
+
+
+def _ingest(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    """Ingest exit codes are unchanged: 1 structural, 2 unclassified, 0 otherwise."""
+
     if not args.json:
         parser.error("ingest requires --json")
     try:
@@ -109,4 +130,31 @@ def main(argv: list[str] | None = None) -> int:
     _print_summary(result)
     if result.status is StageStatus.REFUSED_STRUCTURAL:
         return 1
+    return 0
+
+
+def _describe(args: argparse.Namespace) -> int:
+    """Write the describe report. Exit 2 still writes the report. D95, D19."""
+
+    from polish.provenance.describe import OutputRefused, build_report, write_report
+
+    if not args.file.is_file():
+        print(f"Not a file: {args.file}", file=sys.stderr)
+        return 1
+    try:
+        report = build_report(args.file)
+        json_path, markdown_path = write_report(report, args.file, args.out, overwrite=args.overwrite)
+    except OutputRefused as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(json_path)
+    print(markdown_path)
+    if report.structural_refusal:
+        return 2
     return 0
