@@ -1,4 +1,4 @@
-# POLISH — Decision Register (D1–D94)
+# POLISH — Decision Register (D1–D95)
 
 **Compiled 13 September 2026. Revision 2** — external review folded in.
 Companion document to the four-pass review.
@@ -238,8 +238,9 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 |---|---|---|---|
 | D93 | Stage 3 reads a THIS_ITEM unit choice recorded on its unit question, the same way Stage 2 reads a THIS_ITEM mapping. Only a unit the file's spelling lists as a candidate can be chosen. A recorded choice that no longer matches the file is reported, not applied. | AC | NEW — owner AC, 23 Oct 2026. |
 | D94 | Stage 2 reads a recorded pass choice, for this well or saved for all wells, and records it as that family's default pass. Every pass stays preserved. A recorded choice whose pass is no longer present is reported, not applied. | AC | NEW — owner AC, 23 Oct 2026. |
+| D95 | The describe report and command (P16) are built before P14 and P15. This version runs Stages 0-4 with no decisions, reads no session, and shows every question as open. Session, staleness and batch sections are added after P15 (P16b). The human report is Markdown. | AC | NEW — owner AC, 23 Oct 2026. |
 
-*(Register ends at D94. See the Count section below for verified tallies. The
+*(Register ends at D95. See the Count section below for verified tallies. The
 "44 decisions" figure in the four-pass review was an estimate stated as a count
 and is wrong.)*
 
@@ -251,7 +252,7 @@ Verified by parsing this document, not estimated.
 
 | | Count |
 |---|---|
-| **Total register entries** | **94** (D1–D94, continuous, plus struck D20a) |
+| **Total register entries** | **95** (D1–D95, continuous, plus struck D20a) |
 | Decisions made during the project week | 82 |
 | Added by the internal four-pass review | 2 (D41, D42) |
 | Added by external review | 4 (D85–D88) |
@@ -262,7 +263,7 @@ Verified by parsing this document, not estimated.
 | Source | Count |
 |---|---|
 | DESIGN — Claude's proposals, unchallenged | 56 |
-| AC — project owner | 24 |
+| AC — project owner | 25 |
 | DAD — domain expert | 7 |
 | REVIEW — external review | 4 |
 | REPO — verified in code | 3 |
@@ -273,7 +274,7 @@ Verified by parsing this document, not estimated.
 |---|---|
 | — not flagged | 55 |
 | REVISE | 14 |
-| NEW | 12 |
+| NEW | 13 |
 | RESOLVED | 7 |
 | OPEN | 2 |
 | PARTIAL | 3 |
@@ -283,7 +284,7 @@ Verified by parsing this document, not estimated.
 
 Counts parsed from the table rows, not tallied by hand. All three CONFLICT rows
 from revision 1 are now RESOLVED, plus D8. D12 Part Two is RESOLVED (CLOSED 23 Sept).
-D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW. D90 is NEW. D91 is NEW. D92 is NEW. D93 is NEW. D94 is NEW.
+D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW. D90 is NEW. D91 is NEW. D92 is NEW. D93 is NEW. D94 is NEW. D95 is NEW.
 D20a is struck and excluded from these counts.
 
 ### Findings

@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D94**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D95**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -523,7 +523,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D94, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D95, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1790,6 +1790,8 @@ Report in the standard format.
 
 **Needs:** P15. Relevant to OD-27.
 
+Built 23 Oct 2026 ahead of P14/P15, without --session (D95).
+
 ````text
 POLISH rebuild — P16: Describe report (read-only output) and CLI.
 
@@ -1805,7 +1807,7 @@ UXC7, UXC9, D19 (output path chosen by user; input path blocked).
    app versions; "not verified" items (e.g. PARTIAL / UNVER rules in force).
 
 2. Two renderings: JSON (with a JSON Schema at polish/provenance/schema/describe.schema.json,
-   versioned) and a human-readable HTML or Markdown file (⟦choose⟧). Both are
+   versioned) and a human-readable HTML or Markdown file (Markdown (D95)). Both are
    produced from the same object.
 
 3. Writing: only to a directory the caller names. Refuse if the output path equals the
