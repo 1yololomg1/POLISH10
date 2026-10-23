@@ -1,4 +1,4 @@
-# POLISH — Decision Register (D1–D92)
+# POLISH — Decision Register (D1–D93)
 
 **Compiled 13 September 2026. Revision 2** — external review folded in.
 Companion document to the four-pass review.
@@ -232,7 +232,13 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | D91 | A curve is mapped only by choosing the family it behaves as; the user's own name is an optional label. A saved mapping with no family is kept, not processed, and the user is told why. The domain expert's "leave unchanged" list is never mappable. A mapping saved for all wells is changed only by an explicit confirmation; one name never has two saved rows. | AC | NEW — Decided 15 Oct 2026 (owner). Unrecognised-name and no-family notices are RULE_DEPENDENT_WARNING (map explicitly); the "leave unchanged" list keeps its INFORMATIONAL notice. 15 Oct 2026 (owner): a mapped curve never has role UNKNOWN. It takes the role all of its family's shipped names state; where they differ (today only DEPTH) the user chooses one of that family's roles. |
 | D92 | A value outside a suspicious limit gets a keep-or-exclude question with a required reason; either answer may be saved for all wells. KEEP: used by later stages and flagged. EXCLUDE: not used by later stages, never hidden (shown marked, original untouched, listed in the export). The sample stays MEASURED. | AC | NEW — Decided 15 Oct 2026 (owner), following the domain expert's answer (POLISH_followup_answers.md lines 89–91). SP stays a log-level review flag (same file, line 129). A saved all-wells answer is changed only by explicit confirmation. |
 
-*(Register ends at D92. See the Count section below for verified tallies. The
+## 15. Added 23 October 2026 (owner)
+
+| ID | Decision | Source | Status |
+|---|---|---|---|
+| D93 | Stage 3 reads a THIS_ITEM unit choice recorded on its unit question, the same way Stage 2 reads a THIS_ITEM mapping. Only a unit the file's spelling lists as a candidate can be chosen. A recorded choice that no longer matches the file is reported, not applied. | AC | NEW — owner AC, 23 Oct 2026. |
+
+*(Register ends at D93. See the Count section below for verified tallies. The
 "44 decisions" figure in the four-pass review was an estimate stated as a count
 and is wrong.)*
 
@@ -244,7 +250,7 @@ Verified by parsing this document, not estimated.
 
 | | Count |
 |---|---|
-| **Total register entries** | **92** (D1–D92, continuous, plus struck D20a) |
+| **Total register entries** | **93** (D1–D93, continuous, plus struck D20a) |
 | Decisions made during the project week | 82 |
 | Added by the internal four-pass review | 2 (D41, D42) |
 | Added by external review | 4 (D85–D88) |
@@ -255,7 +261,7 @@ Verified by parsing this document, not estimated.
 | Source | Count |
 |---|---|
 | DESIGN — Claude's proposals, unchallenged | 56 |
-| AC — project owner | 22 |
+| AC — project owner | 23 |
 | DAD — domain expert | 7 |
 | REVIEW — external review | 4 |
 | REPO — verified in code | 3 |
@@ -266,7 +272,7 @@ Verified by parsing this document, not estimated.
 |---|---|
 | — not flagged | 55 |
 | REVISE | 14 |
-| NEW | 10 |
+| NEW | 11 |
 | RESOLVED | 7 |
 | OPEN | 2 |
 | PARTIAL | 3 |
@@ -276,7 +282,7 @@ Verified by parsing this document, not estimated.
 
 Counts parsed from the table rows, not tallied by hand. All three CONFLICT rows
 from revision 1 are now RESOLVED, plus D8. D12 Part Two is RESOLVED (CLOSED 23 Sept).
-D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW. D90 is NEW. D91 is NEW. D92 is NEW.
+D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW. D90 is NEW. D91 is NEW. D92 is NEW. D93 is NEW.
 D20a is struck and excluded from these counts.
 
 ### Findings

@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D92**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D93**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -523,7 +523,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D92, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D93, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1517,6 +1517,97 @@ DEFERRED without reason refused; superseding keeps history; session contains no
 numeric data values (scan the JSON); hash-mismatch path; unwritable directory path;
 preferences file never contains a hash or depth; LOCAL_RULE only via explicit call.
 Report in the standard format.
+````
+
+### P13e — Stage 3 reads a recorded unit choice (engine)
+
+**Needs:** P13. D93.
+
+````text
+POLISH rebuild — P13e: Stage 3 reads a recorded unit choice.
+
+Starting state (checked 23 Oct 2026): branch rebuild, HEAD cb5fb91 = origin/rebuild,
+working tree clean, pytest 306 passed, 1 skipped. Confirm with git status and pytest;
+if it differs, stop and report. Do not commit. Keep each file's encoding and line
+endings. If anything needs a decision not stated here, stop and report it.
+
+Problem: a user can answer Stage 3's unit question (an AMBIGUOUS_INTERPRETATION
+finding listing "candidates", answered with CHOOSE_OPTION; listed_options in
+polish/decisions/apply.py already returns the candidate canonical units), but
+interpret(ingest, identification) in polish/stages/s03_units.py takes no decisions,
+so the answer never reaches Stage 3. Stage 2 already has this for mappings:
+identify(..., explicit_mappings=...) fed by explicit_mappings(session). Build the
+same thing for unit choices, following Stage 2's pattern in every respect. Where
+Stage 2's pattern does not cover something below, stop and report.
+
+1. New polish/model/unit_choice.py: a frozen UnitChoice(curve: CurveRef,
+   canonical_unit: str, decision_id: str), validated like ExplicitMapping. It imports
+   nothing from polish.decisions or polish.stages.
+
+2. polish/decisions/apply.py: unit_choices(session) -> tuple[UnitChoice, ...], built
+   like explicit_mappings: only decisions in force (current_decisions, held ids
+   excluded), action CHOOSE_OPTION, scope THIS_ITEM, actor USER, on a finding with
+   stage 3, block type AMBIGUOUS_INTERPRETATION, a "candidates" evidence field, and
+   exactly one CurveRef subject. The chosen option must be in listed_options(finding);
+   otherwise raise. A held session contributes none. Export it from polish.decisions.
+
+3. Scope: a unit choice is THIS_ITEM only (owner, 15 Oct 2026: only mapping, pass
+   choice, hard-value exclusion and suspicious keep/exclude may be saved for all
+   wells until P15). Check that apply_decision already refuses LOCAL_RULE for a
+   Stage 3 unit question. If it does not, stop and report; do not change scope rules.
+
+4. polish/stages/s03_units.py: interpret(ingest, identification, unit_choices=())
+   and registered_stage(..., unit_choices=()) forwarding it, indexed per curve the
+   way _mapping_index does (a curve not in this file, or two choices for one curve,
+   raise). For a curve with a choice:
+   - Recompute the curve's candidates from the file as today. If the chosen
+     canonical unit is one of them, use that SpellingRecord: outcome RECOGNISED when
+     the family accepts its dimension (or the curve has no family), otherwise
+     INCOMPATIBLE_WITH_FAMILY with today's RULE_DEPENDENT_WARNING. Eligibility from
+     units_eligibility, unchanged.
+   - If it is not one of the current candidates, do not apply it and do not drop it
+     silently: raise one INFORMATIONAL finding naming the curve, the recorded unit
+     and the decision id, and treat the curve as if there were no choice.
+   - CurveUnits records where the unit came from: add a field with the decision id
+     (None when the unit came from the file alone). Nothing else about CurveUnits
+     changes.
+   - Whether the original unit question is still raised for that curve, and how,
+     follows exactly what Stage 2 does for a curve with an explicit mapping. Report
+     what that is.
+   With no choices passed, Stage 3's output is identical to today.
+
+5. Layering: no file under polish/stages/ imports polish.decisions (test_layering and
+   the fresh-interpreter import tests must keep passing; add polish.model.unit_choice
+   and polish.stages.s03_units to the fresh-interpreter list).
+
+6. Docs: add register row D93 (owner AC, 23 Oct 2026, status NEW): "Stage 3 reads a
+   THIS_ITEM unit choice recorded on its unit question, the same way Stage 2 reads a
+   THIS_ITEM mapping. Only a unit the file's spelling lists as a candidate can be
+   chosen. A recorded choice that no longer matches the file is reported, not
+   applied." Re-parse and update the register's Count section; update every
+   "D1–D92" range (register title, build plan, README). In the build plan, add a
+   P13e entry before P14 with this prompt's text. Report every line changed.
+
+Tests (tests/stages/test_s03_units.py, tests/decisions/test_decisions.py), using a
+synthetic LAS file with a spelling that has more than one meaning in
+unit_spellings.json (name the spelling and its candidates in the report):
+- no choices: Stage 3 output identical to today, all existing tests unchanged;
+- a choice of one candidate: outcome, canonical unit, dimension, eligibility and the
+  decision-id field are as item 4 says, for a family that accepts the chosen
+  dimension and for one that does not;
+- a choice naming a unit that is not a current candidate: not applied, one
+  INFORMATIONAL finding, curve treated as unchosen;
+- unit_choices(session): returns only qualifying decisions; a superseded or held
+  decision is not returned; a LOCAL_RULE unit choice is refused by apply_decision;
+- end to end: apply_decision on the unit question → unit_choices(session) →
+  interpret → assess: Stage 4 now treats the curve with the chosen unit (show one
+  rule result that differs from the unchosen run, or explain why none can differ);
+- the fresh-interpreter imports in item 5 succeed.
+
+Report in the standard format. Include: the spelling used in the tests; what
+Stage 2 does with the original finding for a mapped curve and what Stage 3 now does;
+the new CurveUnits field name; every test added or changed; the register Count
+before and after; pytest and ruff results; git status at the end.
 ````
 
 ### P14 — Dependency graph and staleness (engine)
