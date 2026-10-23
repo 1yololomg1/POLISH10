@@ -13,15 +13,20 @@ from pathlib import Path
 
 import pytest
 
+from polish.decisions.apply import apply_decision, listed_options, unit_choices
+from polish.decisions.session import open_session
+from polish.model.overlay import Overlay
 from polish.model.states import (
     BlockType,
     ProcessingEligibility,
     StageStatus,
     UnitInterpretation,
     UserAction,
+    ValidationOutcome,
 )
+from polish.model.unit_choice import UnitChoice
 from polish.stages.contract import StageContract, StageGuarantees, StageRequires
-from polish.stages.runner import RegisteredStage, Runner, StageOutcome
+from polish.stages.runner import RegisteredStage, RunContext, Runner, StageOutcome
 from polish.stages.s00_ingest import ingest
 from polish.stages.s01_depth import DerivedQuantity, assert_derived_unit, classify
 from polish.stages.s01_depth import registered_stage as depth_stage
@@ -41,6 +46,7 @@ from polish.stages.s03_units import (
     require_unit,
     units_eligibility,
 )
+from polish.stages.s04_validity import assess
 from polish.tables.loader import _family_record, load_unit_spellings
 
 _WHEN = datetime.datetime(2026, 10, 12, tzinfo=datetime.timezone.utc)
@@ -446,3 +452,157 @@ def test_runner_leaves_source_arrays_unchanged(tmp_path: Path):
     results = runner.run(ingested.dataset)
     assert [item.status for item in results] == [StageStatus.COMPLETE] * 4
     assert tuple(curve.values.tobytes() for curve in ingested.dataset.curves) == before
+
+
+def _validity(result, mnemonic: str):
+    matches = [item for item in result.curves if item.mnemonic == mnemonic]
+    assert len(matches) == 1, mnemonic
+    return matches[0]
+
+
+def test_no_unit_choice_matches_an_omitted_argument(tmp_path: Path):
+    ingested, identified, plain = _run(tmp_path, [("RHOB", "API")], [["0.0", "2.5"], ["1.0", "2.6"]])
+    again = interpret(ingested, identified, ())
+    assert again == plain
+    assert all(item.decision_id is None for item in plain.curves)
+    rhob = _curve(plain, "RHOB")
+    assert rhob.outcome is UnitInterpretation.UNRECOGNISED
+    assert {item.dimension for item in rhob.candidates} == {"gamma_api", "api_gravity"}
+
+
+def test_a_recorded_unit_choice_uses_that_candidate(tmp_path: Path):
+    """API means GAPI (gamma_api) and API (api_gravity).
+
+    Stage 2 does not raise the unrecognised-mnemonic notice once a mapping
+    gives the curve a family. Stage 3 likewise does not raise the unit
+    question once a choice resolves the unit. An incompatible choice raises
+    the existing dimension warning instead.
+    """
+
+    ingested, identified, plain = _run(
+        tmp_path,
+        [("GR", "API"), ("RHOB", "API"), ("ZZ", "API")],
+        [["0.0", "40", "2.5", "1"], ["1.0", "41", "2.6", "2"]],
+    )
+    by_name = {item.mnemonic: item for item in identified.curves}
+    choices = (
+        UnitChoice(by_name["GR"].curve, "GAPI", "dec-gr"),
+        UnitChoice(by_name["RHOB"].curve, "GAPI", "dec-rhob"),
+        UnitChoice(by_name["ZZ"].curve, "GAPI", "dec-zz"),
+    )
+    chosen = interpret(ingested, identified, choices)
+
+    gamma = _curve(chosen, "GR")
+    assert gamma.outcome is UnitInterpretation.RECOGNISED
+    assert gamma.canonical_unit == "GAPI"
+    assert gamma.dimension == "gamma_api"
+    assert gamma.processing_eligibility is ProcessingEligibility.ELIGIBLE
+    assert gamma.decision_id == "dec-gr"
+    assert gamma.candidates == ()
+    assert _findings(chosen, BlockType.AMBIGUOUS_INTERPRETATION, "GR") == []
+    assert _curve(plain, "GR").decision_id is None
+    assert _curve(plain, "GR").outcome is gamma.outcome
+    assert _curve(plain, "GR").canonical_unit == gamma.canonical_unit
+
+    density = _curve(chosen, "RHOB")
+    assert density.outcome is UnitInterpretation.INCOMPATIBLE_WITH_FAMILY
+    assert density.canonical_unit == "GAPI"
+    assert density.dimension == "gamma_api"
+    assert density.processing_eligibility is ProcessingEligibility.ELIGIBLE
+    assert density.decision_id == "dec-rhob"
+    assert density.candidates == ()
+    assert _findings(chosen, BlockType.AMBIGUOUS_INTERPRETATION, "RHOB") == []
+    warning = _findings(chosen, BlockType.RULE_DEPENDENT_WARNING, "RHOB")
+    assert len(warning) == 1
+    assert warning[0].evidence.as_dict()["dimension"] == "gamma_api"
+    assert _findings(plain, BlockType.AMBIGUOUS_INTERPRETATION, "RHOB")
+
+    unknown = _curve(chosen, "ZZ")
+    assert unknown.family_id is None
+    assert unknown.outcome is UnitInterpretation.RECOGNISED
+    assert unknown.canonical_unit == "GAPI"
+    assert unknown.dimension == "gamma_api"
+    assert unknown.decision_id == "dec-zz"
+    assert unknown.processing_eligibility is _curve(plain, "ZZ").processing_eligibility
+    assert unknown.processing_eligibility is not ProcessingEligibility.ELIGIBLE
+    assert _findings(chosen, BlockType.AMBIGUOUS_INTERPRETATION, "ZZ") == []
+
+    stage = registered_stage(ingested, identified, choices)
+    ran = stage.run(RunContext(ingested.dataset, Overlay()))
+    assert ran.status is StageStatus.COMPLETE
+    assert ran.findings == chosen.findings
+
+
+def test_a_unit_choice_that_is_not_a_current_candidate_is_reported(tmp_path: Path):
+    ingested, identified, plain = _run(tmp_path, [("RHOB", "API")], [["0.0", "2.5"], ["1.0", "2.6"]])
+    rhob = next(item for item in identified.curves if item.mnemonic == "RHOB")
+    choice = UnitChoice(rhob.curve, "G/CC", "dec-stale")
+    result = interpret(ingested, identified, (choice,))
+    curve = _curve(result, "RHOB")
+    assert curve.decision_id is None
+    assert curve.outcome is _curve(plain, "RHOB").outcome
+    assert curve.canonical_unit is _curve(plain, "RHOB").canonical_unit
+    assert curve.candidates == _curve(plain, "RHOB").candidates
+    assert curve.processing_eligibility is _curve(plain, "RHOB").processing_eligibility
+    notices = _findings(result, BlockType.INFORMATIONAL, "RHOB")
+    assert len(notices) == 1
+    assert notices[0].evidence.as_dict()["decision_id"] == "dec-stale"
+    assert "G/CC" in notices[0].message
+    assert "dec-stale" in notices[0].message
+    assert "RHOB" in notices[0].message
+    question = _findings(result, BlockType.AMBIGUOUS_INTERPRETATION, "RHOB")
+    assert len(question) == 1
+    listed = json.loads(str(question[0].evidence.as_dict()["candidates"]))
+    assert {row["canonical_unit"] for row in listed} == {"GAPI", "API"}
+
+
+def test_a_unit_choice_must_name_one_curve_in_this_file(tmp_path: Path):
+    ingested, identified, _plain = _run(tmp_path, [("RHOB", "API")], [["0.0", "2.5"], ["1.0", "2.6"]])
+    rhob = next(item for item in identified.curves if item.mnemonic == "RHOB")
+    choice = UnitChoice(rhob.curve, "GAPI", "dec-one")
+    with pytest.raises(ValueError, match="Two unit choices"):
+        interpret(ingested, identified, (choice, UnitChoice(rhob.curve, "API", "dec-two")))
+    assert ingested.dataset is not None
+    foreign = UnitChoice(rhob.curve.__class__(ingested.dataset.id, 99), "GAPI", "dec-other")
+    with pytest.raises(ValueError, match="not a curve of this dataset"):
+        interpret(ingested, identified, (foreign,))
+
+
+def test_a_chosen_unit_changes_how_stage_4_treats_the_curve(tmp_path: Path):
+    """The spelling API lists GAPI and API. RHOB accepts neither, so the unit question is raised.
+
+    Choosing GAPI makes the unit incompatible rather than unresolved. Stage 4
+    applies the BULK_DENSITY rule only to a recognised unit, so that rule runs
+    in neither pass. The ineligibility reason is what changes.
+    """
+
+    ingested, identified, plain = _run(tmp_path, [("RHOB", "API")], [["0.0", "2.5"], ["1.0", "2.6"]])
+    question = _findings(plain, BlockType.AMBIGUOUS_INTERPRETATION, "RHOB")
+    assert len(question) == 1
+    assert listed_options(question[0]) == ("GAPI", "API")
+    session = open_session(ingested.source_file.path, plain.findings)
+    decided = apply_decision(
+        session,
+        question[0],
+        UserAction.CHOOSE_OPTION,
+        reason="the unit is gamma ray API",
+        chosen_option="GAPI",
+        timestamp=_WHEN,
+    )
+    choices = unit_choices(decided)
+    assert len(choices) == 1
+    assert choices[0].canonical_unit == "GAPI"
+    assert choices[0].curve == next(item.curve for item in identified.curves if item.mnemonic == "RHOB")
+    chosen = interpret(ingested, identified, choices)
+    depth = classify(ingested)
+    before = assess(ingested, depth, identified, plain)
+    after = assess(ingested, depth, identified, chosen)
+    unchosen = _validity(before, "RHOB")
+    selected = _validity(after, "RHOB")
+    assert unchosen.outcome is ValidationOutcome.NOT_ELIGIBLE
+    assert selected.outcome is ValidationOutcome.NOT_ELIGIBLE
+    assert unchosen.ineligibility_reason == "unit unresolved"
+    assert selected.ineligibility_reason == "no exact conversion"
+    assert unchosen.family_rules_applied == ()
+    assert selected.family_rules_applied == ()
+    assert unchosen.ineligibility_reason != selected.ineligibility_reason

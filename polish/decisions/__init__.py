@@ -1,4 +1,4 @@
-"""Decisions, dispositions, and the session file. D46, D47, D48, D63, D79, D86, D91, D92, UXC2, UXC4.
+"""Decisions, dispositions, and the session file. D46, D47, D48, D63, D79, D86, D91, D92, D93, UXC2, UXC4.
 
 Structure
 ---------
@@ -10,7 +10,7 @@ session
     Load and save decisions beside the input file. No sample values.
 """
 
-from polish.decisions.apply import apply_decision, explicit_mappings
+from polish.decisions.apply import apply_decision, explicit_mappings, unit_choices
 from polish.decisions.session import (
     Session,
     SessionLoad,
@@ -40,4 +40,5 @@ __all__ = [
     "save_preferences",
     "save_session",
     "session_path",
+    "unit_choices",
 ]

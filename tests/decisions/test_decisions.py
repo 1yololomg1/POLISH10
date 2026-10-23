@@ -10,12 +10,13 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from polish.decisions.apply import apply_decision, explicit_mappings, listed_options
+from polish.decisions.apply import apply_decision, explicit_mappings, listed_options, unit_choices
 from polish.decisions.local_store import tables_directory
 from polish.model.mapping import ExplicitMapping, roles_stated_by_family
 from polish.decisions.session import (
@@ -46,6 +47,7 @@ from polish.model.states import (
 from polish.stages.s00_ingest import ingest
 from polish.stages.s01_depth import classify
 from polish.stages.s02_identify import UNCHANGED_MNEMONICS, identify
+from polish.stages.s03_units import interpret
 from polish.tables.loader import (
     LOCAL_DECISIONS_FILE,
     LOCAL_MNEMONICS_FILE,
@@ -848,14 +850,105 @@ def test_mapping_to_depth_requires_one_of_its_roles(tmp_path: Path):
     assert gamma_curve.role is not CurveRole.UNKNOWN
 
 
+def _unit_question(directory: Path):
+    ingested, identified = _identify(directory, [("RHOB", "API"), ("GR", "GAPI")])
+    units = interpret(ingested, identified)
+    question = next(
+        item
+        for item in units.findings
+        if item.block_type is BlockType.AMBIGUOUS_INTERPRETATION
+        and item.evidence.as_dict().get("mnemonic") == "RHOB"
+    )
+    return ingested, question
+
+
+def test_unit_choices_returns_only_a_stage_3_unit_answer(tmp_path: Path):
+    _ingested, question = _unit_question(tmp_path)
+    assert question.stage == 3
+    assert "candidates" in question.evidence.as_dict()
+    assert listed_options(question) == ("GAPI", "API")
+    keep = _ambiguous("keep-1")
+    session = open_session(_ingested.source_file.path, (question, keep))
+    session = _apply(
+        session,
+        question,
+        UserAction.CHOOSE_OPTION,
+        reason="gamma api units",
+        chosen_option="GAPI",
+    )
+    session = _apply(session, keep, UserAction.CHOOSE_OPTION, reason="keep them", chosen_option="KEEP")
+    choices = unit_choices(session)
+    assert len(choices) == 1
+    assert choices[0].canonical_unit == "GAPI"
+    assert choices[0].curve == question.subject_refs[0]
+    assert choices[0].decision_id == session.decisions[0].decision_id
+
+    not_user = replace(session.decisions[0], actor=DecisionActor.DEFAULT_APPLIED)
+    assert unit_choices(replace(session, decisions=(not_user,))) == ()
+    other = question.subject_refs[0]
+    assert isinstance(other, CurveRef)
+    two_curves = replace(question, subject_refs=(other, CurveRef(other.dataset_id, other.column_index + 1)))
+    assert unit_choices(replace(session, findings=(two_curves, keep))) == ()
+    bare = replace(
+        question,
+        evidence=Evidence(
+            question.block_type.value,
+            (("mnemonic", "RHOB"), ("outcome", "UNRECOGNISED"), ("family_id", "BULK_DENSITY")),
+        ),
+    )
+    assert unit_choices(replace(session, findings=(bare, keep))) == ()
+    wrong_stage = replace(question, stage=2)
+    assert unit_choices(replace(session, findings=(wrong_stage, keep))) == ()
+
+
+def test_a_superseded_or_held_unit_choice_is_not_returned(tmp_path: Path):
+    _ingested, question = _unit_question(tmp_path)
+    session = open_session(_ingested.source_file.path, (question,))
+    first = _apply(session, question, UserAction.CHOOSE_OPTION, reason="gamma api", chosen_option="GAPI")
+    second = _apply(first, question, UserAction.CHOOSE_OPTION, reason="gravity instead", chosen_option="API")
+    choices = unit_choices(second)
+    assert len(choices) == 1
+    assert choices[0].canonical_unit == "API"
+    assert choices[0].decision_id == second.decisions[1].decision_id
+    assert choices[0].decision_id != second.decisions[0].decision_id
+    held_ids = replace(second, held_ids=frozenset({second.decisions[1].decision_id}))
+    assert unit_choices(held_ids) == ()
+    assert unit_choices(replace(second, hold=True)) == ()
+
+
+def test_a_unit_choice_outside_the_listed_candidates_is_refused(tmp_path: Path):
+    _ingested, question = _unit_question(tmp_path)
+    session = open_session(_ingested.source_file.path, (question,))
+    decided = _apply(session, question, UserAction.CHOOSE_OPTION, reason="gamma api", chosen_option="GAPI")
+    stale = replace(decided.decisions[0], chosen_option="G/CC")
+    with pytest.raises(ValueError, match="not an option this finding lists"):
+        unit_choices(replace(decided, decisions=(stale,)))
+
+
+def test_a_local_rule_unit_choice_is_refused(tmp_path: Path):
+    _ingested, question = _unit_question(tmp_path)
+    session = open_session(_ingested.source_file.path, (question,))
+    with pytest.raises(ValueError, match="this well only"):
+        _apply(
+            session,
+            question,
+            UserAction.CHOOSE_OPTION,
+            reason="every well",
+            chosen_option="GAPI",
+            scope=DecisionScope.LOCAL_RULE,
+        )
+
+
 @pytest.mark.parametrize(
     "module",
     [
         "polish.stages.s02_identify",
+        "polish.stages.s03_units",
         "polish.decisions",
         "polish.decisions.apply",
         "polish.decisions.session",
         "polish.model.mapping",
+        "polish.model.unit_choice",
     ],
 )
 def test_a_fresh_interpreter_imports_each_module(module: str):

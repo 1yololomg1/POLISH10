@@ -1,7 +1,7 @@
 """Stage 3: interpret units and convert on read. It does not rewrite samples.
 
 Implements C1, C4, C6, contracts section 3 and section 4 items 2 and 4,
-D87, D90, and OD-05. Unit conversion is a recorded re-expression. It is
+D87, D90, D93, and OD-05. Unit conversion is a recorded re-expression. It is
 never a CHANGED sample.
 
 Structure
@@ -17,7 +17,8 @@ declared_unit_state
 units_eligibility
     Stage 3 eligibility from the Stage 2 value and the unit outcome. D34, D90.
 interpret
-    One unit outcome per curve, plus findings. Nothing is converted here.
+    One unit outcome per curve, plus findings. A THIS_ITEM unit choice is
+    applied only when the caller passes it. Nothing is converted here.
 read_values
     Copy a curve's samples and re-express them in a requested unit. OD-05.
 require_unit
@@ -61,6 +62,7 @@ from polish.model.states import (
     UserAction,
     permitted_actions,
 )
+from polish.model.unit_choice import UnitChoice
 from polish.stages.contract import StageContract, StageGuarantees, StageRequires
 from polish.stages.runner import RegisteredStage, RunContext, StageOutcome
 from polish.stages.s00_ingest import IngestResult
@@ -119,7 +121,8 @@ class CurveUnits:
 
     ``canonical_unit`` and ``dimension`` are set when a single meaning was
     resolved. ``candidates`` is the list on an ambiguous spelling. A curve
-    with no family is not checked for compatibility.
+    with no family is not checked for compatibility. ``decision_id`` is the
+    recorded unit choice, or None when the unit came from the file alone.
     """
 
     curve: CurveRef
@@ -131,6 +134,7 @@ class CurveUnits:
     dimension: str | None
     family_id: str | None
     candidates: tuple[SpellingRecord, ...]
+    decision_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -348,11 +352,76 @@ def _record_finding(
     ledger.add(BlockType.RULE_DEPENDENT_WARNING, message, item.curve, common)
 
 
-def interpret(ingest: IngestResult, identification: IdentificationResult) -> UnitsResult:
-    """Interpret every curve's declared unit. C1, C6, D87, D90, OD-05.
+def _choice_index(
+    choices: tuple[UnitChoice, ...],
+    curves: tuple[CurveRef, ...],
+) -> dict[CurveRef, UnitChoice]:
+    """Index THIS_ITEM unit choices by curve. A curve not in this file is refused. D93."""
+
+    if type(choices) is not tuple:
+        raise TypeError("unit_choices must be a tuple of UnitChoice")
+    known = set(curves)
+    found: dict[CurveRef, UnitChoice] = {}
+    for choice in choices:
+        if not isinstance(choice, UnitChoice):
+            raise TypeError("unit_choices must be a tuple of UnitChoice")
+        if choice.curve not in known:
+            raise ValueError(f"Unit choice {choice.curve} is not a curve of this dataset.")
+        if choice.curve in found:
+            raise ValueError(f"Two unit choices name {choice.curve}.")
+        found[choice.curve] = choice
+    return found
+
+
+def _spelling_candidates(declared: str | None, spellings: UnitSpellings) -> tuple[SpellingRecord, ...]:
+    """Meanings of the unit text stored on the curve. Absent and empty text have none. D93."""
+
+    if declared_unit_state(declared) is not None or declared is None:
+        return ()
+    return spellings.meanings(declared)
+
+
+def _matching_candidate(matches: tuple[SpellingRecord, ...], canonical_unit: str) -> SpellingRecord | None:
+    """The one spelling row with this canonical unit, or None when it is not exactly one. D93."""
+
+    matched = tuple(row for row in matches if row.canonical_unit == canonical_unit)
+    if len(matched) != 1:
+        return None
+    return matched[0]
+
+
+def _record_unmatched_choice(ledger: _Ledger, item: CurveIdentification, choice: UnitChoice) -> None:
+    """The recorded unit is not one current candidate. It is reported and not applied. D93."""
+
+    message = (
+        f"Curve {item.mnemonic} has a recorded unit {choice.canonical_unit} "
+        f"from decision {choice.decision_id}. "
+        "That unit is not one candidate of the unit in this file, so the choice is not applied."
+    )
+    ledger.add(
+        BlockType.INFORMATIONAL,
+        message,
+        item.curve,
+        {"mnemonic": item.mnemonic, "decision_id": choice.decision_id},
+    )
+
+
+def interpret(
+    ingest: IngestResult,
+    identification: IdentificationResult,
+    unit_choices: tuple[UnitChoice, ...] = (),
+) -> UnitsResult:
+    """Interpret every curve's declared unit. C1, C6, D87, D90, D93, OD-05.
 
     Does not write the dataset. The target system is AS_RECORDED, so this
     call converts nothing. Imperial and metric are not selected.
+    ``unit_choices`` are THIS_ITEM choices from a session. They are applied
+    only because the caller passed them. A choice whose canonical unit is
+    one candidate of the file's spelling is that curve's unit. The original
+    unit question is not raised for that curve, the same way Stage 2 does
+    not raise the unrecognised-mnemonic notice once an explicit mapping
+    gives the curve a family. A choice that is not one current candidate
+    is reported and the curve is interpreted from the file alone.
 
     Parameters
     ----------
@@ -360,6 +429,8 @@ def interpret(ingest: IngestResult, identification: IdentificationResult) -> Uni
         The Stage 0 result whose dataset is read.
     identification:
         A completed Stage 2 result, one row per curve, in column order.
+    unit_choices:
+        THIS_ITEM unit choices to apply on this call. Empty applies none.
 
     Returns
     -------
@@ -371,7 +442,9 @@ def interpret(ingest: IngestResult, identification: IdentificationResult) -> Uni
     TypeError
         If an argument has the wrong type.
     ValueError
-        If Stage 0 has no dataset or Stage 2 did not complete for every curve.
+        If Stage 0 has no dataset, Stage 2 did not complete for every curve,
+        a choice names a curve that is not in this file, or two choices name
+        one curve.
     """
 
     if not isinstance(ingest, IngestResult):
@@ -387,6 +460,7 @@ def interpret(ingest: IngestResult, identification: IdentificationResult) -> Uni
         raise ValueError("Stage 2 did not identify every curve.")
     shipped = load_shipped_tables()
     spellings = load_unit_spellings()
+    by_curve = _choice_index(unit_choices, tuple(curve.ref for curve in dataset.curves))
     ledger = _Ledger(ingest)
     interpreted: list[CurveUnits] = []
     for curve, item in zip(dataset.curves, identification.curves, strict=True):
@@ -395,8 +469,30 @@ def interpret(ingest: IngestResult, identification: IdentificationResult) -> Uni
         family = shipped.family(item.family_id) if item.family_id is not None else None
         if item.family_id is not None and family is None:
             raise ValueError(f"Stage 2 family {item.family_id!r} is not in the shipped tables.")
-        outcome, chosen, candidates = _resolve(curve.original_unit, family, spellings)
+        choice = by_curve.get(curve.ref)
+        decision_id: str | None = None
+        if choice is None:
+            outcome, chosen, candidates = _resolve(curve.original_unit, family, spellings)
+        else:
+            # The file's spelling list, the same meanings _resolve starts from.
+            # A family that would have picked one of them does not hide the others.
+            matches = _spelling_candidates(curve.original_unit, spellings)
+            chosen = _matching_candidate(matches, choice.canonical_unit)
+            if chosen is None:
+                _record_unmatched_choice(ledger, item, choice)
+                outcome, chosen, candidates = _resolve(curve.original_unit, family, spellings)
+            else:
+                candidates = ()
+                decision_id = choice.decision_id
+                if family is None or chosen.dimension in family.accepted_dimensions:
+                    outcome = UnitInterpretation.RECOGNISED
+                else:
+                    outcome = UnitInterpretation.INCOMPATIBLE_WITH_FAMILY
         eligibility = units_eligibility(item.processing_eligibility, outcome)
+        # A resolved choice does not raise the unit question. Stage 2 likewise
+        # does not raise the unrecognised-mnemonic notice once a mapping
+        # gives the curve a family. An incompatible choice still raises
+        # today's RULE_DEPENDENT_WARNING.
         _record_finding(ledger, item, outcome, chosen, candidates, family, curve.original_unit)
         interpreted.append(
             CurveUnits(
@@ -409,6 +505,7 @@ def interpret(ingest: IngestResult, identification: IdentificationResult) -> Uni
                 dimension=None if chosen is None else chosen.dimension,
                 family_id=item.family_id,
                 candidates=candidates,
+                decision_id=decision_id,
             )
         )
     return UnitsResult(
@@ -678,11 +775,16 @@ CONTRACT = StageContract(
 )
 
 
-def registered_stage(ingest: IngestResult, identification: IdentificationResult) -> RegisteredStage:
-    """A runner stage that interprets units and does not replace the dataset. D24, C5, C6.
+def registered_stage(
+    ingest: IngestResult,
+    identification: IdentificationResult,
+    unit_choices: tuple[UnitChoice, ...] = (),
+) -> RegisteredStage:
+    """A runner stage that interprets units and does not replace the dataset. D24, C5, C6, D93.
 
     Stage 4 depends on the interpretation and the target system this stage
-    records. Those names are STAGE_4_DEPENDS_ON.
+    records. Those names are STAGE_4_DEPENDS_ON. ``unit_choices`` is forwarded
+    to ``interpret``.
     """
 
     def unmet(context: RunContext) -> tuple[str, ...]:
@@ -697,7 +799,7 @@ def registered_stage(ingest: IngestResult, identification: IdentificationResult)
         return ()
 
     def run(_context: RunContext) -> StageOutcome:
-        result = interpret(ingest, identification)
+        result = interpret(ingest, identification, unit_choices)
         return StageOutcome(result.status, result.findings)
 
     return RegisteredStage(CONTRACT, run, unmet)

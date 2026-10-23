@@ -1,4 +1,4 @@
-"""Apply one decision to one finding. D79, D86, D91, D92, UXC2, UXC4, OD-22.
+"""Apply one decision to one finding. D79, D86, D91, D92, D93, UXC2, UXC4, OD-22.
 
 Structure
 ---------
@@ -6,6 +6,8 @@ apply_decision
     Check the action, the scope, and the family, then append one record.
 explicit_mappings
     THIS_ITEM mappings Stage 2 takes as an input.
+unit_choices
+    THIS_ITEM unit choices Stage 3 takes as an input.
 listed_options
     The options a finding already lists.
 current_decisions
@@ -28,6 +30,7 @@ from polish.decisions.local_store import (
     update_mnemonic,
 )
 from polish.model.mapping import ExplicitMapping, roles_stated_by_family
+from polish.model.unit_choice import UnitChoice
 from polish.decisions.versions import versions_in_force
 from polish.model.findings import DecisionActor, DecisionRecord, DecisionScope, FindingRecord
 from polish.model.ids import CurveRef
@@ -155,6 +158,54 @@ def explicit_mappings(session: object) -> tuple[ExplicitMapping, ...]:
         if len(curves) != 1:
             continue
         built.append(ExplicitMapping(curves[0], decision.family_id, role, decision.user_label))
+    return tuple(built)
+
+
+def unit_choices(session: object) -> tuple[UnitChoice, ...]:
+    """THIS_ITEM unit choices for a later Stage 3 call. D93.
+
+    A held session contributes none. LOCAL_RULE is not a unit choice.
+    Stage 3 reads the returned records only when the caller passes them.
+
+    Parameters
+    ----------
+    session:
+        A Session. Typed as object here so this module can import Session
+        without a cycle; the attribute check is the guard.
+    """
+
+    from polish.decisions.session import Session
+
+    if not isinstance(session, Session):
+        raise TypeError("session must be a Session")
+    if session.hold:
+        return ()
+    by_id = {finding.id: finding for finding in session.findings}
+    built: list[UnitChoice] = []
+    for decision in current_decisions(session.decisions, session.held_ids).values():
+        if decision.action is not UserAction.CHOOSE_OPTION or decision.scope is not DecisionScope.THIS_ITEM:
+            continue
+        if decision.actor is not DecisionActor.USER:
+            continue
+        finding = by_id.get(decision.finding_id)
+        if finding is None or finding.stage != 3:
+            continue
+        if finding.block_type is not BlockType.AMBIGUOUS_INTERPRETATION:
+            continue
+        if "candidates" not in finding.evidence.as_dict():
+            continue
+        curves = [ref for ref in finding.subject_refs if isinstance(ref, CurveRef)]
+        if len(curves) != 1 or len(finding.subject_refs) != 1:
+            continue
+        options = listed_options(finding)
+        option = decision.chosen_option
+        if not isinstance(option, str) or option not in options:
+            shown = ", ".join(options) if options else "none"
+            raise ValueError(
+                f"Decision {decision.decision_id} chooses {option!r}, "
+                f"which is not an option this finding lists ({shown})."
+            )
+        built.append(UnitChoice(curves[0], option, decision.decision_id))
     return tuple(built)
 
 
