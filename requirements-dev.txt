@@ -1,0 +1,9 @@
+# Test and CI tools. polish/ and polish_ui/ do not import these.
+# pytest 8.4.2, MIT: collects and runs the tests.
+# ruff 0.16.6, MIT: the CI lint gate.
+# coverage 7.11.0, Apache-2.0: the CI coverage report.
+# jsonschema 4.25.0, MIT: tests/provenance/test_describe.py checks the describe schema.
+pytest==8.4.2
+ruff==0.16.6
+coverage==7.11.0
+jsonschema==4.25.0

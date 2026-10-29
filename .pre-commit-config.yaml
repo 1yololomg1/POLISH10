@@ -1,16 +1,13 @@
+# Hooks must not modify files; ruff format is not adopted (it would change 34 files on 29 Oct 2026).
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.6
     hooks:
       - id: ruff
-      - id: ruff-format
-        exclude: ^(advanced_preprocessing_system10\.py)$
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: check-merge-conflict
-      - id: end-of-file-fixer
-      - id: trailing-whitespace
   - repo: local
     hooks:
       - id: pytest

@@ -156,7 +156,7 @@ def validity_rules() -> tuple[ValidityRule, ...]:
 
 
 def validity_rule(rule_id: str) -> ValidityRule:
-    """One rule by id.
+    """One rule by id. D87, D11.
 
     Raises
     ------

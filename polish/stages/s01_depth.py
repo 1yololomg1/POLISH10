@@ -162,7 +162,7 @@ CONTRACT = StageContract(
 
 
 def registered_stage(ingest: IngestResult) -> RegisteredStage:
-    """A runner stage that classifies ``ingest`` and does not replace it."""
+    """A runner stage that classifies ``ingest`` and does not replace it. D24, C5."""
 
     def unmet(context: RunContext) -> tuple[str, ...]:
         if ingest.dataset is None:

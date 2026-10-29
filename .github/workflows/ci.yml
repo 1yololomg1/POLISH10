@@ -22,7 +22,7 @@ jobs:
       - name: Install system packages for Tkinter tests
         run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
       - run: pip install -r requirements.txt
-      - run: pip install pytest ruff coverage
+      - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: xvfb-run -a coverage run -m pytest -q
       - run: coverage report
