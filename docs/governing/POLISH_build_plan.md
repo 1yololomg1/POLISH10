@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D96**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D97**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -201,8 +201,8 @@ A second-opinion review of this plan agreed with the sequencing and architecture
 
 | OD | Question | Owner | What it blocks | My recommendation |
 |---|---|---|---|---|
-| **OD-01** | Which document wins when documents disagree? | You | Every prompt | **No preference stated 15 Sept — recommendation used** (see 1.0) |
-| **OD-02** | Adopt UXC1–UXC10 into the register? | You | P05 onward | **No preference stated — recommendation used:** adopt all ten |
+| **OD-01** | Which document wins when documents disagree? | You | Every prompt | **Explicitly approved** (ready_for_P05.md) |
+| **OD-02** | Adopt UXC1–UXC10 into the register? | You | P05 onward | **Explicitly approved:** adopt all ten (ready_for_P05.md) |
 | **OD-03** | Resampling lineage model (D43 / F1, STRUCT) | You | P06 onward | **DECIDED 15 Sept:** new copy (child dataset) |
 | **OD-04** | Canonical state schema — fields and values | You (+ my sanity pass) | P05 onward | **DECIDED 15 Sept** — Appendix A with your four answers |
 | **OD-05** | Is unit conversion a data alteration? | You | P05, P11 | **DECIDED 15 Sept:** no; units travel with numbers |
@@ -217,7 +217,7 @@ A second-opinion review of this plan agreed with the sequencing and architecture
 | **OD-14** | D42 — interpolation domain per family | Dad | P23, P25 | — |
 | **OD-15** | D51 — metric version of the preferred threshold table | Dad | P23, P25 | — |
 | **OD-16** | D53 — intent of `MIN_POINTS_BY_METHOD` | Table author | P24, P25 | — |
-| **OD-17** | D7 / D32 — name and behaviour of the TVD role | Dad | P10, P23 | Role name proposal in Appendix A |
+| **OD-17** | D7 / D32 — name and behaviour of the TVD role | Dad | P10, P23 | **Name DECIDED 9 Oct:** GEOMETRIC_REFERENCE (D32); the rest of OD-17 stays open |
 | **OD-18** | Does the auditable export carry the DEPT copy? (D9 vs D85b) | Dad | P29 | Stage 1 records the alias; export materialises it per profile |
 | **OD-19** | D16 — ship read-only (Stages 0–4) first? | You | Release plan only | Doesn't block starting — see note |
 | **OD-20** | D20 — manual-workflow benchmark in v1? | You | Release | — |
@@ -226,7 +226,7 @@ A second-opinion review of this plan agreed with the sequencing and architecture
 | **OD-23** | D15 — licensing: when, and what an invalid licence permits | You | P30 | Not before the read-only milestone |
 | **OD-24** | Obtain CWLS LAS 2.0 document | You | P08 (hardening), P29 | Get it before P29. D67 is now RESOLVED from the 16 Sept follow-up (accept irregular, no invented step) |
 | **OD-25** | Visual design — brief §10 Q1, Q2, Q3, Q8 still open | You / design session | P19, P20, P27 | Don't let Cursor invent the coverage track |
-| **OD-26** | Commit the four real-well fixtures? LFS? | You | P02, P07 | **No preference stated — recommendation used:** LFS after your licence check |
+| **OD-26** | Commit the four real-well fixtures? LFS? | You | P02, P07 | **DONE:** fixtures in Git LFS; FORCE 2020 wells clear (NLOD 2.0 / CC-BY-4.0); Volve wells' commercial use unresolved |
 | **OD-27** | What does a read-only release export? | You | P22 | Report + JSON + **QC images** (dad 4.5) + session file |
 | **OD-28** | Which derivation equations are in v1? | Dad | P24 | — |
 
@@ -523,7 +523,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D96, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D97, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1881,6 +1881,108 @@ Tests:
 
 Report in the standard format, plus: the full check table (stage, check, block type,
 identity names, function); per-fixture counts; every departure from item 2's list.
+````
+
+### P13i - Governance checks and CI test dependencies (repo)
+
+**Needs:** P13h.
+
+````text
+POLISH rebuild — P13i: Governance checks, CI test dependencies, check-only hooks.
+
+Starting state (checked 28–29 Oct 2026): branch rebuild, HEAD c941ddb = origin/rebuild,
+working tree clean, pytest 355 passed, 1 skipped, ruff clean. Confirm with git status
+and pytest; if either differs, stop and report. Do not commit. Keep each file's
+encoding and line endings. If an instruction here conflicts with the build plan, the
+register, the state glossary or an existing test, stop and report; do not choose.
+No engine behaviour changes in this prompt.
+
+Why (audit 28 Oct 2026, read in the repo): tests/provenance/test_describe.py imports
+jsonschema, but CI installs only requirements.txt plus pytest, ruff and coverage, so
+CI cannot collect that file. .pre-commit-config.yaml includes hooks that rewrite files
+(ruff-format would change 34 files today; end-of-file-fixer; trailing-whitespace),
+and it is not installed. .cursor/rules/polish-rebuild.mdc does not list
+state_glossary.md. Build plan section 1.1 rows OD-01, OD-02, OD-17 and OD-26 do not
+match what the repo records. Two public functions do not name their rows.
+
+1. CI test dependencies. New requirements-dev.txt, pinned to the versions installed
+   here: pytest==8.4.2, ruff==0.16.6, coverage==7.11.0, jsonschema==4.25.0 (confirm
+   with pip show; if any differs, use the installed version and report it).
+   .github/workflows/ci.yml: replace "pip install pytest ruff coverage" with
+   "pip install -r requirements-dev.txt". Change nothing else in ci.yml.
+   Report each package's licence (rule 10).
+   Then, in a fresh virtual environment outside the repo, install requirements.txt
+   and requirements-dev.txt and run python -m pytest -q from the repo root. Report
+   the tail. If that cannot run (for example no network), say so with the error.
+
+2. .pre-commit-config.yaml: hooks check, never rewrite. Remove ruff-format,
+   end-of-file-fixer and trailing-whitespace. Keep check-merge-conflict, ruff (no
+   --fix) and the local pytest hook. Add a comment: hooks must not modify files;
+   ruff format is not adopted (it would change 34 files on 29 Oct 2026).
+
+3. .cursor/rules/polish-rebuild.mdc, "Governing documents": add the line
+   "- state_glossary.md - state vocabulary and the block-type/action matrix (OD-04,
+   Appendix A)". Change nothing else in that file except the D-range in item 6.
+
+4. Build plan section 1.1 ("At a glance"), "My recommendation" column only:
+   - OD-01: "**Explicitly approved** (ready_for_P05.md)"
+   - OD-02: "**Explicitly approved:** adopt all ten (ready_for_P05.md)"
+   - OD-17: "**Name DECIDED 9 Oct:** GEOMETRIC_REFERENCE (D32); the rest of OD-17
+     stays open"
+   - OD-26: "**DONE:** fixtures in Git LFS; FORCE 2020 wells clear (NLOD 2.0 /
+     CC-BY-4.0); Volve wells' commercial use unresolved"
+
+5. Docstrings: polish/rules/loader.py validity_rule: end its first line with
+   " D87, D11." polish/stages/s01_depth.py registered_stage: end its first line with
+   " D24, C5." Nothing else.
+
+6. Register D97 (owner AC, 29 Oct 2026, status NEW): "Consistency between the code
+   and the governing documents is checked by tests in tests/governance/: state names
+   and the action matrix against the glossary, cited rows against the register, the
+   register's Count section and D-range, the governing-document list, and public
+   docstrings. CI installs test-only dependencies from requirements-dev.txt.
+   Pre-commit hooks only check; they never rewrite a file. ruff format is not
+   adopted." Re-parse Count (total 97; AC 27; NEW 15; add "D97 is NEW."). Change
+   D1–D96 to D1–D97 (however the dash is written) in the register title, every
+   occurrence outside fenced prompt text in the build plan, docs/governing/README.md
+   and .cursor/rules/polish-rebuild.mdc. Build plan: add "### P13i - Governance
+   checks and CI test dependencies (repo)" with "**Needs:** P13h." and this prompt's
+   text, after P13h and before P14. Do not change P14's Needs line.
+
+7. New tests/governance/test_consistency.py (follow the existing tests/ package
+   layout). Each check reads the files at test time; no counts copied into the test:
+   a. Every member name of every Enum defined in polish/model/states.py appears in
+      docs/governing/state_glossary.md, and every token there matching
+      [A-Z][A-Z0-9]+(_[A-Z0-9]+)+ is a member name or value of one of those enums.
+   b. In the glossary table under "## Block type, actions, disposition, export",
+      each row's block type (first backticked token, column 1) and its actions
+      (backticked tokens, column 2) equal permitted_actions() for that BlockType,
+      and every BlockType has a row ("view only" / "fix upstream only" = no actions).
+   c. Every D-number cited in polish/ (.py and .json) is an unstruck register row
+      (citing D20a fails). Every F-number is within F1–F19, UXC within UXC1–UXC10,
+      C within C1–C7.
+   d. Register rows D1..Dmax each appear exactly once (D20a is the struck row).
+   e. The Count section equals the rows: total = kept rows (D20a excluded); By
+      source = first word of each row's source cell; By review status = first word
+      of the status cell when it is REVISE, NEW, RESOLVED, OPEN, PARTIAL, STRUCT,
+      UNVER or CONFLICT, else "not flagged". Cells split on unescaped "|" only (D89
+      contains "\|").
+   f. D1–Dmax (Dmax = last register row) is the only D1–Dn range in the register
+      title line, docs/governing/README.md, the rules file, and the build plan
+      outside fenced prompt text.
+   g. The rules file and docs/governing/README.md both name each of:
+      POLISH_pipeline_contracts.md, POLISH_decision_register.md,
+      POLISH_design_brief.md, POLISH_UIUX_cohesion_supplement.md,
+      POLISH_build_plan.md, state_glossary.md.
+   h. Every public top-level function and class in polish/, and every public method
+      of a public class, has a docstring; every public top-level function's
+      docstring names at least one D, C, UXC or F row.
+   Each check must fail with a message naming the file and the item. Show each one
+   failing once (for example against a temporary copy) and report how.
+
+Report in the standard format, plus: the governance test names and that each one
+fails when its rule is broken; the fresh-environment pytest tail; every line changed
+in the build plan, register, README, rules file, ci.yml and .pre-commit-config.yaml.
 ````
 
 ### P14 — Dependency graph and staleness (engine)

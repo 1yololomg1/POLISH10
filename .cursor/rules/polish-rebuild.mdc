@@ -13,10 +13,11 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D96, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D97, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
+- state_glossary.md - state vocabulary and the block-type/action matrix (OD-04, Appendix A)
 Precedence when they disagree: Contracts C1–C7 are the core invariants. Where a
 decision-register row (revision 2 or later) revises older text, the register row wins.
 The domain expert's answers (POLISH_build_plan.md section 1.0) outrank DESIGN-tier
