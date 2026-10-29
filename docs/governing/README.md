@@ -2,7 +2,7 @@
 
 `POLISH_pipeline_contracts.md` governs the pipeline invariants C1–C7: what must stay true between stages so a measured value is never silently invented, converted, clipped, or dropped.
 
-`POLISH_decision_register.md` governs decisions D1–D95 and findings F1–F19 (revision 2). It records what was decided, by whom, and where an older sentence has been revised.
+`POLISH_decision_register.md` governs decisions D1–D96 and findings F1–F19 (revision 2). It records what was decided, by whom, and where an older sentence has been revised.
 
 `POLISH_design_brief.md` governs interface intent: what POLISH is, who it is for, the load–describe–inspect–decide–alter–export loop, and the open visual questions. It does not govern petrophysical rule values.
 

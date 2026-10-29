@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D95**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D96**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -523,7 +523,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D95, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D96, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1706,9 +1706,186 @@ lists; the INFORMATIONAL evidence keys added; every test added or changed; the
 register Count before and after; pytest and ruff results; git status at the end.
 ````
 
-### P14 — Dependency graph and staleness (engine)
+### P13h — Every finding gets a stable identity (engine)
 
 **Needs:** P13.
+
+````text
+POLISH rebuild — P13h: Every finding gets a stable identity.
+
+Starting state (checked 28 Oct 2026): branch rebuild, HEAD 6d4eb2a = origin/rebuild,
+working tree clean. Last full run on this content: pytest 343 passed, 1 skipped.
+Confirm with git status and pytest; if either differs, stop and report. Do not commit.
+Keep each file's encoding and line endings. If an instruction here conflicts with the
+build plan, the register, the state glossary or an existing test, stop and report the
+conflict; do not choose. P13f is parked and superseded; build none of it.
+
+Problem (read in the code at 6d4eb2a): each stage numbers its findings by position
+(_Ledger.add in s00_ingest, s01_depth, s02_identify, s03_units, s04_validity:
+id = "s0N-" + run counter). DecisionRecord stores only finding_id, and
+current_decisions, explicit_mappings, unit_choices, pass_choices, apply_decision,
+load_session, _replay and outstanding all match on it. When a decision removes a
+finding on a re-run (a mapping, a unit choice, a pass choice), every later finding of
+that stage is renumbered and a saved answer can attach to another curve's question.
+Stage 0 findings carry no evidence, so only their message tells two apart.
+
+Decided (owner, 23 Oct 2026): a finding's identity is the check that raised it plus
+what it is about; decisions match on that identity; a change in what was observed
+makes an answer stale, not unmatched. Until P14 builds staleness, that means: held,
+kept in history, and reported with its own check (item 3).
+
+1. polish/model/findings.py
+   a. FindingRecord gains two required fields: check: str (^[a-z][a-z0-9_]*$) and
+      identity: tuple[tuple[str, str], ...] (names unique; values are str, non-empty
+      except that a mnemonic may be "" when the file gives none). Allowed identity
+      names: section, line, field, column, mnemonic, sentinel, endpoint, family_id,
+      prefix, rule_id, sample_start, sample_end, decision_id, file. Any other name is
+      refused. Numbers (line, column, sample_start, sample_end) are written as
+      decimal text, e.g. "7".
+   b. finding_key(stage, check, identity) -> str. Canonical JSON of {"stage", "check",
+      "identity": pairs sorted by name} (sort_keys, separators (",", ":"),
+      ensure_ascii=False); id = f"s{stage:02d}.{check}.{sha256(json)[:16]}".
+      FindingRecord.__post_init__ refuses an id that is not finding_key(...) of its
+      own stage, check and identity.
+   c. evidence_digest(finding) -> str: SHA-256 hex of the canonical JSON of the
+      evidence fields sorted by key. When the evidence has no fields, the digest
+      covers the message text instead. Never the timestamp.
+   d. Identity never contains a count, a depth or other measured value, a score, a
+      version, the message, a file hash, a dataset id or a CurveRef string. A curve
+      is identified as (("column", str(column_index)), ("mnemonic", mnemonic as
+      written)). Observed values stay in evidence and so reach the digest.
+   e. DecisionRecord gains evidence_digest: str (64 lowercase hex), required, placed
+      after supersedes and before the fields that have defaults. Every constructor in
+      polish/ sets it from the finding the decision is about: apply_decision,
+      _defaults, _rerecord, _choice_record.
+
+2. Each stage's _Ledger.add takes check and identity, builds the id with finding_key,
+   and refuses (a) a check not in that module's new CHECKS frozenset and (b) an id
+   already in this run's ledger. Apart from the id and the two new fields, every
+   finding stays as today: subject_refs, block type, evidence, message, and every
+   stage result. One check name has one block type: where a call site can emit two
+   block types, it uses two names. Locate sites by function name. Check (block type)
+   and identity:
+
+   Stage 0, _record_text_conditions: preamble_lines (INFO) none; section_repeated
+   (INFO) section; section_absent (INFO) section; ascii_not_last (INFO) none;
+   vers_absent (INFO) none; vers_parsed_as_2 (INFO) none; version_field_repeated
+   (AMBIG) field = VERS or WRAP; well_field_repeated (AMBIG) field = the slot;
+   null_not_finite (AMBIG) none.
+   Stage 0, _pass1: section_marker_empty (INFO) line; section_unrecognised (INFO)
+   line; las3_section_title (RDW) line; header_line_unsplit (INFO) line; las3_version
+   (RDW) none; null_undeclared (AMBIG) none; ascii_absent (STRUCT) none;
+   wrapped_no_curves (STRUCT) none; wrapped_tokens_leftover (STRUCT) none;
+   unwrapped_columns_mismatch (STRUCT) none; ascii_no_rows (STRUCT) none, used at
+   both "no data rows" sites (an if and its elif).
+   Stage 0, _sentinel_warnings: sentinel_candidate (RDW) column, mnemonic, sentinel
+   = the spelling shown in the message.
+   Stage 0, pass 2: pass2_header_line_unreadable (INFO) line; pass2_header_error
+   (INFO) none; pass2_no_parse (INFO) none. _compare_one_header (called once each for
+   VERS, WRAP, NULL, STRT, STOP, STEP): pass2_header_value_differs (STRUCT) field =
+   that label; pass2_header_text_differs (INFO) field = that label. _compare_curves:
+   pass2_curve_count_differs (STRUCT) none; pass2_mnemonic_differs,
+   pass2_unit_differs, pass2_description_differs (INFO) column, mnemonic;
+   pass2_length_differs, pass2_samples_differ (STRUCT) column, mnemonic;
+   pass2_description_whitespace (INFO) none.
+   Stage 0, ingest: encoding_undetermined (STRUCT) none; depth_axis_refused (STRUCT)
+   none.
+   Stage 1 (identity none unless stated): depth_no_curve, depth_index_not_recognised,
+   depth_too_few_samples, depth_token_not_decimal, depth_duplicate, depth_decreases,
+   step_negative (all STRUCT); depth_unit_unrecognised (AMBIG); step_zero,
+   step_blank_regular, step_blank_irregular, strt_blank, grid_off_declared_step,
+   step_corrected (INFO); step_not_standard (INFO), used at its three sites in
+   _standard_step; endpoint_unit_mismatch (AMBIG) endpoint = the label;
+   endpoint_not_compared, endpoint_within_step (INFO) endpoint;
+   endpoint_beyond_step (STRUCT) endpoint.
+   Stage 2: _add_unknown_notices: mnemonic_left_unchanged (INFO),
+   user_mapped_no_family (RDW), mnemonic_unrecognised (RDW), each column, mnemonic;
+   _add_duplicates: mnemonic_duplicated (INFO) mnemonic = the upper-cased, stripped
+   group key; _unmatched_pass: pass_choice_not_applied (INFO) family_id, decision_id;
+   _add_passes: pass_default (AMBIG) family_id; _add_prefixes: prefix_group (AMBIG)
+   prefix; _add_clashes: local_shipped_clash (AMBIG) mnemonic. A group question's
+   identity is its group key, not its members; members stay in subject_refs and
+   evidence.
+   Stage 3: unit_unresolved (AMBIG) column, mnemonic; unit_incompatible_with_family
+   (RDW) column, mnemonic; unit_choice_not_applied (INFO) column, mnemonic,
+   decision_id.
+   Stage 4, _add_findings: invalid_samples (AMBIG) column, mnemonic, rule_id;
+   log_level_flag (INFO) column, mnemonic, rule_id; suspicious_samples (AMBIG)
+   column, mnemonic, rule_id; not_validated (INFO) column, mnemonic;
+   tool_absence_gap (INFO) column, mnemonic, sample_start, sample_end.
+   If a call site is not on this list, or cannot be identified with the allowed names
+   without an observed value, stop and report it.
+
+3. polish/decisions/session.py
+   - Session file schema "1" -> "2": each decision gains "evidence_digest". A
+     version-1 file is refused with a message naming its version. Preferences keep
+     schema "1": today they share _SCHEMA_VERSION; give them their own constant.
+   - Session findings (stage 0) get checks: session_file_changed (AMBIG, none;
+     _changed_file_finding finds it by check, not by the "session-hash-<stem>" id);
+     session_decision_unmatched (INFO, decision_id); session_kept_file_exists (INFO,
+     file = kept file name); session_held (AMBIG, none); session_not_written (INFO,
+     none); new session_decision_evidence_changed (INFO, decision_id; evidence
+     decision_id and finding_id, both already declared).
+   - load_session (hash match) and _replay (USE_SAVED_DECISIONS), for each decision
+     in force: no finding has its id -> session_decision_unmatched, as today; the
+     finding exists but evidence_digest(finding) != decision.evidence_digest ->
+     session_decision_evidence_changed ("The evidence behind decision X has changed
+     since it was recorded. It was not applied."), held on load, listed and left in
+     the kept file on replay; otherwise _revalidate as today.
+   - _defaults keeps its matching exactly as today (family_id with rule_id or
+     passes); it only sets the new evidence_digest. local_decisions.json and the
+     local mnemonics.json do not change: their rows hold no finding id.
+
+4. No file under polish/stages/ imports polish.decisions. describe.py is not changed;
+   it prints the new ids, and its schema already accepts any non-empty id string.
+
+5. Docs. Register D96 (owner AC, 28 Oct 2026, status NEW): "A finding's id is built
+   from its stage, the check that raised it and what it is about (column and
+   mnemonic, section, line, field, family, prefix, rule or gap position), never from
+   its position in a run or from observed values. A decision records a digest of its
+   finding's evidence; when the evidence differs, the decision is held and reported,
+   not applied. The session file schema is 2." Re-parse the Count section. Change
+   every D1–D95 range, however the dash is written, to D1–D96: register title, build
+   plan lines 24 and 526, docs/governing/README.md line 5. Also
+   .cursor/rules/polish-rebuild.mdc line 16, which still says D1–D88. Build plan: add
+   "### P13h" with this prompt's text before P14, and change P14's Needs line from
+   "P13." to "P13, P13h." Report every line changed.
+
+Tests:
+- All five fixtures, Stages 0–4 with no decisions: every finding's id equals
+  finding_key(stage, check, identity); no id repeats within a stage; a second run
+  gives identical ids and digests. Report per fixture the finding count per stage.
+  If any fixture repeats an id, stop and report which check and identity.
+- The ledger refuses an undeclared check and a repeated id; FindingRecord refuses an
+  id that is not its key and an identity name not on the list.
+- The 23 Oct case: a synthetic file with two unrecognised curves A and B, both unit
+  API (two spelling rows, so Stage 3 raises a unit question with candidates GAPI and
+  API). Choose GAPI for A and defer B. Re-run Stage 3 with A's unit choice: A's
+  question is not raised, B's question keeps its id, outstanding() shows B deferred,
+  and A's decision attaches to no finding of the re-run. Loading the saved session
+  against the first run's findings applies both.
+- Evidence change: a finding with the same stage, check and identity but different
+  evidence, passed to load_session -> session_decision_evidence_changed, held, not
+  applied. Also through choose_changed_file(USE_SAVED_DECISIONS): a synthetic file
+  with two unrecognised curves, both unit API, each question deferred; its second
+  version changes one curve's unit text to XYZ (still unit_unresolved, different
+  evidence). The unchanged curve's deferral is re-recorded; the changed one is listed
+  with session_decision_evidence_changed.
+- Session: a version-1 file is refused with a message; a saved file has schema "2"
+  and an evidence_digest on every decision; preferences.json still writes "1".
+- Existing tests keep their meaning. Tests that build FindingRecord or DecisionRecord
+  directly use finding_key and evidence_digest and never a hand-written id:
+  tests/decisions/test_decisions.py (_finding and the helpers that call it) and
+  tests/model/test_dataset_skeleton.py (the "inf-1" finding, which a test also
+  asserts on, and two positional DecisionRecord calls).
+
+Report in the standard format, plus: the full check table (stage, check, block type,
+identity names, function); per-fixture counts; every departure from item 2's list.
+````
+
+### P14 — Dependency graph and staleness (engine)
+
+**Needs:** P13, P13h.
 
 ````text
 POLISH rebuild — P14: Dependency graph and staleness.
