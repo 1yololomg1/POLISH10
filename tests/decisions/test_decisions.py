@@ -31,7 +31,7 @@ from polish.decisions.session import (
     save_session,
     session_path,
 )
-from polish.model.findings import DecisionActor, DecisionScope, Evidence, FindingRecord
+from polish.model.findings import DecisionActor, DecisionScope, Evidence, FindingRecord, evidence_digest, finding_key
 from polish.model.pass_choice import PassChoice
 from polish.model.ids import CurveRef, DatasetId, FileHash
 from polish.model.states import (
@@ -70,16 +70,20 @@ def _file(directory: Path, name: str = "well.las", body: bytes = b"~V\nVERS. 2.0
 
 def _finding(
     block: BlockType,
-    finding_id: str,
+    check: str,
+    identity: tuple[tuple[str, str], ...] = (),
     fields: tuple[tuple[str, str | int | float | bool], ...] = (),
     *,
     message: str = "Recorded.",
     curve: CurveRef | None = None,
+    stage: int = 2,
 ) -> FindingRecord:
     refs = () if curve is None else (curve,)
     return FindingRecord(
-        id=finding_id,
-        stage=2,
+        id=finding_key(stage, check, identity),
+        stage=stage,
+        check=check,
+        identity=identity,
         block_type=block,
         subject_refs=refs,
         evidence=Evidence(block.value, fields),
@@ -88,10 +92,11 @@ def _finding(
     )
 
 
-def _ambiguous(finding_id: str = "amb-1") -> FindingRecord:
+def _ambiguous(mark: str = "amb") -> FindingRecord:
     return _finding(
         BlockType.AMBIGUOUS_INTERPRETATION,
-        finding_id,
+        "suspicious_samples",
+        (("column", "1"), ("mnemonic", "GR"), ("rule_id", mark)),
         (
             ("family_id", _FAMILY),
             ("mnemonic", "GR"),
@@ -102,24 +107,37 @@ def _ambiguous(finding_id: str = "amb-1") -> FindingRecord:
     )
 
 
-def _mappable(mnemonic: str = "APPLE", finding_id: str = "map-1", curve: CurveRef | None = None) -> FindingRecord:
+def _mappable(mnemonic: str = "APPLE", mark: str | None = None, curve: CurveRef | None = None) -> FindingRecord:
+    identity: tuple[tuple[str, str], ...] = (("mnemonic", mnemonic),)
+    if mark is not None:
+        identity = (("decision_id", mark), ("mnemonic", mnemonic))
     return _finding(
         BlockType.RULE_DEPENDENT_WARNING,
-        finding_id,
+        "mnemonic_unrecognised",
+        identity,
         (("mnemonic", mnemonic), ("preserved", True)),
         message=f"Mnemonic {mnemonic} is not recognised.",
         curve=curve,
     )
 
 
+def _noted(mnemonic: str = "NOTE") -> FindingRecord:
+    return _finding(
+        BlockType.INFORMATIONAL,
+        "mnemonic_left_unchanged",
+        (("mnemonic", mnemonic),),
+        (("mnemonic", mnemonic),),
+    )
+
+
 def _for_block(block: BlockType) -> FindingRecord:
     if block is BlockType.AMBIGUOUS_INTERPRETATION:
-        return _ambiguous(f"id-{block.value}")
+        return _ambiguous(block.value)
     if block is BlockType.RULE_DEPENDENT_WARNING:
-        return _mappable(finding_id=f"id-{block.value}")
+        return _mappable(mark=block.value)
     if block is BlockType.INFORMATIONAL:
-        return _finding(block, f"id-{block.value}", (("mnemonic", "NOTE"),))
-    return _finding(block, f"id-{block.value}")
+        return _noted()
+    return _finding(block, "structural_notice")
 
 
 def _apply(session, finding, action, **kwargs):
@@ -191,7 +209,7 @@ def test_map_explicitly_requires_a_known_family_and_refuses_rm(tmp_path: Path):
 
 
 def test_superseding_keeps_the_earlier_decision(tmp_path: Path):
-    finding = _finding(BlockType.INFORMATIONAL, "info-1", (("mnemonic", "NOTE"),))
+    finding = _noted()
     session = open_session(_file(tmp_path), (finding,))
     first = _apply(session, finding, UserAction.ACKNOWLEDGE)
     second = _apply(first, finding, UserAction.DEFER, reason="later, with a reason")
@@ -222,7 +240,7 @@ def test_the_session_file_has_no_numeric_data_values(tmp_path: Path):
 
 def test_a_different_hash_is_reported_and_not_applied(tmp_path: Path):
     path = _file(tmp_path)
-    finding = _finding(BlockType.INFORMATIONAL, "info-1", (("mnemonic", "NOTE"),))
+    finding = _noted()
     session = _apply(open_session(path, (finding,)), finding, UserAction.ACKNOWLEDGE)
     save_session(session)
     path.write_bytes(path.read_bytes() + b"\n")
@@ -432,7 +450,7 @@ def test_a_saved_keep_is_applied_on_a_second_well_as_default(tmp_path: Path):
     assert len(loaded.defaults_applied) == 1
     assert loaded.defaults_applied[0].actor is DecisionActor.DEFAULT_APPLIED
     assert loaded.defaults_applied[0].chosen_option == "KEEP"
-    assert loaded.defaults_applied[0].finding_id == "on-two"
+    assert loaded.defaults_applied[0].finding_id == second_finding.id
     assert loaded.defaults_applied[0] in loaded.session.decisions
     assert session.decisions[0].decision_id != loaded.defaults_applied[0].decision_id
 
@@ -440,7 +458,7 @@ def test_a_saved_keep_is_applied_on_a_second_well_as_default(tmp_path: Path):
 def test_no_session_does_not_copy_another_wells_session_decisions(tmp_path: Path):
     app = tmp_path / "app"
     path = _file(tmp_path, "only.las")
-    finding = _finding(BlockType.INFORMATIONAL, "info-1", (("mnemonic", "NOTE"),))
+    finding = _noted()
     loaded = load_session(path, (finding,), app_data=app)
     assert loaded.applied == ()
     assert loaded.session.decisions == ()
@@ -575,8 +593,8 @@ def _changed_file(directory: Path, name: str = "well.las"):
         app_data=app,
     )
     path = _file(directory, name)
-    finding = _finding(BlockType.INFORMATIONAL, "info-1", (("mnemonic", "NOTE"),))
-    missing = _finding(BlockType.INFORMATIONAL, "info-gone", (("mnemonic", "GONE"),))
+    finding = _noted()
+    missing = _noted("GONE")
     session = _apply(open_session(path, (finding, missing)), finding, UserAction.ACKNOWLEDGE)
     session = _apply(session, missing, UserAction.ACKNOWLEDGE)
     save_session(session)
@@ -665,7 +683,8 @@ def test_a_saved_answer_changes_only_when_confirmed(tmp_path: Path):
     kept = _ambiguous("keep-me")
     other = _finding(
         BlockType.AMBIGUOUS_INTERPRETATION,
-        "other-rule",
+        "suspicious_samples",
+        (("column", "2"), ("mnemonic", "RHOB"), ("rule_id", _OTHER_FAMILY)),
         (
             ("family_id", _OTHER_FAMILY),
             ("mnemonic", "RHOB"),
@@ -777,7 +796,7 @@ def test_a_changed_file_keeps_the_old_session_and_then_chooses(tmp_path: Path):
     fresh_archive = kept_session_path(fresh_path, fresh_recorded)
     assert fresh_archive.read_bytes() == fresh_original
     assert fresh.applied == ()
-    assert all(item.finding_id != "info-1" for item in fresh.session.decisions)
+    assert all(item.finding_id != _noted().id for item in fresh.session.decisions)
     assert fresh.defaults_applied
     assert fresh.session.hold is False
     save_session(fresh.session)
@@ -898,7 +917,7 @@ def test_unit_choices_returns_only_a_stage_3_unit_answer(tmp_path: Path):
         ),
     )
     assert unit_choices(replace(session, findings=(bare, keep))) == ()
-    wrong_stage = replace(question, stage=2)
+    wrong_stage = replace(question, stage=2, id=finding_key(2, question.check, question.identity))
     assert unit_choices(replace(session, findings=(wrong_stage, keep))) == ()
 
 
@@ -940,10 +959,11 @@ def test_a_local_rule_unit_choice_is_refused(tmp_path: Path):
         )
 
 
-def _pass_finding(finding_id: str = "pass-1", family: str = "GAMMA_RAY_TOTAL") -> FindingRecord:
+def _pass_finding(mark: str = "pass", family: str = "GAMMA_RAY_TOTAL") -> FindingRecord:
     return _finding(
         BlockType.AMBIGUOUS_INTERPRETATION,
-        finding_id,
+        "pass_default",
+        (("family_id", family), ("mnemonic", mark)),
         (
             ("family_id", family),
             ("base_mnemonic", "GR"),
@@ -973,7 +993,8 @@ def test_pass_choices_returns_only_a_stage_2_pass_answer(tmp_path: Path):
         evidence=Evidence(finding.block_type.value, (("family_id", "GAMMA_RAY_TOTAL"), ("options", json.dumps(["main pass"])))),
     )
     assert pass_choices(replace(session, findings=(bare, keep))) == ()
-    assert pass_choices(replace(session, findings=(replace(finding, stage=3), keep))) == ()
+    shifted = replace(finding, stage=3, id=finding_key(3, finding.check, finding.identity))
+    assert pass_choices(replace(session, findings=(shifted, keep))) == ()
     assert pass_choices(replace(session, hold=True)) == ()
 
 
@@ -1117,18 +1138,153 @@ def test_a_changed_file_rerecords_a_stated_depth_role_and_lists_another(tmp_path
     saved = save_session(session)
     payload = json.loads(saved.read_text(encoding="utf-8"))
     for item in payload["decisions"]:
-        if item["finding_id"] == "depth-bad":
+        if item["finding_id"] == bad.id:
             item["role"] = CurveRole.DRILLING.value
     saved.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     path.write_bytes(path.read_bytes() + b"\n")
     loaded = load_session(path, (good, bad), app_data=tmp_path / "app")
     chosen = choose_changed_file(loaded.session, "USE_SAVED_DECISIONS", timestamp=_WHEN)
     assert len(chosen.applied) == 1
-    assert chosen.applied[0].finding_id == "depth-good"
+    assert chosen.applied[0].finding_id == good.id
     assert chosen.applied[0].role == CurveRole.GEOMETRIC_REFERENCE.value
     assert chosen.applied[0].family_id == "DEPTH"
     assert chosen.applied[0].actor is DecisionActor.USER
     assert chosen.applied[0].supersedes is not None
-    listed = [item for item in chosen.reported if item.evidence.as_dict().get("finding_id") == "depth-bad"]
+    listed = [item for item in chosen.reported if item.evidence.as_dict().get("finding_id") == bad.id]
     assert len(listed) == 1
     assert "the role is not one this family states" in listed[0].message
+
+
+def _api_pair(directory: Path):
+    """Two unrecognised curves, both unit API. Stage 3 asks GAPI or API for each. D93, D96."""
+
+    ingested, identified = _identify(directory, [("A", "API"), ("B", "API")])
+    units = interpret(ingested, identified)
+    questions = {
+        str(item.evidence.as_dict()["mnemonic"]): item
+        for item in units.findings
+        if item.check == "unit_unresolved"
+    }
+    return ingested, identified, units, questions
+
+
+def test_a_unit_choice_does_not_renumber_the_deferred_curve(tmp_path: Path):
+    app = tmp_path / "app"
+    ingested, identified, units, questions = _api_pair(tmp_path)
+    assert set(questions) == {"A", "B"}
+    assert questions["A"].id != questions["B"].id
+    assert listed_options(questions["A"]) == ("GAPI", "API")
+    assert listed_options(questions["B"]) == ("GAPI", "API")
+    session = open_session(ingested.source_file.path, units.findings)
+    session = _apply(
+        session,
+        questions["A"],
+        UserAction.CHOOSE_OPTION,
+        reason="gamma api",
+        chosen_option="GAPI",
+    )
+    session = _apply(session, questions["B"], UserAction.DEFER, reason="later")
+    save_session(session)
+    again = interpret(ingested, identified, unit_choices=unit_choices(session))
+    unresolved = [item for item in again.findings if item.check == "unit_unresolved"]
+    assert [str(item.evidence.as_dict()["mnemonic"]) for item in unresolved] == ["B"]
+    assert unresolved[0].id == questions["B"].id
+    assert questions["A"].id not in {item.id for item in again.findings}
+    reloaded = load_session(ingested.source_file.path, again.findings, app_data=app)
+    assert [item.finding_id for item in reloaded.applied] == [questions["B"].id]
+    assert reloaded.applied[0].disposition.issue_disposition is IssueDisposition.DEFERRED
+    assert questions["A"].id not in {item.finding_id for item in reloaded.applied}
+    open_ids = [item.id for group in outstanding(reloaded.session).values() for item in group]
+    assert questions["B"].id not in open_ids
+    first = load_session(ingested.source_file.path, units.findings, app_data=app)
+    assert {item.finding_id for item in first.applied} == {questions["A"].id, questions["B"].id}
+
+
+def test_changed_evidence_holds_the_decision(tmp_path: Path):
+    path = _file(tmp_path)
+    finding = _ambiguous("held")
+    session = _apply(open_session(path, (finding,)), finding, UserAction.DEFER, reason="not yet")
+    save_session(session)
+    fields = tuple(
+        (key, "GR2") if key == "mnemonic" else (key, value) for key, value in finding.evidence.fields
+    )
+    changed = replace(finding, evidence=Evidence(finding.block_type.value, fields))
+    assert changed.id == finding.id
+    assert evidence_digest(changed) != session.decisions[0].evidence_digest
+    loaded = load_session(path, (changed,), app_data=tmp_path / "app")
+    assert loaded.applied == ()
+    assert session.decisions[0].decision_id in loaded.session.held_ids
+    reported = [item for item in loaded.reported if item.check == "session_decision_evidence_changed"]
+    assert len(reported) == 1
+    assert reported[0].identity == (("decision_id", session.decisions[0].decision_id),)
+    assert reported[0].message == (
+        f"The evidence behind decision {session.decisions[0].decision_id} has changed "
+        "since it was recorded. It was not applied."
+    )
+
+
+def test_use_saved_decisions_rerecords_only_the_unchanged_unit_question(tmp_path: Path):
+    ingested, _identified, units, questions = _api_pair(tmp_path)
+    session = open_session(ingested.source_file.path, units.findings)
+    session = _apply(session, questions["A"], UserAction.DEFER, reason="later")
+    session = _apply(session, questions["B"], UserAction.DEFER, reason="later")
+    saved = save_session(session)
+    original = saved.read_bytes()
+    path = ingested.source_file.path
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("B.API", "B.XYZ", 1), encoding="utf-8", newline="\n")
+    again_ingested = ingest(path, read_at=_WHEN)
+    again_depth = classify(again_ingested)
+    again_identified = identify(again_ingested, again_depth, local_tables_directory=tmp_path / "no-local")
+    again_units = interpret(again_ingested, again_identified)
+    again = {
+        str(item.evidence.as_dict()["mnemonic"]): item
+        for item in again_units.findings
+        if item.check == "unit_unresolved"
+    }
+    assert set(again) == {"A", "B"}
+    assert again["A"].id == questions["A"].id
+    assert again["B"].id == questions["B"].id
+    assert evidence_digest(again["A"]) == evidence_digest(questions["A"])
+    assert evidence_digest(again["B"]) != evidence_digest(questions["B"])
+    loaded = load_session(path, again_units.findings, app_data=tmp_path / "app")
+    assert loaded.session.hold is True
+    chosen = choose_changed_file(loaded.session, "USE_SAVED_DECISIONS", timestamp=_WHEN)
+    assert [item.finding_id for item in chosen.applied] == [questions["A"].id]
+    assert chosen.applied[0].disposition.issue_disposition is IssueDisposition.DEFERRED
+    assert chosen.applied[0].evidence_digest == evidence_digest(again["A"])
+    changed = [item for item in chosen.reported if item.check == "session_decision_evidence_changed"]
+    assert len(changed) == 1
+    assert changed[0].evidence.as_dict()["finding_id"] == questions["B"].id
+    assert all(item.finding_id != questions["B"].id for item in chosen.applied)
+    recorded = json.loads(original.decode("utf-8"))["file_hash"]
+    assert isinstance(recorded, str)
+    assert kept_session_path(path, recorded).read_bytes() == original
+
+
+def test_a_version_1_session_is_refused_and_a_saved_file_is_schema_2(tmp_path: Path):
+    path = _file(tmp_path)
+    session_path(path).write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "file_hash": "a" * 64,
+                "input_name": path.name,
+                "decisions": [],
+            }
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    with pytest.raises(ValueError, match="'1'") as raised:
+        load_session(path, ())
+    assert "'1'" in str(raised.value)
+    finding = _noted()
+    saved = save_session(_apply(open_session(path, (finding,)), finding, UserAction.ACKNOWLEDGE))
+    payload = json.loads(saved.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "2"
+    assert payload["decisions"]
+    assert all(re.fullmatch(r"[0-9a-f]{64}", item["evidence_digest"]) for item in payload["decisions"])
+    save_preferences(tmp_path / "prefs", {"note": "as recorded"})
+    preferences = json.loads(preferences_path(tmp_path / "prefs").read_text(encoding="utf-8"))
+    assert preferences["schema_version"] == "1"

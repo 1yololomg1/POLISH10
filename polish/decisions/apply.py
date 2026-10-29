@@ -1,4 +1,4 @@
-"""Apply one decision to one finding. D79, D86, D91, D92, D93, D94, UXC2, UXC4, OD-22.
+"""Apply one decision to one finding. D79, D86, D91, D92, D93, D94, D96, UXC2, UXC4, OD-22.
 
 Structure
 ---------
@@ -35,7 +35,7 @@ from polish.model.mapping import ExplicitMapping, roles_stated_by_family
 from polish.model.pass_choice import PassChoice
 from polish.model.unit_choice import UnitChoice
 from polish.decisions.versions import versions_in_force
-from polish.model.findings import DecisionActor, DecisionRecord, DecisionScope, FindingRecord
+from polish.model.findings import DecisionActor, DecisionRecord, DecisionScope, FindingRecord, evidence_digest
 from polish.model.ids import CurveRef
 from polish.model.states import (
     BlockType,
@@ -297,7 +297,7 @@ def apply_decision(
     app_data: Path | None = None,
     timestamp: datetime | None = None,
 ) -> object:
-    """Append one decision, or refuse it. D79, D86, D91, D92, UXC2, UXC4, OD-22.
+    """Append one decision, or refuse it. D79, D86, D91, D92, D96, UXC2, UXC4, OD-22.
 
     The action must be one ``permitted_actions`` allows for the finding's
     block type. STRUCTURAL_DATA_FAILURE, SCIENTIFIC_PRECONDITION_FAILURE and
@@ -424,6 +424,7 @@ def apply_decision(
         versions_in_force=versions,
         input_file_hash=session.file_hash,
         supersedes=supersedes,
+        evidence_digest=evidence_digest(finding),
         family_id=family,
         user_label=user_label if action is UserAction.MAP_EXPLICITLY else None,
         role=None if mapped_role is None else mapped_role.value,

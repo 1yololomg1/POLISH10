@@ -1,7 +1,7 @@
 """Stage 4: validity, the rule library, and the gap inventory. It does not rewrite samples.
 
 Implements D11 (as revised by F15), D87, D44, D49 (as revised by F6), D50, D66,
-D26, D92, C2, C3, UXC4, UXC6, and UXC9. This is the keystone stage (D26).
+D26, D92, D96, C2, C3, UXC4, UXC6, and UXC9. This is the keystone stage (D26).
 
 Structure
 ---------
@@ -46,7 +46,7 @@ from dataclasses import dataclass
 import numpy
 
 from polish.model.dataset import Curve, Dataset
-from polish.model.findings import DecisionScope, Evidence, FindingRecord
+from polish.model.findings import DecisionScope, Evidence, FindingRecord, finding_key
 from polish.model.ids import CurveRef
 from polish.model.states import (
     BlockType,
@@ -389,8 +389,19 @@ class _Prepared:
     unit_blocked: bool
 
 
+_STAGE4_CHECKS: tuple[tuple[str, BlockType], ...] = (
+    ("invalid_samples", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("log_level_flag", BlockType.INFORMATIONAL),
+    ("suspicious_samples", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("not_validated", BlockType.INFORMATIONAL),
+    ("tool_absence_gap", BlockType.INFORMATIONAL),
+)
+CHECKS = frozenset(name for name, _block in _STAGE4_CHECKS)
+_CHECK_BLOCK = dict(_STAGE4_CHECKS)
+
+
 class _Ledger:
-    """Findings for one assessment. Identifiers are stable inside that call."""
+    """Findings for one assessment. An id is the check and what it is about. D96."""
 
     def __init__(self, ingest: IngestResult) -> None:
         self._read_at = ingest.source_file.read_at
@@ -398,16 +409,28 @@ class _Ledger:
 
     def add(
         self,
-        block: BlockType,
+        check: str,
+        identity: tuple[tuple[str, str], ...],
         message: str,
         ref: CurveRef,
         fields: dict[str, str | int | float | bool],
     ) -> None:
-        number = len(self.items) + 1
+        """Record one finding. The id is not this finding's position in the run. D96."""
+
+        if check not in CHECKS:
+            raise ValueError(f"Check {check!r} is not declared for this stage.")
+        block = _CHECK_BLOCK[check]
+        finding_id = finding_key(4, check, identity)
+        if any(item.id == finding_id for item in self.items):
+            raise ValueError(
+                f"Finding {finding_id} for check {check!r} and identity {identity!r} is already in this run."
+            )
         self.items.append(
             FindingRecord(
-                id=f"s04-{number:04d}",
+                id=finding_id,
                 stage=4,
+                check=check,
+                identity=identity,
                 block_type=block,
                 subject_refs=(ref,),
                 evidence=Evidence(block.value, tuple(sorted(fields.items()))),
@@ -865,7 +888,13 @@ def _add_findings(
             "Scope is this well or all wells. Nothing is excluded until that choice is recorded. "
             "Nothing is clipped. The original file is not altered. Every affected depth is listed."
         )
-        ledger.add(BlockType.AMBIGUOUS_INTERPRETATION, message, ref, fields)
+        ledger.add(
+            "invalid_samples",
+            (("column", str(ref.column_index)), ("mnemonic", mnemonic), ("rule_id", rule.id)),
+            message,
+            ref,
+            fields,
+        )
     for hit in item.hits:
         low = _required_bound(hit.rule, "minimum")
         high = _required_bound(hit.rule, "maximum")
@@ -889,7 +918,13 @@ def _add_findings(
                 f"Curve {mnemonic}: more than {_fraction_text(hit.rule)} of its samples are outside "
                 f"{_number_text(low)} to {_number_text(high)} {unit}. The log is flagged for review."
             )
-            ledger.add(BlockType.INFORMATIONAL, message, ref, fields)
+            ledger.add(
+                "log_level_flag",
+                (("column", str(ref.column_index)), ("mnemonic", mnemonic), ("rule_id", hit.rule.id)),
+                message,
+                ref,
+                fields,
+            )
             continue
         unit = hit.rule.canonical_unit if hit.rule.canonical_unit is not None else ""
         fields = {
@@ -914,12 +949,19 @@ def _add_findings(
             "(not used by later stages, still shown, listed in the export)? "
             "A reason is required. Scope: this well or all wells."
         )
-        ledger.add(BlockType.AMBIGUOUS_INTERPRETATION, message, ref, fields)
+        ledger.add(
+            "suspicious_samples",
+            (("column", str(ref.column_index)), ("mnemonic", mnemonic), ("rule_id", hit.rule.id)),
+            message,
+            ref,
+            fields,
+        )
     if outcome is ValidationOutcome.NOT_ELIGIBLE:
         if reason is None or evidence_text is None:
             raise ValueError("A NOT_ELIGIBLE curve needs a reason and the evidence that would make it eligible.")
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "not_validated",
+            (("column", str(ref.column_index)), ("mnemonic", mnemonic)),
             (
                 f"Curve {mnemonic} was not automatically validated: {reason}. "
                 f"Evidence that would make it eligible: {evidence_text}"
@@ -936,7 +978,13 @@ def _add_findings(
         if gap.classification.gap_class is not GapClass.TOOL_ABSENCE_EVIDENCED or match is None:
             continue
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "tool_absence_gap",
+            (
+                ("column", str(ref.column_index)),
+                ("mnemonic", mnemonic),
+                ("sample_end", str(gap.sample_end)),
+                ("sample_start", str(gap.sample_start)),
+            ),
             (
                 f"Curve {mnemonic} has an interior gap that is evidence consistent with tool absence, not proof. "
                 f"Not fillable. {gap.classification.evidence} Confidence: {gap.classification.confidence}."
@@ -988,7 +1036,7 @@ def assess(
     tool_groups: Mapping[str, str] | None = None,
     shared: SharedDefinition | None = None,
 ) -> ValidityResult:
-    """Assess every curve. D11, D87, D44, D49, D50, D66, C2, C3, UXC6, UXC9.
+    """Assess every curve. D11, D87, D44, D49, D50, D66, D96, C2, C3, UXC6, UXC9.
 
     Does not write the dataset. Declared nulls (NaN) are ABSENT. A finite
     value equal to an undeclared sentinel stays a number. ±inf is INVALID

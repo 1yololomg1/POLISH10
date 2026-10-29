@@ -1,6 +1,6 @@
 """Finding records and the decisions linked to them.
 
-Implements D46, D47, D63, D79, D86, D91, D92, D94, UXC2, UXC4. ``block_type`` is
+Implements D46, D47, D63, D79, D86, D91, D92, D94, D96, UXC2, UXC4. ``block_type`` is
 ``states.BlockType``. This module does not define a second finding type for
 the export gate: ``project_for_export`` builds the existing ``states.Finding``.
 
@@ -24,12 +24,17 @@ DecisionScope, DecisionActor
     The one scope vocabulary and the two actors.
 Evidence, FindingRecord, DecisionRecord
     Immutable records. A changed decision is a new record.
+finding_key, evidence_digest
+    A finding's stable id, and the digest a decision records. D96.
 project_for_export
     The export-gate ``states.Finding``.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -48,8 +53,104 @@ from polish.model.states import (
 _STAGE_MIN = 0
 _STAGE_MAX = 10
 
+# D96. A check name is the code that raised the finding. An identity name is
+# what that finding is about. A measured value, a count, a score, a version,
+# a message, a file hash, a dataset id, or a CurveRef string is not an identity.
+_CHECK_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+_IDENTITY_NAMES = frozenset(
+    {
+        "section",
+        "line",
+        "field",
+        "column",
+        "mnemonic",
+        "sentinel",
+        "endpoint",
+        "family_id",
+        "prefix",
+        "rule_id",
+        "sample_start",
+        "sample_end",
+        "decision_id",
+        "file",
+    }
+)
+_DECIMAL_IDENTITY = frozenset({"line", "column", "sample_start", "sample_end"})
+_DECIMAL_TEXT = re.compile(r"^(0|[1-9][0-9]*)$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
 SubjectRef = DatasetId | CurveRef | SampleRef | FileHash
 EvidenceValue = str | int | float | bool
+
+
+def _validate_identity(identity: tuple[tuple[str, str], ...]) -> None:
+    """Refuse an identity that is not a unique list of allowed names. D96."""
+
+    if type(identity) is not tuple:
+        raise TypeError("identity must be a tuple of (name, value) pairs")
+    seen: set[str] = set()
+    for pair in identity:
+        if type(pair) is not tuple or len(pair) != 2:
+            raise TypeError("each identity entry must be a (name, value) pair")
+        name, value = pair
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise TypeError("identity name and value must be strings")
+        if name not in _IDENTITY_NAMES:
+            raise ValueError(f"Identity name {name!r} is not allowed.")
+        if name in seen:
+            raise ValueError(f"Duplicate identity name {name!r}.")
+        seen.add(name)
+        if name in _DECIMAL_IDENTITY:
+            if _DECIMAL_TEXT.fullmatch(value) is None:
+                raise ValueError(f"Identity {name} must be decimal text, for example '7'.")
+        elif name != "mnemonic" and value == "":
+            raise ValueError(f"Identity {name} must be a non-empty string.")
+
+
+def finding_key(stage: int, check: str, identity: tuple[tuple[str, str], ...]) -> str:
+    """Stable id for one finding. D96.
+
+    The id is the stage, the check that raised the finding, and the first 16
+    hex digits of the SHA-256 of the canonical JSON of that stage, check, and
+    identity. Identity pairs are sorted by name. The id does not include the
+    finding's position in a run or an observed value.
+
+    Parameters
+    ----------
+    stage:
+        Stage number, from 0 to 10.
+    check:
+        The check that raised the finding. A lowercase name.
+    identity:
+        What the finding is about, as (name, value) pairs. Names are unique
+        and come from the allowed set. A mnemonic may be empty when the file
+        gives none. Line, column, and sample indexes are decimal text.
+
+    Returns
+    -------
+    str
+        ``sNN.check.<16 hex>``.
+
+    Raises
+    ------
+    ValueError
+        The stage, check, or identity is not in the allowed form.
+    """
+
+    if type(stage) is not int or not _STAGE_MIN <= stage <= _STAGE_MAX:
+        raise ValueError("stage must be an int from 0 to 10")
+    if not isinstance(check, str) or _CHECK_NAME.fullmatch(check) is None:
+        raise ValueError("check must be a lowercase name.")
+    _validate_identity(identity)
+    pairs = tuple(sorted(identity, key=lambda item: item[0]))
+    encoded = json.dumps(
+        {"stage": stage, "check": check, "identity": pairs},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+    return f"s{stage:02d}.{check}.{digest}"
 
 
 def _nonempty(text: str) -> bool:
@@ -271,14 +372,18 @@ class Evidence:
 
 @dataclass(frozen=True)
 class FindingRecord:
-    """One immutable finding. D79, D86, UXC2.
+    """One immutable finding. D79, D86, D96, UXC2.
 
     The disposition is not stored here. It is a DecisionRecord linked by
-    ``id``. ``block_type`` is ``states.BlockType``.
+    ``id``. ``block_type`` is ``states.BlockType``. ``id`` is
+    ``finding_key(stage, check, identity)``. ``check`` is the check that
+    raised the finding. ``identity`` is what it is about, not a measured value.
     """
 
     id: str
     stage: int
+    check: str
+    identity: tuple[tuple[str, str], ...]
     block_type: BlockType
     subject_refs: tuple[SubjectRef, ...]
     evidence: Evidence
@@ -286,10 +391,11 @@ class FindingRecord:
     created_at: datetime
 
     def __post_init__(self) -> None:
-        if not _nonempty(self.id):
-            raise ValueError("finding id must be a non-empty string")
         if type(self.stage) is not int or not _STAGE_MIN <= self.stage <= _STAGE_MAX:
             raise ValueError("stage must be an int from 0 to 10")
+        expected = finding_key(self.stage, self.check, self.identity)
+        if self.id != expected:
+            raise ValueError("finding id must be the key of its stage, check and identity.")
         if not isinstance(self.block_type, BlockType):
             raise TypeError("block_type must be a BlockType")
         if type(self.subject_refs) is not tuple:
@@ -305,6 +411,41 @@ class FindingRecord:
             raise ValueError("message must be a non-empty string")
         if not isinstance(self.created_at, datetime):
             raise TypeError("created_at must be a datetime")
+
+
+def evidence_digest(finding: FindingRecord) -> str:
+    """SHA-256 hex of one finding's evidence. D96.
+
+    The digest is the canonical JSON of the evidence fields, sorted by key.
+    When the evidence has no fields, the digest covers the message text.
+    The timestamp is not included. A change in what was observed changes
+    this digest and leaves the finding id unchanged.
+
+    Parameters
+    ----------
+    finding:
+        The finding whose evidence is digested.
+
+    Returns
+    -------
+    str
+        64 lowercase hex characters.
+
+    Raises
+    ------
+    TypeError
+        ``finding`` is not a FindingRecord.
+    """
+
+    if not isinstance(finding, FindingRecord):
+        raise TypeError("finding must be a FindingRecord")
+    if finding.evidence.fields:
+        payload = {key: value for key, value in finding.evidence.fields}
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        raw = encoded.encode("utf-8")
+    else:
+        raw = finding.message.encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 class DecisionScope(Enum):
@@ -335,7 +476,7 @@ class DecisionActor(Enum):
 
 @dataclass(frozen=True)
 class DecisionRecord:
-    """Disposition linked to one finding. D46, D63, D79, D86, D91, D92, UXC4.
+    """Disposition linked to one finding. D46, D63, D79, D86, D91, D92, D96, UXC4.
 
     Glossary fields used here: issue disposition and its reason, via
     ``states.Disposition``, and the user action from the glossary action
@@ -345,6 +486,8 @@ class DecisionRecord:
     ``versions_in_force`` is the rule library and every shipped table, as
     the loaders report them: (name, version) pairs. ``supersedes`` is the
     decision id this record replaces, or None. The replaced record stays.
+    ``evidence_digest`` is the digest of the finding's evidence when this
+    decision was recorded. A later difference holds the decision. D96.
     ``family_id`` is required for MAP_EXPLICITLY and is a shipped family id.
     ``user_label`` is the optional name the user keeps. ``role`` is the curve
     role of a mapping. It is required for MAP_EXPLICITLY and is never
@@ -363,6 +506,7 @@ class DecisionRecord:
     versions_in_force: tuple[tuple[str, str], ...]
     input_file_hash: FileHash
     supersedes: str | None
+    evidence_digest: str
     family_id: str | None = None
     user_label: str | None = None
     role: str | None = None
@@ -402,6 +546,8 @@ class DecisionRecord:
             raise TypeError("input_file_hash must be a FileHash")
         if self.supersedes is not None and not _nonempty(self.supersedes):
             raise ValueError("supersedes must be a decision id or None")
+        if not isinstance(self.evidence_digest, str) or _DIGEST.fullmatch(self.evidence_digest) is None:
+            raise ValueError("evidence_digest must be 64 lowercase hex characters.")
         if self.family_id is not None and not _nonempty(self.family_id):
             raise ValueError("family_id must be a family id or None")
         if self.user_label is not None and not _nonempty(self.user_label):

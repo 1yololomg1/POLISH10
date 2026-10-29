@@ -1,7 +1,7 @@
 """Stage 2: identify each curve. It does not rewrite samples.
 
 Implements D31, D32 (with F2), D33, D34, D35, D36, D37, D38, D39, D40, D41,
-D42, D91, D94, C3, UXC1, UXC4, and UXC9.
+D42, D91, D94, D96, C3, UXC1, UXC4, and UXC9.
 
 Structure
 ---------
@@ -39,7 +39,7 @@ from pathlib import Path
 
 from polish.model.mapping import ExplicitMapping, roles_stated_by_family
 from polish.model.pass_choice import PassChoice
-from polish.model.findings import DecisionScope, Evidence, FindingRecord
+from polish.model.findings import DecisionScope, Evidence, FindingRecord, finding_key
 from polish.model.ids import CurveRef
 from polish.model.states import (
     USER_MAPPED_LABEL,
@@ -683,8 +683,22 @@ def _identify_curve(
     )
 
 
+_STAGE2_CHECKS: tuple[tuple[str, BlockType], ...] = (
+    ("mnemonic_left_unchanged", BlockType.INFORMATIONAL),
+    ("user_mapped_no_family", BlockType.RULE_DEPENDENT_WARNING),
+    ("mnemonic_unrecognised", BlockType.RULE_DEPENDENT_WARNING),
+    ("mnemonic_duplicated", BlockType.INFORMATIONAL),
+    ("pass_choice_not_applied", BlockType.INFORMATIONAL),
+    ("pass_default", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("prefix_group", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("local_shipped_clash", BlockType.AMBIGUOUS_INTERPRETATION),
+)
+CHECKS = frozenset(name for name, _block in _STAGE2_CHECKS)
+_CHECK_BLOCK = dict(_STAGE2_CHECKS)
+
+
 class _Ledger:
-    """Findings for one identification. Identifiers are stable inside that call."""
+    """Findings for one identification. An id is the check and what it is about. D96."""
 
     def __init__(self, ingest: IngestResult) -> None:
         self._read_at = ingest.source_file.read_at
@@ -692,17 +706,29 @@ class _Ledger:
 
     def add(
         self,
-        block: BlockType,
+        check: str,
+        identity: tuple[tuple[str, str], ...],
         message: str,
         refs: tuple[CurveRef, ...],
         fields: dict[str, str | int | float | bool],
     ) -> None:
-        number = len(self.items) + 1
+        """Record one finding. The id is not this finding's position in the run. D96."""
+
+        if check not in CHECKS:
+            raise ValueError(f"Check {check!r} is not declared for this stage.")
+        block = _CHECK_BLOCK[check]
+        finding_id = finding_key(2, check, identity)
+        if any(item.id == finding_id for item in self.items):
+            raise ValueError(
+                f"Finding {finding_id} for check {check!r} and identity {identity!r} is already in this run."
+            )
         evidence = Evidence(block.value, tuple(sorted(fields.items())))
         self.items.append(
             FindingRecord(
-                id=f"s02-{number:04d}",
+                id=finding_id,
                 stage=2,
+                check=check,
+                identity=identity,
                 block_type=block,
                 subject_refs=refs,
                 evidence=evidence,
@@ -752,12 +778,12 @@ def _add_unknown_notices(ledger: _Ledger, curves: tuple[CurveIdentification, ...
         unchanged = ident.mnemonic.upper().strip() in UNCHANGED_MNEMONICS
         no_family = ident.evidence_tier is EvidenceTier.USER_DEFINED
         if unchanged:
-            block = BlockType.INFORMATIONAL
+            check = "mnemonic_left_unchanged"
             message = (
                 f"Mnemonic {ident.mnemonic} is not recognised. It is preserved exactly and is not processed."
             )
         elif no_family:
-            block = BlockType.RULE_DEPENDENT_WARNING
+            check = "user_mapped_no_family"
             if ident.user_label is not None:
                 fields["user_label"] = ident.user_label
             message = (
@@ -765,7 +791,7 @@ def _add_unknown_notices(ledger: _Ledger, curves: tuple[CurveIdentification, ...
                 "POLISH cannot process it until you choose which family it behaves as."
             )
         else:
-            block = BlockType.RULE_DEPENDENT_WARNING
+            check = "mnemonic_unrecognised"
             message = (
                 f"Mnemonic {ident.mnemonic} is not recognised. It is preserved exactly and is not "
                 "processed until you choose which family it behaves as."
@@ -788,7 +814,13 @@ def _add_unknown_notices(ledger: _Ledger, curves: tuple[CurveIdentification, ...
                     for item in ident.suggestions
                 ]
             )
-        ledger.add(block, message, (ident.curve,), fields)
+        ledger.add(
+            check,
+            (("column", str(ident.curve.column_index)), ("mnemonic", ident.mnemonic)),
+            message,
+            (ident.curve,),
+            fields,
+        )
 
 
 def _add_duplicates(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> None:
@@ -802,7 +834,8 @@ def _add_duplicates(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) ->
         columns = ", ".join(str(item.curve.column_index) for item in members)
         spellings = ", ".join(item.mnemonic for item in members)
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "mnemonic_duplicated",
+            (("mnemonic", key),),
             f"Mnemonic {spellings} is on more than one curve (columns {columns}). Each curve is identified on its own.",
             tuple(item.curve for item in members),
             {
@@ -816,7 +849,8 @@ def _unmatched_pass(ledger: _Ledger, choice: PassChoice, refs: tuple[CurveRef, .
     """The recorded pass is not one this file lists. It is reported and not applied. D94."""
 
     ledger.add(
-        BlockType.INFORMATIONAL,
+        "pass_choice_not_applied",
+        (("decision_id", choice.decision_id), ("family_id", choice.family_id)),
         (
             f"Family {choice.family_id} has a recorded pass {choice.pass_name} "
             f"from decision {choice.decision_id}. "
@@ -875,7 +909,8 @@ def _add_passes(
             defaults.append(DefaultPass(family_id, choice.pass_name, selected, choice.decision_id))
             continue
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "pass_default",
+            (("family_id", family_id),),
             (
                 f"More than one pass of {family_id} is present ({', '.join(bases)}). "
                 "Which pass should be used by default? Scope options are this well and all wells. "
@@ -937,7 +972,8 @@ def _add_prefixes(ledger: _Ledger, curves: tuple[CurveIdentification, ...]) -> N
                 }
             )
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "prefix_group",
+            (("prefix", prefix),),
             (
                 f"Curves share the recognised prefix {prefix}. The prefix is not stripped. "
                 "A decision is required before any prefix is removed."
@@ -965,7 +1001,8 @@ def _add_clashes(ledger: _Ledger, curves: tuple[CurveIdentification, ...], catal
         local_family = local.family_id if local.family_id is not None else "none"
         members = groups[key]
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "local_shipped_clash",
+            (("mnemonic", key),),
             (
                 f"Mnemonic {shipped.mnemonic} is in the shipped table (family {shipped.family_id}) "
                 f"and the local table (family {local_family}). Neither entry is applied."
@@ -1030,7 +1067,7 @@ def identify(
     explicit_mappings: tuple[ExplicitMapping, ...] = (),
     pass_choices: tuple[PassChoice, ...] = (),
 ) -> IdentificationResult:
-    """Identify every curve. D31–D42, D91, D94, C3, UXC1, UXC4, UXC9.
+    """Identify every curve. D31–D42, D91, D94, D96, C3, UXC1, UXC4, UXC9.
 
     Does not write the dataset, the overlay, or the local tables directory.
     When ``local_tables_directory`` is omitted, the app-data path is used if

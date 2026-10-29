@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from polish.model.dataset import DepthDirection, DepthRegularity
-from polish.model.findings import Evidence, FindingRecord
+from polish.model.findings import Evidence, FindingRecord, finding_key
 from polish.model.ids import CurveRef, DatasetId
 from polish.model.states import BlockType, StageStatus
 from polish.rules.loader import load_rule
@@ -178,8 +178,33 @@ def registered_stage(ingest: IngestResult) -> RegisteredStage:
     return RegisteredStage(CONTRACT, run, unmet)
 
 
+_STAGE1_CHECKS: tuple[tuple[str, BlockType], ...] = (
+    ("depth_no_curve", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_index_not_recognised", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_too_few_samples", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_token_not_decimal", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_duplicate", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_decreases", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("step_negative", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_unit_unrecognised", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("step_zero", BlockType.INFORMATIONAL),
+    ("step_blank_regular", BlockType.INFORMATIONAL),
+    ("step_blank_irregular", BlockType.INFORMATIONAL),
+    ("strt_blank", BlockType.INFORMATIONAL),
+    ("grid_off_declared_step", BlockType.INFORMATIONAL),
+    ("step_corrected", BlockType.INFORMATIONAL),
+    ("step_not_standard", BlockType.INFORMATIONAL),
+    ("endpoint_unit_mismatch", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("endpoint_not_compared", BlockType.INFORMATIONAL),
+    ("endpoint_within_step", BlockType.INFORMATIONAL),
+    ("endpoint_beyond_step", BlockType.STRUCTURAL_DATA_FAILURE),
+)
+CHECKS = frozenset(name for name, _block in _STAGE1_CHECKS)
+_CHECK_BLOCK = dict(_STAGE1_CHECKS)
+
+
 class _Ledger:
-    """Findings for one classification. Identifiers are stable inside that call."""
+    """Findings for one classification. An id is the check and what it is about. D96."""
 
     def __init__(self, ingest: IngestResult) -> None:
         self._ingest = ingest
@@ -187,18 +212,30 @@ class _Ledger:
 
     def add(
         self,
-        block: BlockType,
+        check: str,
+        identity: tuple[tuple[str, str], ...],
         message: str,
         fields: dict[str, str | int | float | bool] | None = None,
     ) -> None:
-        number = len(self.items) + 1
+        """Record one finding. The id is not this finding's position in the run. D96."""
+
+        if check not in CHECKS:
+            raise ValueError(f"Check {check!r} is not declared for this stage.")
+        block = _CHECK_BLOCK[check]
+        finding_id = finding_key(1, check, identity)
+        if any(item.id == finding_id for item in self.items):
+            raise ValueError(
+                f"Finding {finding_id} for check {check!r} and identity {identity!r} is already in this run."
+            )
         dataset_id = DatasetId.for_source(self._ingest.source_file.file_hash)
         refs = (self._ingest.source_file.file_hash, CurveRef(dataset_id, 0))
         evidence = Evidence(block.value, tuple(sorted((fields or {}).items())))
         self.items.append(
             FindingRecord(
-                id=f"s01-{number:04d}",
+                id=finding_id,
                 stage=1,
+                check=check,
+                identity=identity,
                 block_type=block,
                 subject_refs=refs,
                 evidence=evidence,
@@ -211,7 +248,7 @@ class _Ledger:
 def classify(ingest: IngestResult) -> DepthAxisResult:
     """Classify the depth axis of one Stage 0 result.
 
-    Implements D3, D8, D9, D28, F10, D67, D86, D88 (ascending only), D89, C4.
+    Implements D3, D8, D9, D28, F10, D67, D86, D88 (ascending only), D89, D96, C4.
     Does not reverse, re-sort, or copy a curve. Does not open the network.
     """
 
@@ -223,7 +260,7 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
     curves = ingest.audit.curves
     tokens = ingest.audit.depth_tokens
     if not curves:
-        ledger.add(BlockType.STRUCTURAL_DATA_FAILURE, "The file has no curve to use as a depth index.")
+        ledger.add("depth_no_curve", (), "The file has no curve to use as a depth index.")
         return _refused(ledger)
 
     mnemonic = curves[0].mnemonic
@@ -232,7 +269,8 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
     alias = DepthAlias(CurveRef(dataset_id, 0), _CANONICAL_DEPTH_NAME)
     if mnemonic.strip().upper() not in depth_index_mnemonics():
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "depth_index_not_recognised",
+            (),
             f"The first curve {mnemonic!r} is not a depth index. Stage 1 halted.",
             {"observed": mnemonic},
         )
@@ -240,7 +278,8 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
 
     if len(tokens) < 2:
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "depth_too_few_samples",
+            (),
             "The depth column has fewer than 2 samples, so the axis cannot be classified.",
         )
         return _refused(ledger, alias=alias, depth_unit=unit)
@@ -248,7 +287,8 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
     parsed = _decimals(tokens)
     if parsed is None:
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "depth_token_not_decimal",
+            (),
             "A depth token is not a finite decimal, so the axis was not classified.",
         )
         return _refused(ledger, alias=alias, depth_unit=unit)
@@ -258,7 +298,8 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
     if duplicate is not None:
         index, text = duplicate
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "depth_duplicate",
+            (),
             f"Duplicate depth {text} at indexes {index} and {index + 1}.",
             {"observed": text},
         )
@@ -268,7 +309,8 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
     if decrease is not None:
         index, earlier, later = decrease
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "depth_decreases",
+            (),
             f"Depth decreases from {earlier} to {later} at indexes {index} and {index + 1}.",
             {"declared": earlier, "observed": later, "difference": _dec_text(Decimal(later) - Decimal(earlier))},
         )
@@ -276,7 +318,8 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
     step = _decimal_or_none(ingest.audit.step_text)
     if step is not None and step < 0:
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "step_negative",
+            (),
             f"STEP {ingest.audit.step_text} is negative. Descending depth is a structural failure.",
             {"declared": ingest.audit.step_text or ""},
         )
@@ -287,7 +330,8 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
     if family is None:
         shown = unit if unit.strip() != "" else ""
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "depth_unit_unrecognised",
+            (),
             f"Depth unit {shown!r} is absent or not recognised. Feet or metres were not assumed.",
             {"observed": shown},
         )
@@ -305,7 +349,8 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
     elif step == 0:
         regularity = DepthRegularity.IRREGULAR
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "step_zero",
+            (),
             "STEP is 0. The header value was recorded. The grid was not given an invented step.",
             {"declared": "0"},
         )
@@ -588,13 +633,15 @@ def _blank_step(
         quantity = DerivedQuantity("observed_step", _dec_text(derived), unit)
         assert_derived_unit(quantity, unit)
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "step_blank_regular",
+            (),
             f"STEP is blank. Data-derived step {_dec_text(derived)} {unit} was recorded.",
             {"observed": _dec_text(derived)},
         )
         return DepthRegularity.REGULAR, quantity
     ledger.add(
-        BlockType.INFORMATIONAL,
+        "step_blank_irregular",
+        (),
         "STEP is blank. Depth increments are not constant. The grid is irregular.",
     )
     return DepthRegularity.IRREGULAR, None
@@ -612,7 +659,8 @@ def _declared_grid(
     step_text = ingest.audit.step_text or _dec_text(step)
     if start is None:
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "strt_blank",
+            (),
             "STRT is blank, so the grid STRT + i × STEP was not reconstructed. The ascending samples were left as written.",
             {"declared": step_text},
         )
@@ -621,7 +669,8 @@ def _declared_grid(
         quantity = DerivedQuantity("observed_step", _dec_text(step), _step_unit(ingest, unit))
         return DepthRegularity.REGULAR, quantity
     ledger.add(
-        BlockType.INFORMATIONAL,
+        "grid_off_declared_step",
+        (),
         (
             f"Declared STEP {step_text} does not put every depth on STRT + i × STEP "
             "within the grid rounding tolerance. The ascending grid is irregular and was not modified."
@@ -651,7 +700,8 @@ def _standard_step(
     step_unit = _step_unit(ingest, unit)
     if tied or nearest is None:
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "step_not_standard",
+            (),
             f"step as written ({step_text} {step_unit}) is not a recognised standard interval; depths not modified.",
             {"declared": step_text},
         )
@@ -665,7 +715,8 @@ def _standard_step(
     if start is None:
         if not rounds:
             ledger.add(
-                BlockType.INFORMATIONAL,
+                "step_not_standard",
+                (),
                 f"step as written ({step_text} {step_unit}) is not a recognised standard interval; depths not modified.",
                 {"declared": step_text, "observed": _dec_text(nearest)},
             )
@@ -680,7 +731,8 @@ def _standard_step(
         assert_derived_unit(corrected, step_unit)
         assert_derived_unit(displacement, step_unit)
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "step_corrected",
+            (),
             (
                 f"Declared step {step_text} {step_unit} corrected to {_dec_text(nearest)} {step_unit}; "
                 f"displacement {_dec_text(shift)} {step_unit}."
@@ -693,7 +745,8 @@ def _standard_step(
         )
         return corrected, displacement
     ledger.add(
-        BlockType.INFORMATIONAL,
+        "step_not_standard",
+        (),
         f"step as written ({step_text} {step_unit}) is not a recognised standard interval; depths not modified.",
         {
             "declared": step_text,
@@ -780,7 +833,8 @@ def _one_endpoint(
         return observed_quantity
     if declared_unit is not None and declared_unit.strip() != "" and not _same_family(declared_unit, depth_unit, standards):
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "endpoint_unit_mismatch",
+            (("endpoint", label),),
             f"{label} unit {declared_unit!r} is not the depth unit {depth_unit!r}. The values were not subtracted.",
             {"declared": declared_text, "observed": _dec_text(observed)},
         )
@@ -790,7 +844,8 @@ def _one_endpoint(
         return observed_quantity
     if interval is None:
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "endpoint_not_compared",
+            (("endpoint", label),),
             f"{label} {declared_text} was not compared with the data because no sample interval is established.",
             {"declared": declared_text, "observed": _dec_text(observed), "difference": _dec_text(difference)},
         )
@@ -804,7 +859,8 @@ def _one_endpoint(
     }
     if abs(difference) <= interval:
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "endpoint_within_step",
+            (("endpoint", label),),
             (
                 f"{label} {declared_text.strip()} differs from the data {_dec_text(observed)} "
                 f"by {_dec_text(difference)} ({_dec_text(intervals)} step intervals)."
@@ -813,7 +869,8 @@ def _one_endpoint(
         )
         return observed_quantity
     ledger.add(
-        BlockType.STRUCTURAL_DATA_FAILURE,
+        "endpoint_beyond_step",
+        (("endpoint", label),),
         (
             f"{label} {declared_text.strip()} differs from the data {_dec_text(observed)} "
             f"by {_dec_text(difference)}, which is beyond one step."

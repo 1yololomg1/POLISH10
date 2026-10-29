@@ -1,4 +1,4 @@
-"""Session file and preferences. D46, D47, D48, D63, OD-22.
+"""Session file and preferences. D46, D47, D48, D63, D96, OD-22.
 
 Structure
 ---------
@@ -38,13 +38,16 @@ from polish.model.findings import (
     DecisionScope,
     Evidence,
     FindingRecord,
+    evidence_digest,
+    finding_key,
 )
 from polish.model.ids import FileHash
 from polish.model.mapping import roles_stated_by_family
 from polish.model.states import BlockType, Disposition, IssueDisposition, UserAction
 from polish.tables.loader import load_local_decisions, load_shipped_tables
 
-_SCHEMA_VERSION = "1"
+_SESSION_SCHEMA_VERSION = "2"
+_PREFERENCES_SCHEMA_VERSION = "1"
 _SESSION_SUFFIX = ".polish-session.json"
 _DECISION_KEYS = frozenset(
     {
@@ -60,6 +63,7 @@ _DECISION_KEYS = frozenset(
         "app_version",
         "versions_in_force",
         "supersedes",
+        "evidence_digest",
         "family_id",
         "user_label",
         "role",
@@ -76,6 +80,16 @@ _TERMINAL = frozenset(
 )
 _HASH = re.compile(r"^[0-9a-fA-F]{64}$")
 _CHANGED_FILE_OPTIONS = ("USE_SAVED_DECISIONS", "START_FRESH")
+_SESSION_CHECKS: tuple[tuple[str, BlockType], ...] = (
+    ("session_file_changed", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("session_decision_unmatched", BlockType.INFORMATIONAL),
+    ("session_kept_file_exists", BlockType.INFORMATIONAL),
+    ("session_held", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("session_not_written", BlockType.INFORMATIONAL),
+    ("session_decision_evidence_changed", BlockType.INFORMATIONAL),
+)
+CHECKS = frozenset(name for name, _block in _SESSION_CHECKS)
+_CHECK_BLOCK = dict(_SESSION_CHECKS)
 
 
 @dataclass(frozen=True)
@@ -97,8 +111,8 @@ class Session:
     hold: bool = False
 
     def __post_init__(self) -> None:
-        if self.schema_version != _SCHEMA_VERSION:
-            raise ValueError(f"Session schema version {_SCHEMA_VERSION!r} is the one this code reads.")
+        if self.schema_version != _SESSION_SCHEMA_VERSION:
+            raise ValueError(f"Session schema version {_SESSION_SCHEMA_VERSION!r} is the one this code reads.")
         if not isinstance(self.input_path, Path):
             raise TypeError("input_path must be a Path")
         if not isinstance(self.file_hash, FileHash):
@@ -158,11 +172,11 @@ def open_session(input_path: Path, findings: tuple[FindingRecord, ...] = ()) -> 
     """
 
     path = Path(input_path)
-    return Session(_SCHEMA_VERSION, path, FileHash.from_path(path), (), findings, frozenset(), False)
+    return Session(_SESSION_SCHEMA_VERSION, path, FileHash.from_path(path), (), findings, frozenset(), False)
 
 
 def save_session(session: Session, *, alternative_path: Path | None = None) -> Path:
-    """Write decisions beside the input. D47.
+    """Write decisions beside the input. D47, D96.
 
     The directory is the input file's directory. When that directory cannot
     be written, a finding is raised and nothing is written, unless
@@ -192,7 +206,7 @@ def save_session(session: Session, *, alternative_path: Path | None = None) -> P
     if not isinstance(session, Session):
         raise TypeError("session must be a Session")
     if session.hold:
-        raise SessionNotWritten(_held_file(session.input_path))
+        raise SessionNotWritten(_held_file())
     target = session_path(session.input_path)
     if not _can_write(target):
         if alternative_path is None:
@@ -219,7 +233,7 @@ def load_session(
     *,
     app_data: Path | None = None,
 ) -> SessionLoad:
-    """Load the session beside ``input_path``, or report that there is none. D48, D63, OD-22.
+    """Load the session beside ``input_path``, or report that there is none. D48, D63, D96, OD-22.
 
     No session file means no decision from any other well's session is
     applied. Entries in local_decisions.json are still applied to matching
@@ -265,16 +279,22 @@ def load_session(
         if payload["file_hash"] != file_hash.hex_digest:
             hold = True
             held.update(item.decision_id for item in records)
-            reported.append(_hash_mismatch(file_hash, payload["file_hash"], path))
+            reported.append(_hash_mismatch(file_hash, payload["file_hash"]))
         else:
             by_id = {item.id: item for item in findings}
             from polish.decisions.apply import current_decisions
 
             for decision in current_decisions(records, frozenset()).values():
                 finding = by_id.get(decision.finding_id)
-                problem = None if finding is not None else "no finding has this id"
-                if finding is not None:
-                    problem = _revalidate(decision, finding)
+                if finding is None:
+                    held.add(decision.decision_id)
+                    reported.append(_unmatched(decision, "no finding has this id"))
+                    continue
+                if evidence_digest(finding) != decision.evidence_digest:
+                    held.add(decision.decision_id)
+                    reported.append(_evidence_changed(decision))
+                    continue
+                problem = _revalidate(decision, finding)
                 if problem is None:
                     applied.append(decision)
                 else:
@@ -282,7 +302,7 @@ def load_session(
                     reported.append(_unmatched(decision, problem))
     defaults = _defaults(findings, records, held, file_hash, app_data)
     session = Session(
-        _SCHEMA_VERSION,
+        _SESSION_SCHEMA_VERSION,
         path,
         file_hash,
         records + tuple(defaults),
@@ -434,7 +454,7 @@ def preferences_path(app_data: Path) -> Path:
 
 
 def save_preferences(app_data: Path, values: dict[str, str]) -> None:
-    """Write preferences that carry no well information. D47.
+    """Write preferences that carry no well information. D47, D96.
 
     A file hash, a well name, or a depth is refused and nothing is written.
     ``app_data`` is the injected root. This does not read %APPDATA% itself.
@@ -466,7 +486,7 @@ def save_preferences(app_data: Path, values: dict[str, str]) -> None:
             raise ValueError("Preferences cannot contain a file hash.")
         if re.search(r"depth", value, re.IGNORECASE):
             raise ValueError("Preferences cannot contain a depth.")
-    payload = {"schema_version": _SCHEMA_VERSION, "values": dict(sorted(values.items()))}
+    payload = {"schema_version": _PREFERENCES_SCHEMA_VERSION, "values": dict(sorted(values.items()))}
     text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
     path = preferences_path(app_data)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -532,6 +552,7 @@ def _defaults(
                     versions_in_force=versions,
                     input_file_hash=file_hash,
                     supersedes=None,
+                    evidence_digest=evidence_digest(finding),
                     family_id=None,
                     user_label=None,
                 )
@@ -580,12 +601,16 @@ def _replay(
     reported: list[FindingRecord] = []
     for decision in current_decisions(file_records, frozenset()).values():
         finding = findings.get(decision.finding_id)
-        problem = None if finding is not None else "no finding has this id"
-        if finding is not None:
-            problem = _revalidate(decision, finding)
+        if finding is None:
+            reported.append(_unmatched(decision, "no finding has this id"))
+            continue
+        if evidence_digest(finding) != decision.evidence_digest:
+            reported.append(_evidence_changed(decision))
+            continue
+        problem = _revalidate(decision, finding)
         if problem is None:
             keep.update(_ancestor_ids(decision, by_id))
-            fresh.append(_rerecord(decision, session.file_hash, when, versions))
+            fresh.append(_rerecord(decision, finding, session.file_hash, when, versions))
         else:
             reported.append(_unmatched(decision, problem))
     history = tuple(item for item in file_records if item.decision_id in keep)
@@ -604,10 +629,13 @@ def _ancestor_ids(decision: DecisionRecord, by_id: dict[str, DecisionRecord]) ->
 
 def _rerecord(
     decision: DecisionRecord,
+    finding: FindingRecord,
     file_hash: FileHash,
     when: datetime,
     versions: tuple[tuple[str, str], ...],
 ) -> DecisionRecord:
+    """A new USER decision for the same finding, on the file as it is now. D48, D96."""
+
     return DecisionRecord(
         decision_id=f"dec-{uuid.uuid4().hex}",
         finding_id=decision.finding_id,
@@ -621,6 +649,7 @@ def _rerecord(
         versions_in_force=versions,
         input_file_hash=file_hash,
         supersedes=decision.decision_id,
+        evidence_digest=evidence_digest(finding),
         family_id=decision.family_id,
         user_label=decision.user_label,
         role=decision.role,
@@ -628,11 +657,12 @@ def _rerecord(
 
 
 def _changed_file_finding(session: Session) -> FindingRecord:
-    wanted = f"session-hash-{session.input_path.stem}"
-    for item in session.findings:
-        if item.id == wanted:
-            return item
-    raise ValueError("The changed-file question is not on this session.")
+    """The changed-file question on this session, found by its check. D48, D96."""
+
+    found = [item for item in session.findings if item.check == "session_file_changed"]
+    if len(found) != 1:
+        raise ValueError("The changed-file question is not on this session.")
+    return found[0]
 
 
 def _choice_record(
@@ -655,90 +685,109 @@ def _choice_record(
         versions_in_force=versions,
         input_file_hash=file_hash,
         supersedes=None,
+        evidence_digest=evidence_digest(finding),
+    )
+
+
+def _session_finding(
+    check: str,
+    identity: tuple[tuple[str, str], ...],
+    message: str,
+    evidence_fields: tuple[tuple[str, str | int | float | bool], ...] = (),
+    subject_refs: tuple[FileHash, ...] = (),
+) -> FindingRecord:
+    """One stage-0 session finding. The id is its check and identity. D96."""
+
+    if check not in CHECKS:
+        raise ValueError(f"Check {check!r} is not a session check.")
+    block = _CHECK_BLOCK[check]
+    return FindingRecord(
+        id=finding_key(0, check, identity),
+        stage=0,
+        check=check,
+        identity=identity,
+        block_type=block,
+        subject_refs=subject_refs,
+        evidence=Evidence(block.value, evidence_fields),
+        message=message,
+        created_at=datetime.now(timezone.utc),
     )
 
 
 def _kept_exists(archive: Path) -> FindingRecord:
-    return FindingRecord(
-        id=f"session-kept-{archive.name}",
-        stage=0,
-        block_type=BlockType.INFORMATIONAL,
-        subject_refs=(),
-        evidence=Evidence(
-            BlockType.INFORMATIONAL.value,
-            (("reason", "a kept session file already exists"),),
-        ),
-        message=f"A kept session file already exists at {archive.name}. Nothing was written.",
-        created_at=datetime.now(timezone.utc),
+    return _session_finding(
+        "session_kept_file_exists",
+        (("file", archive.name),),
+        f"A kept session file already exists at {archive.name}. Nothing was written.",
+        (("reason", "a kept session file already exists"),),
     )
 
 
-def _hash_mismatch(current: FileHash, stored: str, path: Path) -> FindingRecord:
-    return FindingRecord(
-        id=f"session-hash-{path.stem}",
-        stage=0,
-        block_type=BlockType.AMBIGUOUS_INTERPRETATION,
-        subject_refs=(current,),
-        evidence=Evidence(
-            BlockType.AMBIGUOUS_INTERPRETATION.value,
-            (
-                ("input_file_hash", current.hex_digest),
-                ("options", json.dumps(list(_CHANGED_FILE_OPTIONS))),
-                ("session_file_hash", stored),
-            ),
+def _hash_mismatch(current: FileHash, stored: str) -> FindingRecord:
+    """The file hash no longer matches. Identity is the check alone. D48, D96."""
+
+    return _session_finding(
+        "session_file_changed",
+        (),
+        "this looks like the same well but the raw file has changed since these decisions were made",
+        (
+            ("input_file_hash", current.hex_digest),
+            ("options", json.dumps(list(_CHANGED_FILE_OPTIONS))),
+            ("session_file_hash", stored),
         ),
-        message="this looks like the same well but the raw file has changed since these decisions were made",
-        created_at=datetime.now(timezone.utc),
+        (current,),
     )
 
 
 def _unmatched(decision: DecisionRecord, problem: str) -> FindingRecord:
-    return FindingRecord(
-        id=f"session-unmatched-{decision.decision_id}",
-        stage=0,
-        block_type=BlockType.INFORMATIONAL,
-        subject_refs=(decision.input_file_hash,),
-        evidence=Evidence(
-            BlockType.INFORMATIONAL.value,
-            (("decision_id", decision.decision_id), ("finding_id", decision.finding_id)),
-        ),
-        message=(
+    return _session_finding(
+        "session_decision_unmatched",
+        (("decision_id", decision.decision_id),),
+        (
             f"Decision {decision.decision_id} no longer matches finding {decision.finding_id} "
             f"({problem}) and was not applied."
         ),
-        created_at=datetime.now(timezone.utc),
+        (("decision_id", decision.decision_id), ("finding_id", decision.finding_id)),
+        (decision.input_file_hash,),
     )
 
 
-def _held_file(path: Path) -> FindingRecord:
-    return FindingRecord(
-        id=f"session-held-{path.stem}",
-        stage=0,
-        block_type=BlockType.AMBIGUOUS_INTERPRETATION,
-        subject_refs=(),
-        evidence=Evidence(BlockType.AMBIGUOUS_INTERPRETATION.value),
-        message="this looks like the same well but the raw file has changed since these decisions were made",
-        created_at=datetime.now(timezone.utc),
+def _evidence_changed(decision: DecisionRecord) -> FindingRecord:
+    """The finding is still there, but what was observed has changed. D96."""
+
+    return _session_finding(
+        "session_decision_evidence_changed",
+        (("decision_id", decision.decision_id),),
+        (
+            f"The evidence behind decision {decision.decision_id} has changed "
+            "since it was recorded. It was not applied."
+        ),
+        (("decision_id", decision.decision_id), ("finding_id", decision.finding_id)),
+        (decision.input_file_hash,),
+    )
+
+
+def _held_file() -> FindingRecord:
+    """Saving is refused while the changed-file question is unanswered. D48, D96."""
+
+    return _session_finding(
+        "session_held",
+        (),
+        "this looks like the same well but the raw file has changed since these decisions were made",
     )
 
 
 def _unwritable(target: Path) -> FindingRecord:
     # Stage 0 pairs the session with the input file. The record needs a stage
-    # number; the session is not a later stage's result.
-    return FindingRecord(
-        id="session-not-written",
-        stage=0,
-        block_type=BlockType.INFORMATIONAL,
-        subject_refs=(),
-        evidence=Evidence(
-            BlockType.INFORMATIONAL.value,
-            (("reason", "session directory is not writable"),),
-        ),
-        message=(
+    # number; the session is not a later stage's result. D47, D96.
+    return _session_finding(
+        "session_not_written",
+        (),
+        (
             f"The session could not be written to {target}. "
             "That directory is not writable. Nothing was written elsewhere."
         ),
-        created_at=datetime.now(timezone.utc),
+        (("reason", "session directory is not writable"),),
     )
 
 
@@ -787,6 +836,7 @@ def _decision_json(record: DecisionRecord) -> dict[str, object]:
         "app_version": record.app_version,
         "versions_in_force": versions,
         "supersedes": record.supersedes,
+        "evidence_digest": record.evidence_digest,
         "family_id": record.family_id,
         "user_label": record.user_label,
         "role": record.role,
@@ -801,8 +851,12 @@ def _read_session(path: Path) -> dict[str, object]:
     unknown = set(payload) - _FILE_KEYS
     if unknown:
         raise ValueError(f"{path.name} has unknown keys: {sorted(unknown)}.")
-    if payload.get("schema_version") != _SCHEMA_VERSION:
-        raise ValueError(f"{path.name} schema_version must be {_SCHEMA_VERSION!r}.")
+    version = payload.get("schema_version")
+    if version != _SESSION_SCHEMA_VERSION:
+        raise ValueError(
+            f"{path.name} has session schema version {version!r}. "
+            f"This code reads session schema {_SESSION_SCHEMA_VERSION!r}."
+        )
     file_hash = payload.get("file_hash")
     input_name = payload.get("input_name")
     if not isinstance(file_hash, str) or FileHash(file_hash).hex_digest != file_hash:
@@ -840,6 +894,7 @@ def _decode_decision(item: object, file_hash: str) -> DecisionRecord:
     role = item["role"]
     chosen = item["chosen_option"]
     supersedes = item["supersedes"]
+    digest = item["evidence_digest"]
     return DecisionRecord(
         decision_id=_text(item["decision_id"], "decision_id"),
         finding_id=_text(item["finding_id"], "finding_id"),
@@ -853,6 +908,7 @@ def _decode_decision(item: object, file_hash: str) -> DecisionRecord:
         versions_in_force=tuple(pairs),
         input_file_hash=FileHash(file_hash),
         supersedes=None if supersedes is None else _text(supersedes, "supersedes"),
+        evidence_digest=_text(digest, "evidence_digest"),
         family_id=None if family is None else _text(family, "family_id"),
         user_label=None if label is None else _text(label, "user_label"),
         role=None if role is None else _text(role, "role"),

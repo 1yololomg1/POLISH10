@@ -5,7 +5,7 @@ parser library. Pass 2 may call lasio and compare. The dataset is built from
 pass 1. A pass-2 result never overwrites a pass-1 sample.
 
 Implements D64, D65 (PARTIAL), D66 (PARTIAL, F19), D68 (PARTIAL), D30, D46,
-D17, C3, C6, and contracts section 6. D65, D66 and D68 are corroborated by
+D17, D96, C3, C6, and contracts section 6. D65, D66 and D68 are corroborated by
 other implementations. They are not verified against the CWLS specification
 (OD-24).
 
@@ -76,7 +76,7 @@ from polish.model.dataset import (
     DepthGrid,
     SourceFile,
 )
-from polish.model.findings import Evidence, FindingRecord
+from polish.model.findings import Evidence, FindingRecord, finding_key
 from polish.model.ids import CurveRef, DatasetId, FileHash
 from polish.model.states import BlockType, StageStatus
 from polish.stages.contract import StageContract, StageGuarantees, StageRequires
@@ -263,9 +263,51 @@ class IngestResult:
     status: StageStatus
 
 
+# One check, one block type. D96. A call site that can emit two block types uses two names.
+_STAGE0_CHECKS: tuple[tuple[str, BlockType], ...] = (
+    ("preamble_lines", BlockType.INFORMATIONAL),
+    ("section_repeated", BlockType.INFORMATIONAL),
+    ("section_absent", BlockType.INFORMATIONAL),
+    ("ascii_not_last", BlockType.INFORMATIONAL),
+    ("vers_absent", BlockType.INFORMATIONAL),
+    ("vers_parsed_as_2", BlockType.INFORMATIONAL),
+    ("version_field_repeated", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("well_field_repeated", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("null_not_finite", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("section_marker_empty", BlockType.INFORMATIONAL),
+    ("section_unrecognised", BlockType.INFORMATIONAL),
+    ("las3_section_title", BlockType.RULE_DEPENDENT_WARNING),
+    ("header_line_unsplit", BlockType.INFORMATIONAL),
+    ("las3_version", BlockType.RULE_DEPENDENT_WARNING),
+    ("null_undeclared", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("ascii_absent", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("wrapped_no_curves", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("wrapped_tokens_leftover", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("unwrapped_columns_mismatch", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("ascii_no_rows", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("sentinel_candidate", BlockType.RULE_DEPENDENT_WARNING),
+    ("pass2_header_line_unreadable", BlockType.INFORMATIONAL),
+    ("pass2_header_error", BlockType.INFORMATIONAL),
+    ("pass2_no_parse", BlockType.INFORMATIONAL),
+    ("pass2_header_value_differs", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_header_text_differs", BlockType.INFORMATIONAL),
+    ("pass2_curve_count_differs", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_mnemonic_differs", BlockType.INFORMATIONAL),
+    ("pass2_unit_differs", BlockType.INFORMATIONAL),
+    ("pass2_description_differs", BlockType.INFORMATIONAL),
+    ("pass2_length_differs", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_samples_differ", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_description_whitespace", BlockType.INFORMATIONAL),
+    ("encoding_undetermined", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_axis_refused", BlockType.STRUCTURAL_DATA_FAILURE),
+)
+CHECKS = frozenset(name for name, _block in _STAGE0_CHECKS)
+_CHECK_BLOCK = dict(_STAGE0_CHECKS)
+
+
 @dataclass
 class _Ledger:
-    """Approved findings only. Identifiers are stable within one ingest."""
+    """Approved findings only. An id is the check and what it is about. D96."""
 
     read_at: datetime
     file_hash: FileHash
@@ -276,17 +318,34 @@ class _Ledger:
         self.file_hash = file_hash
         self.items = []
 
-    def add(self, block_type: BlockType, message: str, column: int | None = None) -> None:
+    def add(
+        self,
+        check: str,
+        identity: tuple[tuple[str, str], ...],
+        message: str,
+        column: int | None = None,
+    ) -> None:
+        """Record one finding. The id is not this finding's position in the run. D96."""
+
         if message.strip() == "":
             raise ValueError("A ledger entry needs a message.")
-        number = len(self.items) + 1
+        if check not in CHECKS:
+            raise ValueError(f"Check {check!r} is not declared for this stage.")
+        block_type = _CHECK_BLOCK[check]
+        finding_id = finding_key(0, check, identity)
+        if any(item.id == finding_id for item in self.items):
+            raise ValueError(
+                f"Finding {finding_id} for check {check!r} and identity {identity!r} is already in this run."
+            )
         refs: list[FileHash | CurveRef] = [self.file_hash]
         if column is not None:
             refs.append(CurveRef(DatasetId.for_source(self.file_hash), column))
         self.items.append(
             FindingRecord(
-                id=f"s00-{number:04d}",
+                id=finding_id,
                 stage=0,
+                check=check,
+                identity=identity,
                 block_type=block_type,
                 subject_refs=tuple(refs),
                 evidence=Evidence(block_type.value),
@@ -523,7 +582,8 @@ def _record_text_conditions(
         if len(preamble_lines) > 10:
             extra = f" {len(preamble_lines) - 10} further lines are in the audit."
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "preamble_lines",
+            (),
             f"Lines before the first section are not in a LAS section: {shown}.{extra}",
         )
     for letter, count in letter_counts.items():
@@ -531,17 +591,19 @@ def _record_text_conditions(
             continue
         lines = ", ".join(str(mark.lineno) for mark in sections if mark.letter == letter)
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "section_repeated",
+            (("section", letter),),
             f"Section ~{letter} appears {count} times, at lines {lines}.",
         )
     for letter in ("V", "W", "C"):
         if letter_counts[letter] == 0:
-            ledger.add(BlockType.INFORMATIONAL, f"Section ~{letter} is absent.")
+            ledger.add("section_absent", (("section", letter),), f"Section ~{letter} is absent.")
     has_ascii = any(mark.letter == "A" for mark in sections)
     if has_ascii and sections and sections[-1].letter != "A":
         start = next(mark.lineno for mark in sections if mark.letter == "A")
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "ascii_not_last",
+            (),
             (
                 f"The ~A section is not the last section. It starts at line {start}. "
                 "Lines after the next section were not read as data."
@@ -550,13 +612,15 @@ def _record_text_conditions(
     if vers_major != 3:
         if vers_text is None:
             ledger.add(
-                BlockType.INFORMATIONAL,
+                "vers_absent",
+                (),
                 "VERS is not declared. The file was parsed as LAS 2.0.",
             )
         else:
             major = "unreadable" if vers_major is None else str(vers_major)
             ledger.add(
-                BlockType.INFORMATIONAL,
+                "vers_parsed_as_2",
+                (),
                 (
                     f"VERS value {vers_text!r} is not major version 3 (major version {major}). "
                     "The file was parsed as LAS 2.0."
@@ -565,18 +629,21 @@ def _record_text_conditions(
     for name in dict.fromkeys(repeated_version):
         used = vers_text if name == "VERS" else wrap_text
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "version_field_repeated",
+            (("field", name),),
             f"{name} is repeated. The first value {used!r} was used.",
         )
     for slot in dict.fromkeys(repeated_well):
         used = well[slot][1]
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "well_field_repeated",
+            (("field", slot),),
             f"{slot} is repeated. The first value {used!r} was used.",
         )
     if "NULL" in well and well["NULL"][2] is None:
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "null_not_finite",
+            (),
             (
                 f"NULL is declared as {well['NULL'][1]!r}, which is not a finite number. "
                 "No null value was assumed, and no sample was converted."
@@ -610,17 +677,20 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
             sections.append(SectionMark(lineno, letter, title, las3))
             if letter == "":
                 ledger.add(
-                    BlockType.INFORMATIONAL,
+                    "section_marker_empty",
+                    (("line", str(lineno)),),
                     f"Line {lineno}: section marker {title!r} has no character after '~'.",
                 )
             elif letter not in _KNOWN_SECTION_LETTERS:
                 ledger.add(
-                    BlockType.INFORMATIONAL,
+                    "section_unrecognised",
+                    (("line", str(lineno)),),
                     f"Line {lineno}: unrecognised section {title!r} (first character {letter!r}).",
                 )
             if las3:
                 ledger.add(
-                    BlockType.RULE_DEPENDENT_WARNING,
+                    "las3_section_title",
+                    (("line", str(lineno)),),
                     (
                         f"Line {lineno}: LAS 3.0 feature in section title {title!r}. "
                         "The section was not parsed as LAS 2.0."
@@ -648,7 +718,8 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
         header_for_lasio.append((lineno, current.letter, line, split_failed))
         if parsed is None:
             ledger.add(
-                BlockType.INFORMATIONAL,
+                "header_line_unsplit",
+                (("line", str(lineno)),),
                 (
                     f"Line {lineno}: header line in section {current.letter} does not split "
                     f"on the first period and the last colon: {line.strip()!r}."
@@ -682,7 +753,8 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
     vers_major = _major_version(vers_text)
     if vers_major == 3:
         ledger.add(
-            BlockType.RULE_DEPENDENT_WARNING,
+            "las3_version",
+            (),
             (
                 f"LAS 3.0 feature: VERS value {vers_text!r} has major version 3. "
                 "The file was not parsed as LAS 2.0."
@@ -712,7 +784,8 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
     null_number = well["NULL"][2] if "NULL" in well else None
     if "NULL" not in well:
         ledger.add(
-            BlockType.AMBIGUOUS_INTERPRETATION,
+            "null_undeclared",
+            (),
             "NULL is not declared in the well section. No null value was assumed, and no sample was converted.",
         )
     # A NULL line whose value is not a finite number stays declared and unused.
@@ -731,7 +804,7 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
     parse_data = vers_major != 3
 
     if parse_data and "A" not in letter_counts:
-        ledger.add(BlockType.STRUCTURAL_DATA_FAILURE, "No ~A section.")
+        ledger.add("ascii_absent", (), "No ~A section.")
     elif parse_data:
         content = [(lineno, line) for lineno, line in data_lines if not _blank_or_comment(line)]
         n_curves = len(curves)
@@ -746,7 +819,8 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
             if n_curves == 0:
                 if token_count:
                     ledger.add(
-                        BlockType.STRUCTURAL_DATA_FAILURE,
+                        "wrapped_no_curves",
+                        (),
                         (
                             f"Column count irreconcilable after WRAP=YES, comments, and blank lines: "
                             f"~C count is 0 and the data section has {token_count} tokens."
@@ -756,7 +830,8 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
                 leftover = token_count % n_curves
                 complete = token_count // n_curves
                 ledger.add(
-                    BlockType.STRUCTURAL_DATA_FAILURE,
+                    "wrapped_tokens_leftover",
+                    (),
                     (
                         f"Column count irreconcilable after WRAP=YES, comments, and blank lines: "
                         f"~C count is {n_curves}, data tokens are {token_count}, "
@@ -796,7 +871,8 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
                 if len(mismatches) > 10:
                     extra = f" {len(mismatches) - 10} further lines are in the audit."
                 ledger.add(
-                    BlockType.STRUCTURAL_DATA_FAILURE,
+                    "unwrapped_columns_mismatch",
+                    (),
                     (
                         f"Column count irreconcilable after WRAP=NO, comments, and blank lines: "
                         f"{len(mismatches)} data line(s) differ from ~C count {n_curves}. {shown}.{extra}"
@@ -807,7 +883,8 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
                 depth_steps = len(parsed_rows)
         if rows is not None and depth_steps == 0:
             ledger.add(
-                BlockType.STRUCTURAL_DATA_FAILURE,
+                "ascii_no_rows",
+                (),
                 (
                     "The ~A section has no data rows after comments and blank lines. "
                     "The depth column has no samples, so there is no adjacent pair to check."
@@ -820,7 +897,8 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
             item.block_type is BlockType.STRUCTURAL_DATA_FAILURE for item in ledger.items
         ):
             ledger.add(
-                BlockType.STRUCTURAL_DATA_FAILURE,
+                "ascii_no_rows",
+                (),
                 (
                     "The ~A section has no data rows after comments and blank lines. "
                     "The depth column has no samples, so there is no adjacent pair to check."
@@ -1064,7 +1142,8 @@ def _sentinel_warnings(matrix: numpy.ndarray, curves: tuple[ParsedCurve, ...], n
             if count == 0:
                 continue
             ledger.add(
-                BlockType.RULE_DEPENDENT_WARNING,
+                "sentinel_candidate",
+                (("column", str(column)), ("mnemonic", curve.mnemonic), ("sentinel", spelling)),
                 (
                     f"Column {column} mnemonic {curve.mnemonic!r} has {count} sample(s) equal to "
                     f"undeclared sentinel candidate {spelling}. The samples were not converted."
@@ -1198,7 +1277,8 @@ def _compare_pass2(
         if lineno in captured:
             continue
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "pass2_header_line_unreadable",
+            (("line", str(lineno)),),
             (
                 f"Pass 2 cannot read header line {lineno}, which pass 1 split: {text!r}. "
                 "No sample value was changed."
@@ -1210,7 +1290,8 @@ def _compare_pass2(
         parsed = _read_with_lasio(path, audit, use_ignore)
     except LASHeaderError as exc:
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "pass2_header_error",
+            (),
             (
                 "Pass 2 stopped on a header error that was not suppressed "
                 f"({exc}). ignore_header_errors was not used to hide an unrecorded line. "
@@ -1220,7 +1301,8 @@ def _compare_pass2(
         return
     except (LASDataError, UnicodeError, OSError, ValueError) as exc:
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "pass2_no_parse",
+            (),
             f"Pass 2 did not return a parse ({type(exc).__name__}: {exc}). No sample value was changed.",
         )
         return
@@ -1279,7 +1361,8 @@ def _compare_one_header(label: str, ours: object, theirs: object, ledger: _Ledge
         if _is_close(our_number, their_number):
             return
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "pass2_header_value_differs",
+            (("field", label),),
             f"Pass 1 {label} value {our_number} disagrees with pass 2 value {their_number}.",
         )
         return
@@ -1290,16 +1373,17 @@ def _compare_one_header(label: str, ours: object, theirs: object, ledger: _Ledge
     if ours is not None and theirs is not None and str(ours).strip() == str(theirs).strip():
         return
     changes_value = our_number is not None or their_number is not None
-    block = BlockType.STRUCTURAL_DATA_FAILURE if changes_value else BlockType.INFORMATIONAL
+    check = "pass2_header_value_differs" if changes_value else "pass2_header_text_differs"
     tail = "This changes a recorded value." if changes_value else "No sample value was changed."
-    ledger.add(block, f"Pass 1 {label} {ours!r} disagrees with pass 2 {theirs!r}. {tail}")
+    ledger.add(check, (("field", label),), f"Pass 1 {label} {ours!r} disagrees with pass 2 {theirs!r}. {tail}")
 
 
 def _compare_curves(audit: TextAudit, matrix: numpy.ndarray | None, parsed: object, ledger: _Ledger) -> None:
     las_curves = list(getattr(parsed, "curves"))
     if len(las_curves) != len(audit.curves):
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "pass2_curve_count_differs",
+            (),
             (
                 f"Pass 1 curve count {len(audit.curves)} disagrees with pass 2 curve count {len(las_curves)}. "
                 "This changes which values are in the file."
@@ -1313,7 +1397,8 @@ def _compare_curves(audit: TextAudit, matrix: numpy.ndarray | None, parsed: obje
         their_desc = str(getattr(theirs, "descr", ""))
         if their_name.strip() != ours.mnemonic.strip():
             ledger.add(
-                BlockType.INFORMATIONAL,
+                "pass2_mnemonic_differs",
+                (("column", str(index)), ("mnemonic", ours.mnemonic)),
                 (
                     f"Pass 1 mnemonic {ours.mnemonic!r} at column {index} disagrees with "
                     f"pass 2 mnemonic {their_name!r}. No sample value was changed."
@@ -1322,7 +1407,8 @@ def _compare_curves(audit: TextAudit, matrix: numpy.ndarray | None, parsed: obje
             )
         if their_unit.strip() != ours.unit.strip():
             ledger.add(
-                BlockType.INFORMATIONAL,
+                "pass2_unit_differs",
+                (("column", str(index)), ("mnemonic", ours.mnemonic)),
                 (
                     f"Pass 1 unit {ours.unit!r} at column {index} disagrees with "
                     f"pass 2 unit {their_unit!r}. No sample value was changed."
@@ -1331,7 +1417,8 @@ def _compare_curves(audit: TextAudit, matrix: numpy.ndarray | None, parsed: obje
             )
         if their_desc.strip() != ours.description.strip():
             ledger.add(
-                BlockType.INFORMATIONAL,
+                "pass2_description_differs",
+                (("column", str(index)), ("mnemonic", ours.mnemonic)),
                 (
                     f"Pass 1 description {ours.description!r} at column {index} disagrees with "
                     f"pass 2 description {their_desc!r}. No sample value was changed."
@@ -1346,7 +1433,8 @@ def _compare_curves(audit: TextAudit, matrix: numpy.ndarray | None, parsed: obje
         our_values = matrix[:, index]
         if their_values.shape != our_values.shape:
             ledger.add(
-                BlockType.STRUCTURAL_DATA_FAILURE,
+                "pass2_length_differs",
+                (("column", str(index)), ("mnemonic", ours.mnemonic)),
                 (
                     f"Pass 1 column {index} length {our_values.shape[0]} disagrees with "
                     f"pass 2 length {their_values.shape[0]}."
@@ -1365,7 +1453,8 @@ def _compare_curves(audit: TextAudit, matrix: numpy.ndarray | None, parsed: obje
             continue
         first = int(numpy.flatnonzero(differ)[0])
         ledger.add(
-            BlockType.STRUCTURAL_DATA_FAILURE,
+            "pass2_samples_differ",
+            (("column", str(index)), ("mnemonic", ours.mnemonic)),
             (
                 f"Pass 1 and pass 2 disagree on {count} sample(s) in column {index} "
                 f"mnemonic {ours.mnemonic!r}. First index {first}: "
@@ -1376,7 +1465,8 @@ def _compare_curves(audit: TextAudit, matrix: numpy.ndarray | None, parsed: obje
     if whitespace_columns:
         listed = ", ".join(str(index) for index in whitespace_columns)
         ledger.add(
-            BlockType.INFORMATIONAL,
+            "pass2_description_whitespace",
+            (),
             (
                 f"Pass 2 description text differs from the file text by surrounding whitespace "
                 f"only, on column(s) {listed}. No sample value was changed."
@@ -1425,7 +1515,7 @@ def ingest(path: Path | str, *, read_at: datetime | None = None) -> IngestResult
     """Read one LAS file into a source dataset and an audit ledger.
 
     Implements D64, D65 (PARTIAL), D66 (PARTIAL, F19), D68 (PARTIAL), D30,
-    D46, D17, C3, C6, contracts section 6.
+    D46, D17, D96, C3, C6, contracts section 6.
 
     Parameters
     ----------
@@ -1464,7 +1554,7 @@ def ingest(path: Path | str, *, read_at: datetime | None = None) -> IngestResult
     ledger = _Ledger(read_at, source.file_hash)
     encoding_name, encoding_method, text = _detect_encoding(raw)
     if text is None:
-        ledger.add(BlockType.STRUCTURAL_DATA_FAILURE, encoding_method)
+        ledger.add("encoding_undetermined", (), encoding_method)
         audit = _empty_audit(None, encoding_method)
         return _result(source, None, ledger, audit, ())
 
@@ -1514,7 +1604,7 @@ def ingest(path: Path | str, *, read_at: datetime | None = None) -> IngestResult
             partial = _halted(_result(source, None, ledger, audit, null_indexes))
             raise UnclassifiedIngest(refusal[1], partial)
         if refusal is not None:
-            ledger.add(BlockType.STRUCTURAL_DATA_FAILURE, refusal[1])
+            ledger.add("depth_axis_refused", (), refusal[1])
         else:
             direction = _direction(depths)
             if direction is None:

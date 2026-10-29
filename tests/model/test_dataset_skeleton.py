@@ -13,6 +13,8 @@ from polish.model.findings import (
     DecisionScope,
     Evidence,
     FindingRecord,
+    evidence_digest,
+    finding_key,
     project_for_export,
 )
 from polish.model.ids import DatasetId, FileHash
@@ -124,20 +126,23 @@ def test_child_keeps_its_own_grid(tmp_path: Path):
 
 def test_projection_feeds_the_existing_export_gate():
     created_at = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    message = "Recorded difference in the unit text."
     finding = FindingRecord(
-        id="inf-1",
+        id=finding_key(2, "mnemonic_left_unchanged", ()),
         stage=2,
+        check="mnemonic_left_unchanged",
+        identity=(),
         block_type=BlockType.INFORMATIONAL,
         subject_refs=(),
         evidence=Evidence(BlockType.INFORMATIONAL.value),
-        message="Recorded difference in the unit text.",
+        message=message,
         created_at=created_at,
     )
     open_finding = project_for_export(finding, None)
     assert open_finding.disposition.issue_disposition is IssueDisposition.UNDISPOSITIONED
     blocked = export_permission((open_finding,), ())
     assert blocked.allowed is False
-    assert "inf-1" in blocked.reasons[0]
+    assert finding.id in blocked.reasons[0]
     decision = DecisionRecord(
         "dec-1",
         finding.id,
@@ -151,6 +156,7 @@ def test_projection_feeds_the_existing_export_gate():
         (("families", "1"),),
         FileHash("a" * 64),
         None,
+        evidence_digest(finding),
     )
     accepted = project_for_export(finding, decision)
     assert export_permission((accepted,), ()).allowed is True
@@ -164,17 +170,30 @@ def test_undeclared_evidence_key_is_refused():
 def test_decision_for_another_finding_is_refused():
     created_at = datetime(2026, 9, 24, tzinfo=timezone.utc)
     finding = FindingRecord(
-        id="inf-1",
+        id=finding_key(0, "depth_no_curve", ()),
         stage=0,
+        check="depth_no_curve",
+        identity=(),
         block_type=BlockType.STRUCTURAL_DATA_FAILURE,
         subject_refs=(),
         evidence=Evidence(BlockType.STRUCTURAL_DATA_FAILURE.value),
         message="Depth is not monotonic.",
         created_at=created_at,
     )
+    other = FindingRecord(
+        id=finding_key(1, "depth_token_not_decimal", ()),
+        stage=1,
+        check="depth_token_not_decimal",
+        identity=(),
+        block_type=BlockType.STRUCTURAL_DATA_FAILURE,
+        subject_refs=(),
+        evidence=Evidence(BlockType.STRUCTURAL_DATA_FAILURE.value),
+        message="A depth token is not a finite decimal.",
+        created_at=created_at,
+    )
     decision = DecisionRecord(
         "dec-9",
-        "other-finding",
+        other.id,
         Disposition(IssueDisposition.UNDISPOSITIONED),
         None,
         None,
@@ -185,6 +204,7 @@ def test_decision_for_another_finding_is_refused():
         (("families", "1"),),
         FileHash("b" * 64),
         None,
+        evidence_digest(other),
     )
     with pytest.raises(ValueError, match="does not match"):
         project_for_export(finding, decision)

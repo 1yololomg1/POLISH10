@@ -1,7 +1,7 @@
 """Stage 3: interpret units and convert on read. It does not rewrite samples.
 
 Implements C1, C4, C6, contracts section 3 and section 4 items 2 and 4,
-D87, D90, D93, and OD-05. Unit conversion is a recorded re-expression. It is
+D87, D90, D93, D96, and OD-05. Unit conversion is a recorded re-expression. It is
 never a CHANGED sample.
 
 Structure
@@ -52,7 +52,7 @@ from fractions import Fraction
 import numpy
 
 from polish.model.dataset import Curve, Dataset
-from polish.model.findings import Evidence, FindingRecord
+from polish.model.findings import Evidence, FindingRecord, finding_key
 from polish.model.ids import CurveRef
 from polish.model.states import (
     BlockType,
@@ -262,8 +262,17 @@ def _resolve(
     return UnitInterpretation.UNRECOGNISED, None, matches
 
 
+_STAGE3_CHECKS: tuple[tuple[str, BlockType], ...] = (
+    ("unit_unresolved", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("unit_incompatible_with_family", BlockType.RULE_DEPENDENT_WARNING),
+    ("unit_choice_not_applied", BlockType.INFORMATIONAL),
+)
+CHECKS = frozenset(name for name, _block in _STAGE3_CHECKS)
+_CHECK_BLOCK = dict(_STAGE3_CHECKS)
+
+
 class _Ledger:
-    """Findings for one interpretation. Identifiers are stable inside that call."""
+    """Findings for one interpretation. An id is the check and what it is about. D96."""
 
     def __init__(self, ingest: IngestResult) -> None:
         self._read_at = ingest.source_file.read_at
@@ -271,16 +280,28 @@ class _Ledger:
 
     def add(
         self,
-        block: BlockType,
+        check: str,
+        identity: tuple[tuple[str, str], ...],
         message: str,
         ref: CurveRef,
         fields: dict[str, str | int | float | bool],
     ) -> None:
-        number = len(self.items) + 1
+        """Record one finding. The id is not this finding's position in the run. D96."""
+
+        if check not in CHECKS:
+            raise ValueError(f"Check {check!r} is not declared for this stage.")
+        block = _CHECK_BLOCK[check]
+        finding_id = finding_key(3, check, identity)
+        if any(item.id == finding_id for item in self.items):
+            raise ValueError(
+                f"Finding {finding_id} for check {check!r} and identity {identity!r} is already in this run."
+            )
         self.items.append(
             FindingRecord(
-                id=f"s03-{number:04d}",
+                id=finding_id,
                 stage=3,
+                check=check,
+                identity=identity,
                 block_type=block,
                 subject_refs=(ref,),
                 evidence=Evidence(block.value, tuple(sorted(fields.items()))),
@@ -337,7 +358,13 @@ def _record_finding(
         else:
             shown = declared if declared is not None else ""
             message = f"Curve {mnemonic} unit {shown!r} is not a known unit. The unit is not assumed."
-        ledger.add(BlockType.AMBIGUOUS_INTERPRETATION, message, item.curve, common)
+        ledger.add(
+            "unit_unresolved",
+            (("column", str(item.curve.column_index)), ("mnemonic", mnemonic)),
+            message,
+            item.curve,
+            common,
+        )
         return
     if chosen is None or family is None:
         raise ValueError("An incompatible unit needs a resolved spelling and a family.")
@@ -349,7 +376,13 @@ def _record_finding(
         f"Curve {mnemonic} unit {chosen.canonical_unit} is {chosen.dimension}, "
         f"which is not an accepted dimension of {family.id}."
     )
-    ledger.add(BlockType.RULE_DEPENDENT_WARNING, message, item.curve, common)
+    ledger.add(
+        "unit_incompatible_with_family",
+        (("column", str(item.curve.column_index)), ("mnemonic", mnemonic)),
+        message,
+        item.curve,
+        common,
+    )
 
 
 def _choice_index(
@@ -399,7 +432,12 @@ def _record_unmatched_choice(ledger: _Ledger, item: CurveIdentification, choice:
         "That unit is not one candidate of the unit in this file, so the choice is not applied."
     )
     ledger.add(
-        BlockType.INFORMATIONAL,
+        "unit_choice_not_applied",
+        (
+            ("column", str(item.curve.column_index)),
+            ("decision_id", choice.decision_id),
+            ("mnemonic", item.mnemonic),
+        ),
         message,
         item.curve,
         {"mnemonic": item.mnemonic, "decision_id": choice.decision_id},
@@ -411,7 +449,7 @@ def interpret(
     identification: IdentificationResult,
     unit_choices: tuple[UnitChoice, ...] = (),
 ) -> UnitsResult:
-    """Interpret every curve's declared unit. C1, C6, D87, D90, D93, OD-05.
+    """Interpret every curve's declared unit. C1, C6, D87, D90, D93, D96, OD-05.
 
     Does not write the dataset. The target system is AS_RECORDED, so this
     call converts nothing. Imperial and metric are not selected.
