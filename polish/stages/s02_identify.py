@@ -254,7 +254,9 @@ class CurveIdentification:
 
     ``family_id`` is None when no table entry was applied. ``label`` is
     USER_MAPPED_LABEL exactly when the tier is USER_DEFINED. Suggestions do
-    not change the family, the tier, or the role.
+    not change the family, the tier, or the role. ``decision_id`` is the
+    explicit mapping applied to this curve, or None when this call did not
+    map it. D98.
     """
 
     curve: CurveRef
@@ -269,6 +271,7 @@ class CurveIdentification:
     label: str | None
     user_label: str | None
     prefix_proposal: PrefixProposal | None
+    decision_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.curve, CurveRef):
@@ -284,6 +287,10 @@ class CurveIdentification:
                 raise ValueError("A USER_DEFINED curve must carry USER_MAPPED_LABEL.")
         elif self.label is not None:
             raise ValueError("Only a USER_DEFINED curve carries USER_MAPPED_LABEL.")
+        if self.decision_id is not None and (
+            not isinstance(self.decision_id, str) or self.decision_id.strip() == ""
+        ):
+            raise ValueError("decision_id must be a non-empty string or None.")
 
 
 @dataclass(frozen=True)
@@ -680,6 +687,7 @@ def _identify_curve(
         label=text.label,
         user_label=text.user_label,
         prefix_proposal=proposal,
+        decision_id=None if mapping is None else mapping.decision_id,
     )
 
 

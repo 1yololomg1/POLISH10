@@ -24,6 +24,17 @@ def _banned(name: str) -> bool:
     return any(name == prefix or name.startswith(prefix + ".") for prefix in _LAYER_PREFIXES)
 
 
+def test_stages_model_decisions_and_tables_do_not_import_pipeline():
+    """Stages, the model, decisions, and tables do not import the run. D98."""
+
+    offenders: list[str] = []
+    for folder in ("stages", "model", "decisions", "tables"):
+        for path, line, name in imported_names(_REPO / "polish" / folder):
+            if name == "polish.pipeline" or name.startswith("polish.pipeline."):
+                offenders.append(f"{path.relative_to(_REPO)}:{line} imports {name}")
+    assert offenders == []
+
+
 def test_stages_model_and_decisions_do_not_import_provenance():
     """Stages, the model, and decisions do not import the describe report. D95."""
 

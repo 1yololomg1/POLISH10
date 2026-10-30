@@ -536,7 +536,7 @@ def test_continuity_check_fails_when_a_row_is_repeated(tmp_path: Path) -> None:
 
 def test_count_check_fails_when_the_total_is_wrong(tmp_path: Path) -> None:
     register = _copy(tmp_path, "docs/governing/POLISH_decision_register.md")
-    _rewrite(register, _read(register).replace("**Total register entries** | **97**", "**Total register entries** | **90**", 1))
+    _rewrite(register, _read(register).replace("**Total register entries** | **98**", "**Total register entries** | **90**", 1))
     with pytest.raises(AssertionError, match=r"Total register entries: count 90 is not the kept-row total"):
         check_count_section(tmp_path)
 
@@ -546,8 +546,8 @@ def test_d_range_check_fails_when_another_range_remains(tmp_path: Path) -> None:
     _copy(tmp_path, "docs/governing/POLISH_build_plan.md")
     _copy(tmp_path, ".cursor/rules/polish-rebuild.mdc")
     readme = _copy(tmp_path, "docs/governing/README.md")
-    _rewrite(readme, _read(readme).replace("D1\u2013D97", "D1\u2013D90", 1))
-    with pytest.raises(AssertionError, match=r"README\.md: D1.D90: D-range is not D1-D97"):
+    _rewrite(readme, _read(readme).replace("D1\u2013D98", "D1\u2013D90", 1))
+    with pytest.raises(AssertionError, match=r"README\.md: D1.D90: D-range is not D1-D98"):
         check_d_range(tmp_path)
 
 

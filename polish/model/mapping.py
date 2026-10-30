@@ -78,12 +78,16 @@ class ExplicitMapping:
         A curve role stated by that family's shipped mnemonics.
     user_label:
         The user's name for the curve, or None.
+    decision_id:
+        The decision that recorded this mapping, or None when the caller
+        built the mapping without one. D98.
     """
 
     curve: CurveRef
     family_id: str
     role: CurveRole
     user_label: str | None = None
+    decision_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.curve, CurveRef):
@@ -96,3 +100,5 @@ class ExplicitMapping:
             raise ValueError("A mapped curve cannot have role UNKNOWN.")
         if self.user_label is not None and not _nonempty(self.user_label):
             raise ValueError("user_label must be non-empty text or None")
+        if self.decision_id is not None and not _nonempty(self.decision_id):
+            raise ValueError("decision_id must be a non-empty string or None")

@@ -126,7 +126,7 @@ def current_decisions(decisions: tuple[DecisionRecord, ...], held_ids: frozenset
 
 
 def explicit_mappings(session: object) -> tuple[ExplicitMapping, ...]:
-    """THIS_ITEM mappings for a later Stage 2 call. D91.
+    """THIS_ITEM mappings for a later Stage 2 call. D91, D98.
 
     LOCAL_RULE mappings are not returned. Stage 2 reads those from the
     local mnemonic table. A held session contributes none.
@@ -160,7 +160,15 @@ def explicit_mappings(session: object) -> tuple[ExplicitMapping, ...]:
         curves = [ref for ref in finding.subject_refs if isinstance(ref, CurveRef)]
         if len(curves) != 1:
             continue
-        built.append(ExplicitMapping(curves[0], decision.family_id, role, decision.user_label))
+        built.append(
+            ExplicitMapping(
+                curves[0],
+                decision.family_id,
+                role,
+                decision.user_label,
+                decision_id=decision.decision_id,
+            )
+        )
     return tuple(built)
 
 
