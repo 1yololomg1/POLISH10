@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D97**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D98**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -523,7 +523,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D97, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D98, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1985,9 +1985,162 @@ fails when its rule is broken; the fresh-environment pytest tail; every line cha
 in the build plan, register, README, rules file, ci.yml and .pre-commit-config.yaml.
 ````
 
+### P14a - Run a well with its saved answers (engine)
+
+**Needs:** P13h, P13i.
+
+````text
+POLISH rebuild — P14a: Run a well with its saved answers. (Revised 29 Oct after the
+first version stopped: its cascade and order tests used a pass question that a
+mapping cannot create.)
+
+Starting state (checked 29 Oct 2026): branch rebuild, HEAD 399baa8 = origin/rebuild,
+working tree clean, pytest 372 passed, 1 skipped. Confirm with git status and pytest;
+if either differs, stop and report. Do not commit. Keep each file's encoding and line
+endings. If an instruction here conflicts with the build plan, the register, the state
+glossary or an existing test, stop and report; do not choose.
+
+Why (read at 399baa8): nothing in polish/ runs Stages 0–4 with a session's saved
+answers. identify takes explicit_mappings and pass_choices, interpret takes
+unit_choices, and apply.py builds those from a Session, but only tests wire them
+together; describe.build_report passes none. Each extractor finds an answer's curve or
+family through the finding it answered (session.findings), so an answer can only be
+extracted from a session loaded against the run where its question is raised. Once
+applied, a question is not raised again (Stage 2 drops the unrecognised-name notice
+for a mapped curve, _add_passes drops the pass question, interpret drops the unit
+question). Answers depend on each other: a mapping sets a curve's family, and Stage
+3's unit question records family_id in its evidence (_record_finding), so the unit
+question a curve is asked depends on its mapping. A mapping does not create or join a
+pass question (D39: a pass question needs two or more curves on one base mnemonic with
+_MAIN or _REF; an explicit mapping clears qualifiers). Stage 2's pass rule does not
+change in this prompt.
+
+Decided (owner, 29 Oct 2026): an answer whose question disappears because the answer
+was applied is "applied", not "unmatched"; its link to its question and evidence
+fingerprint is kept and checked each run. P14 is split: this prompt builds the run;
+staleness stays in the build plan's P14.
+
+1. Record which answer a stage used.
+   a. polish/model/mapping.py ExplicitMapping gains decision_id: str | None = None
+      (after user_label). apply.explicit_mappings sets it from the decision.
+   b. s02 CurveIdentification gains decision_id: str | None = None (last field), set
+      to the mapping's decision_id when an explicit mapping is applied to that curve,
+      None otherwise. Nothing else in Stage 2 changes. DefaultPass and CurveUnits
+      already carry decision_id; do not change them.
+
+2. New package polish/pipeline/ (__init__.py, run.py) with
+   run_well(path, *, read_at=None, local_tables_directory=None, app_data=None)
+   -> WellRun. It reads and writes nothing: no session file, no tables, no folder
+   created. FileNotFoundError when path is not a file; UnclassifiedIngest propagates
+   unchanged. Each stage runs only when the stage before it is COMPLETE, as
+   describe._continue does; a stage not run is None. Each kind of answer is matched
+   only against the run where that kind of question is asked, with every earlier kind
+   already applied:
+   a. s0 = ingest(path, read_at=read_at); s1 = classify(s0).
+   b. Mappings. s2_open = identify(s0, s1, local_tables_directory, no answers);
+      s3_pre = interpret(s0, s2_open, no unit choices). load_a = load_session(path,
+      findings of s0, s1, s2_open and s3_pre, app_data=app_data). mappings =
+      explicit_mappings(load_a.session). (A mapping can answer Stage 2's unrecognised
+      notice or Stage 3's unit_incompatible_with_family warning.)
+   c. Pass choices. s2_mapped = identify(..., explicit_mappings=mappings).
+      load_b = load_session(path, findings of s0, s1 and s2_mapped).
+      passes = pass_choices(load_b.session).
+   d. s2 = identify(..., explicit_mappings=mappings, pass_choices=passes).
+   e. Unit choices. s3_open = interpret(s0, s2). load_c = load_session(path, findings
+      of s0, s1, s2 and s3_open). units = unit_choices(load_c.session).
+   f. s3 = interpret(s0, s2, unit_choices=units); s4 = assess(s0, s1, s2, s3) with
+      its defaults.
+   Runs are never merged: an answer whose question is not raised in its own kind's
+   run is not extracted. When an extractor returns nothing, the next call may reuse
+   the previous result instead of re-running the stage. If load_a's session is on
+   hold (changed file, D48), no answer is applied (c–f pass none) and the hold is
+   reported as load_session reports it. run_well never answers the changed-file
+   question.
+   g. Applied answers: the decision ids on s2.curves, s2.default_passes and s3.curves.
+      For each, its DecisionRecord and the finding it answered come from the load it
+      was extracted from: a mapping from load_a (its finding is in s2_open or
+      s3_pre), a pass choice from load_b (s2_mapped), a unit choice from load_c
+      (s3_open).
+   h. Question set Q = the findings of s0, s1, s2, s3 and s4, plus, for each applied
+      answer whose finding id is not in that set, the finding as it was asked (from
+      g), placed with its stage. If an applied answer's question is raised again in
+      the final set (possible only for a mapping answered on
+      unit_incompatible_with_family when the chosen family also does not accept the
+      unit), the final version is used and the answer goes in WellRun.reasked, not in
+      applied.
+   i. final = load_session(path, Q, app_data=app_data).
+   WellRun (frozen dataclass): path, ingest, depth, identification, units, validity
+   (None when not run), findings (Q), session_load (final), applied (DecisionRecords,
+   in order: mappings, pass choices, unit choices), reasked (DecisionRecords).
+   No file under polish/stages, polish/model, polish/decisions or polish/tables
+   imports polish.pipeline; add that check to tests/arch/test_layering.py.
+
+3. Nothing else changes. describe.py is unchanged (it runs with no answers until
+   P16b). No new enum. The session file format is unchanged (schema 2).
+
+4. Docs. Register D98 (owner AC, 29 Oct 2026, status NEW): "run_well runs Stages 0–4
+   of one well with its saved answers and writes nothing. Answers are applied in
+   dependency order: mappings, then pass choices, then unit choices. Each answer is
+   matched only against the run where its kind of question is raised, with every
+   earlier kind applied. An answer a stage used is applied, not unmatched; its
+   question and evidence fingerprint stay linked. run_well never answers the
+   changed-file question." Re-parse Count (total 98, AC 28, NEW 16, add "D98 is
+   NEW."). Change D1–D97 to D1–D98 wherever tests/governance checks the range. Build
+   plan: add "### P14a - Run a well with its saved answers (engine)" with
+   "**Needs:** P13h, P13i." and this prompt's text, after P13i and before P14; change
+   P14's Needs line to "P13, P13h, P14a."
+
+Tests — tests/pipeline/test_run_well.py (plus the layering check). Every test passes
+app_data and local_tables_directory pointing at empty temporary folders, never the
+real %APPDATA%. "APPLE" below is an unrecognised curve whose unit is API (shipped
+spellings: GAPI gamma_api, API api_gravity; GAMMA_RAY_TOTAL accepts gamma_api and
+count_rate; BULK_DENSITY accepts density).
+- No session file, each of the five fixtures: run_well's stage statuses and finding
+  ids equal the stage calls with no answers (as describe._continue makes them);
+  applied and reasked are empty; the fixture folder has the same files and
+  modification times afterwards, and no session file exists.
+- Unit choice: APPLE alone. Record GAPI against its unit question and save. run_well:
+  APPLE's CurveUnits.decision_id is the decision, the unit question is not in s3's
+  findings, the decision is in applied, final.reported has nothing for it, and
+  outstanding() on the final session does not list its question.
+- Mapping: record MAP_EXPLICITLY on APPLE's unrecognised notice to BULK_DENSITY with
+  one of its stated roles. run_well: CurveIdentification.decision_id set, family
+  BULK_DENSITY, the unrecognised notice not raised, the decision in applied.
+- Pass choice: a file with GR_MAIN and GR_REF (one pass question). Record a pass
+  choice and save. run_well: default_passes carries the decision id, the decision is
+  in applied, the pass question is not in s2's findings.
+- Cascade (a unit question asked only after a mapping): map APPLE to BULK_DENSITY and
+  save; run run_well; record GAPI against APPLE's unit question in that run's findings
+  (family BULK_DENSITY); save; run run_well again. Both decisions are applied;
+  CurveIdentification.decision_id is the mapping and CurveUnits.decision_id is the
+  unit choice. Report what Stage 3 raises for APPLE afterwards.
+- Order (answer given before the mapping it depends on): record GAPI on APPLE's unit
+  question while APPLE has no family, then map APPLE to BULK_DENSITY; save; run_well.
+  The mapping is applied; the unit question is asked again with family BULK_DENSITY;
+  the GAPI decision is reported as session_decision_evidence_changed and is not in
+  applied.
+- Removed by another answer: record GAPI on APPLE's unit question with no family,
+  then map APPLE to GAMMA_RAY_TOTAL (API then resolves to gamma_api with no question);
+  save; run_well. The mapping is applied; the GAPI decision is not in applied or
+  reasked, and final.reported lists it as session_decision_unmatched.
+- Re-asked: RHOB with unit GAPI raises unit_incompatible_with_family for
+  BULK_DENSITY. Map it on that warning to SONIC_COMPRESSIONAL (role MEASURED_LOG) and
+  save; run_well. The mapping is in reasked, not applied, and final.reported lists it
+  as session_decision_evidence_changed.
+- Changed file: a session saved for one version of a file, then the file changed.
+  run_well applies nothing, reports session_file_changed, and its stage results equal
+  the no-answer run.
+- A DEFER and an ACKNOWLEDGE on questions that stay raised: matched, not in applied,
+  not outstanding.
+If any scenario cannot be built with the shipped tables, stop and report which one and
+why; do not change tables or Stage 2/3 rules to make it pass.
+Report in the standard format, plus: each fixture's per-stage finding counts from
+run_well, and the applied and reasked decision ids in each scenario test.
+````
+
 ### P14 — Dependency graph and staleness (engine)
 
-**Needs:** P13, P13h.
+**Needs:** P13, P13h, P14a.
 
 ````text
 POLISH rebuild — P14: Dependency graph and staleness.

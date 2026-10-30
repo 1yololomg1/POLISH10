@@ -1,4 +1,4 @@
-# POLISH — Decision Register (D1–D97)
+# POLISH — Decision Register (D1–D98)
 
 **Compiled 13 September 2026. Revision 2** — external review folded in.
 Companion document to the four-pass review.
@@ -251,8 +251,9 @@ narrow to hold it. A reviewer should weight scepticism accordingly.
 | ID | Decision | Source | Status |
 |---|---|---|---|
 | D97 | Consistency between the code and the governing documents is checked by tests in tests/governance/: state names and the action matrix against the glossary, cited rows against the register, the register's Count section and D-range, the governing-document list, and public docstrings. CI installs test-only dependencies from requirements-dev.txt. Pre-commit hooks only check; they never rewrite a file. ruff format is not adopted. | AC | NEW — owner AC, 29 Oct 2026. |
+| D98 | run_well runs Stages 0–4 of one well with its saved answers and writes nothing. Answers are applied in dependency order: mappings, then pass choices, then unit choices. Each answer is matched only against the run where its kind of question is raised, with every earlier kind applied. An answer a stage used is applied, not unmatched; its question and evidence fingerprint stay linked. run_well never answers the changed-file question. | AC | NEW — owner AC, 29 Oct 2026. |
 
-*(Register ends at D97. See the Count section below for verified tallies. The
+*(Register ends at D98. See the Count section below for verified tallies. The
 "44 decisions" figure in the four-pass review was an estimate stated as a count
 and is wrong.)*
 
@@ -264,7 +265,7 @@ Verified by parsing this document, not estimated.
 
 | | Count |
 |---|---|
-| **Total register entries** | **97** (D1–D97, continuous, plus struck D20a) |
+| **Total register entries** | **98** (D1–D98, continuous, plus struck D20a) |
 | Decisions made during the project week | 82 |
 | Added by the internal four-pass review | 2 (D41, D42) |
 | Added by external review | 4 (D85–D88) |
@@ -275,7 +276,7 @@ Verified by parsing this document, not estimated.
 | Source | Count |
 |---|---|
 | DESIGN — Claude's proposals, unchallenged | 56 |
-| AC — project owner | 27 |
+| AC — project owner | 28 |
 | DAD — domain expert | 7 |
 | REVIEW — external review | 4 |
 | REPO — verified in code | 3 |
@@ -286,7 +287,7 @@ Verified by parsing this document, not estimated.
 |---|---|
 | — not flagged | 55 |
 | REVISE | 14 |
-| NEW | 15 |
+| NEW | 16 |
 | RESOLVED | 7 |
 | OPEN | 2 |
 | PARTIAL | 3 |
@@ -296,7 +297,7 @@ Verified by parsing this document, not estimated.
 
 Counts parsed from the table rows, not tallied by hand. All three CONFLICT rows
 from revision 1 are now RESOLVED, plus D8. D12 Part Two is RESOLVED (CLOSED 23 Sept).
-D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW. D90 is NEW. D91 is NEW. D92 is NEW. D93 is NEW. D94 is NEW. D95 is NEW. D96 is NEW. D97 is NEW.
+D13 and D67 are RESOLVED from the domain-expert follow-up (16 Sept). D89 is NEW. D90 is NEW. D91 is NEW. D92 is NEW. D93 is NEW. D94 is NEW. D95 is NEW. D96 is NEW. D97 is NEW. D98 is NEW.
 D20a is struck and excluded from these counts.
 
 ### Findings
