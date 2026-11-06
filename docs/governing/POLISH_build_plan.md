@@ -2142,44 +2142,258 @@ run_well, and the applied and reasked decision ids in each scenario test.
 
 **Needs:** P13, P13h, P14a.
 
+Revised 30 Oct 2026. The prompt below replaces the earlier draft.
+
 ````text
-POLISH rebuild — P14: Dependency graph and staleness.
+POLISH rebuild — P14: Dependency graph and staleness. (Revised 30 Oct 2026.
+The earlier draft told dispositions to become STALE, left "affects exported
+claims" as an approve-slot, and said "declared parameter dependencies" without
+naming one.)
 
-Implements: D80, UXC3, C4, supplement §4.3, supplement Part F scenario 3 (engine level).
+Starting state: branch rebuild, HEAD equal to origin/rebuild, working tree
+clean, and this text is the P14 prompt. Confirm with git status. At 56f6776,
+pytest was 388 passed, 1 skipped. Re-run pytest; if that count differs, stop
+and report. Do not commit. Keep each file's encoding and line endings. If an
+instruction here conflicts with the build plan, the register, the state
+glossary, or an existing test, stop and report; do not choose.
 
-Create polish/deps/.
+Read first: polish/pipeline/run.py run_well (D98); polish/model/states.py
+IssueDisposition, DependencyRecord, and export_permission; polish/stages/runner.py
+Runner.run (upstream_stale, D80); polish/stages/s03_units.py
+declare_depth_conversion and DepthDerivedDeclaration; polish/decisions/versions.py
+versions_in_force; polish/model/findings.py DecisionRecord (versions_in_force,
+supersedes) and the note that a change is a new record; polish/decisions/apply.py
+current_decisions and apply_decision; docs/governing/state_glossary.md
+dependency_state (the schema does not decide which nodes affect export);
+tests/governance/test_consistency.py the two failure tests named in item 8.
 
-1. Graph nodes: each stage result, each decision, each derived parameter (C4).
-   Edges: from StageContract.depends_on_stages, from decisions to the stage results
-   they influence, and from declared parameter dependencies (P09, P11).
+Why: run_well (D98) runs Stages 0–4 with saved answers and writes nothing. An
+answer a stage used is applied, including one whose question then disappears.
+export_permission already takes DependencyRecords and blocks when a record is
+STALE and affects_export is true; its reason already includes the cause. It
+does not decide which nodes affect export. IssueDisposition has no STALE.
+Runner.run already marks a stage STALE, and a stage that depends on a stale
+stage STALE, when the caller passes upstream_stale; it does not call those
+stages. The only parameter declaration is declare_depth_conversion: it returns
+a DepthDerivedDeclaration and does not mark anything stale. versions_in_force
+is the six (name, version) pairs the loaders report. DecisionRecord already
+stores those pairs and the id it supersedes; the replaced record stays in the
+session. Gap classifications are CurveValidity.gaps on the Stage 4 result.
+They are not decisions and they are not dispositions.
 
-2. When an upstream decision changes or a stage is re-run with different inputs:
-   mark every dependent node STALE with a StaleCause (triggering node, timestamp,
-   human-readable change description). Do NOT recompute automatically. Stale results
-   remain readable and are labelled non-current.
+Decided (owner AC, 23 Oct 2026): carry unchanged answers over, and mark only
+changed ones stale. Until P28, any stale Stage 0–10 result or answer blocks
+export.
+Decided (owner AC, 29 Oct 2026): detect staleness by stamping each result with
+what it was built from (answers used, rules and table versions, upstream
+results). A rules or table version change makes results and answers built on
+the old version stale, and the cause names the table and both versions. An
+answer that removed its own question is applied; run_well already does this.
 
-3. Dispositions attached to findings of a stale stage become STALE too; their
-   history is kept; the user must re-disposition or re-run.
+The glossary line that the schema does not decide which nodes affect export
+stays. D99 is the caller policy, not a schema change. Do not edit
+state_glossary.md. Do not edit export_permission, DependencyRecord,
+IssueDisposition, Runner, declare_depth_conversion, run_well, or the session
+schema. Do not add a StaleCause type and do not add a timestamp field.
+DependencyRecord.cause is the cause. A decision's timestamp stays on its
+DecisionRecord.
 
-4. impact_summary(trigger) → structured object with: what changed; affected stages;
-   count and list of affected decisions; whether data was altered (for Stages 0–4:
-   always "No data has been altered"); whether export is blocked; recovery actions
-   available (re-run stage N; re-disposition items). This is what UXC3's panel will
-   render.
+1. New package polish/deps/ (__init__.py re-exports the public names;
+   staleness.py holds them). Public names, and no others:
+   ResultStamp, StampedRun, ImpactSummary, stamp_run, freshness,
+   parameter_records, stale_stage_numbers, impact_summary.
+   Stages, model, decisions, tables, and pipeline do not import polish.deps.
+   Add that check beside the pipeline check in tests/arch/test_layering.py.
+   deps does not import a UI toolkit. It does not call ingest, classify,
+   identify, interpret, assess, run_well, or Runner. freshness does not call
+   declare_depth_conversion. It writes nothing.
 
-5. export_permission (P05) consumes dependency_state: any STALE node that affects
-   exported claims blocks export. Define "affects exported claims" as: ⟦approve —
-   "every Stage 0–10 result and every decision, until P28 defines a narrower set"⟧.
+2. stamp_run(well_run) -> StampedRun. One ResultStamp per stage result that
+   ran (skip None). Fields:
+   stage: int.
+   answers: the decision ids that result records, in result order, skipping
+   None. Stage 2: each curve's decision_id, then each default pass's
+   decision_id. Stage 3: each curve's decision_id. Stages 0, 1, and 4 record
+   none, so the tuple is empty. Do not sort.
+   versions: the tuple versions_in_force() returns.
+   upstream: for each stage in that stage's CONTRACT.depends_on_stages, the
+   pair (stage number, that upstream result's answers). Stages 0–4 each
+   already have a CONTRACT. Stages 5–10 have no contract; do not invent edges
+   or stamps for them.
+   StampedRun keeps the WellRun. It does not copy stage results and it does
+   not re-run them.
 
-6. Re-running a stale stage clears STALE only for nodes whose inputs are now current.
+3. freshness(stamped, session, *, versions=None) -> tuple of DependencyRecord,
+   in this order: one per stamped stage (stage 0, then 1, then 2, then 3,
+   then 4), then one per DecisionRecord in session.decisions order.
+   versions=None means call versions_in_force(). A provided tuple is compared
+   as given. Its names must be the names versions_in_force() returns, in that
+   order; any other name set raises ValueError and does not guess a version.
+   A provided version is how a test supplies a changed table version. It is
+   not a fallback.
+   dependency_id is "stage-{number}" or the decision_id. affects_export is
+   True on every record this function returns. That is the 23 Oct rule until
+   P28. Do not produce a record with affects_export False. Do not produce a
+   record for a stage that did not run.
+   A stage record is STALE when any of these differ, and CURRENT otherwise.
+   a. A version name whose stamped version and compared version differ.
+   b. Its answers are not the decision ids now in force for this stage.
+      In force means current_decisions(session.decisions, session.held_ids),
+      kept in session.decisions order, restricted to decisions whose finding's
+      stage equals this stage. Compare that tuple to stamp.answers.
+   c. A stored upstream pair differs from (that stage, the answers now in
+      force for that stage), computed the same way as (b), from the session,
+      not by running the stage.
+   An answer record is CURRENT when that decision is in force, its
+   versions_in_force matches the compared versions by name, and it is not in
+   session.held_ids. Otherwise it is STALE. An applied answer whose question
+   is gone (it is in WellRun.applied, and current_decisions still returns it)
+   is CURRENT when those checks pass. Do not mark it stale because the
+   question is absent. Do not change load_session's unmatched or
+   evidence-changed reports. A held decision is STALE. A superseded decision
+   is STALE. The new decision that replaced it is CURRENT when its versions
+   match. Unchanged in-force answers stay CURRENT.
+   Cause, one string, empty when CURRENT. Parts joined by a single space.
+   Version parts first, in versions_in_force order, one per name that differs:
+   "{name} changed from {old} to {new}". Then answer parts. For a stage, those
+   parts come from (b) and from each upstream stage that differed in (c),
+   upstream stages in depends_on_stages order, and within a stage in
+   session.decisions order. Do not repeat a part. A stamped id whose finding
+   now has a different in-force id: "decision {old} changed to {new}". A
+   stamped id that is held, or that is no longer in force and has no
+   successor: "decision {id} changed". An in-force id the compared answers did
+   not list: "decision {id} changed". For an answer record, the version parts
+   compare that decision's versions_in_force to the compared versions. If the
+   decision is not in force, add "decision {old} changed to {new}" when a
+   different id is now in force for its finding, otherwise "decision {id}
+   changed". The cause uses the ids and the version strings it was given. It
+   does not invent a version. A name present on only one side raises
+   ValueError.
+   freshness does not rewrite a DecisionRecord, a Disposition, a finding, or
+   a stage result. IssueDisposition is unchanged. History stays the session's
+   decision tuple, including superseded records.
 
-Tests — tests/deps/ and tests/scenarios/test_scenario3_engine.py:
-Scenario 3: resolve a unit after Stage 4 has run → Stage 4 and its gap classifications
-and dependent decisions are STALE; nothing was silently recomputed; the prior decision
-is still in history; export_permission is False with a reason naming the trigger;
-re-running Stage 4 clears it. Also: a presentation-only change (none exist in the
-engine yet — assert the API has no such entry point) never marks anything stale.
-Report in the standard format.
+4. parameter_records(depth, depth_unit) -> tuple of DependencyRecord. This is
+   the only parameter declaration. depth_unit is required. None means the
+   unit to check is not set: return () and do not call declare_depth_conversion.
+   Otherwise, for each of these that is not None, in this order — declared_step,
+   observed_step, corrected_step, recorded_strt, recorded_stop, displacement,
+   primary_standard_step — call declare_depth_conversion(quantity, depth_unit).
+   One record per call. dependency_id is quantity.name. state is STALE when
+   invalidated is True, else CURRENT. cause is declaration.reason when STALE,
+   else "". affects_export is True. When any of those is STALE, also append
+   one stage-1 record, dependency_id "stage-1", STALE, affects_export True,
+   cause the STALE parameter causes joined by a single space in the field
+   order above. When none is STALE, do not add a stage record (freshness owns
+   the stage-1 record for a run). Do not declare any other parameter.
+
+5. stale_stage_numbers(records) -> frozenset of int. Include n when a record
+   has dependency_id "stage-{n}" and state STALE. Parameter ids are not stage
+   numbers. This frozenset is what a caller passes to
+   Runner.run(..., upstream_stale=that set). Do not walk depends_on_stages to
+   mark another stage's StageStatus, and do not copy Runner._is_stale. The
+   runner already refuses to call a stale stage and marks a dependent stage
+   STALE.
+
+6. impact_summary(trigger, records) -> ImpactSummary. trigger is the decision
+   id or the version name the caller asks about. Include a record when its
+   cause contains that trigger and its state is STALE. Fields: trigger (the
+   argument); stages (the stage numbers, ascending); decisions (the stale
+   decision ids, in the order the records were given); decision_count (the
+   length of decisions); data_altered, exactly "No data has been altered"
+   when every included stage is in 0–4; export_blocked, True when any included
+   record has affects_export True; recovery, "re-run stage {n}" for each
+   included stage in ascending order, then "re-disposition {decision_id}" for
+   each included decision in the order the records were given. CURRENT
+   decisions are not listed and get no recovery line. If an included stage
+   number is above 4, stop and report; no such stage exists, and do not invent
+   a data_altered sentence for it. This object is what UXC3's panel will
+   render. Building it does not re-run a stage.
+
+7. Clearing. A node stays STALE until a new stamp_run of a WellRun the caller
+   ran on purpose, then freshness, shows that node's answers, versions, and
+   upstream pairs match. Re-running Stage 4 clears Stage 4 only when Stage 4's
+   inputs are current in that new stamp. freshness never runs Stage 4 by
+   itself. To show the runner's half: pass stale_stage_numbers to Runner.run.
+   While 3 is in that set, the runner does not call a stage that depends on 3,
+   so Stage 4 is not cleared by the runner either. Do not add a second clear.
+
+8. Docs. Register D99 (owner AC, status NEW; the status cell names both dates,
+   23 Oct 2026 and 29 Oct 2026): "Staleness is a stamp of what a stage result
+   was built from: the answers it used, the rule and table versions in force,
+   and the upstream results. Unchanged answers stay current. Only a changed
+   answer is stale. A rules or table version change makes results and answers
+   built on the old version stale, and the cause names the table and both
+   versions. An answer that removed its own question stays applied. Until P28,
+   any stale Stage 0–10 result or answer blocks export. Dispositions are not
+   given a stale state, and decision history is not rewritten." Re-parse Count.
+   Expected if the only new row is this one: total 99, AC 29, NEW 17, and the
+   closing sentence also says "D99 is NEW." If the parse differs, stop and
+   report the tables. Change D1–D98 to D1–D99 everywhere tests/governance
+   checks the range, including the register title, the end note, the Count
+   parenthetical, the README, the rules file, and the build plan outside
+   fenced prompts. Do not edit ranges inside fenced prompts.
+   tests/governance/test_consistency.py hard-codes the current total and the
+   current range. Make these two tests read them from the register copy:
+   a. test_count_check_fails_when_the_total_is_wrong: read the bold integer in
+      the Total register entries row (the same **N** the count check reads).
+      Replace that **N** with **90**. The expected message stays a wrong count
+      of 90, and it must not contain the current total as a literal. If the
+      current total is already 90, stop and report.
+   b. test_d_range_check_fails_when_another_range_remains: read the last
+      D-number the way the range check does. Replace the README copy's current
+      D1–Dn (the en dash the README already uses) with D1–D90. The expected
+      message must use the last number just read, in the hyphenated form the
+      check raises ("D-range is not D1-D" plus that number). It must not
+      hard-code the current last number. If that last number is already 90,
+      stop and report.
+
+Tests — tests/deps/test_staleness.py and tests/scenarios/test_scenario3_engine.py.
+Follow the APPLE/API file that tests/pipeline/test_run_well.py builds for its
+unit-choice test. Pass app_data and local_tables_directory as empty temporary
+directories. Do not change that test file, the shipped tables, or Stage 2/3
+rules. If a scenario cannot be built, stop and report which one and why.
+- Applied, question gone: record GAPI on APPLE's unit question and run_well,
+  as the unit-choice test does. The decision is in WellRun.applied. freshness
+  marks that decision CURRENT. It is not stale because the unit question is
+  no longer raised.
+- Version: stamp a run, then call freshness with versions equal to
+  versions_in_force() except one name's version string changed. Every stamped
+  stage and every answer built on the old version is STALE. Each cause
+  contains that table name, the old version, and the new version. An answer
+  is not rewritten.
+- Unchanged carried: map APPLE and record its unit choice, run_well, stamp.
+  Supersede only the unit decision with a second apply_decision on that same
+  finding, and save. Do not run_well again. The mapping decision is CURRENT.
+  The first unit decision is still in session.decisions with the same
+  disposition. Its record is STALE and the cause names both ids. The new unit
+  decision is CURRENT.
+- Scenario 3: run_well on APPLE/API with no session, so Stage 4 has run.
+  stamp_run. Keep that ValidityResult. Record GAPI on APPLE's unit question
+  and save. Do not run_well before freshness. Stage 4's record is STALE,
+  affects_export True, and the cause names the new decision id. The gaps on
+  the kept ValidityResult are the same objects (readable, not recomputed).
+  There is no separate gap decision and no STALE disposition. Stages 0 and 1
+  are CURRENT. export_permission, called with no blocking findings and these
+  records, has allowed False, and a reason contains the trigger. The function's
+  parameters are still findings and dependency_states. Then run_well again on
+  purpose and stamp that run. Stage 4's new record is CURRENT. The first
+  ValidityResult was not mutated. The unit decision is still in the session.
+- Parameters: the calls in
+  test_depth_converted_to_metres_invalidates_a_step_derived_in_feet. A step
+  derived under FT, checked against FT, is CURRENT. Checked against M, it is
+  STALE, the cause is that declaration's reason, and a stage-1 record is
+  STALE. depth_unit None returns no records.
+- Runner, not a second copy: stale_stage_numbers on a stage-4 STALE record is
+  frozenset({4}). Register a stage 4 and a stage 5 whose contract depends on
+  4, and call Runner.run with that frozenset. Both results are STALE and
+  neither stage function is called. polish/deps does not assign StageStatus.
+- Presentation: the public names are exactly the list in item 1. None of them
+  is a zoom, pan, track-order, overlay, legend, or preset operation.
+- IssueDisposition has no STALE member.
+Report in the standard format, plus: the cause string on the scenario-3
+Stage 4 record, and the export_permission signature after the change (it is
+unchanged).
 ````
 
 ### P15 — Batch decisions and scope preview (engine)
