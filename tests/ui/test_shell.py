@@ -1,0 +1,222 @@
+"""Interface shell over Stages 0-4. D71, D81, D83, D86, UXC2, UXC5, C6.
+
+Qt runs on the offscreen platform. The tests are skipped where PySide6 or
+pyqtgraph cannot be imported. Loads are synchronous so no thread is involved.
+App-data and local tables are temporary directories.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+
+pytest.importorskip("PySide6.QtWidgets")
+pytest.importorskip("pyqtgraph")
+
+from PySide6 import QtCore, QtWidgets
+
+from polish.decisions import session_path
+from polish.model.states import UserAction
+from polish_ui import wording
+from polish_ui.window import MainWindow
+
+
+def _las(
+    *,
+    curves: str = "DEPT.M : DEPTH\nGR.GAPI : GAMMA\nDT.US/FT : SONIC\n",
+    data: str = "100.0 50.0 80.0\n100.5 51.0 81.0\n101.0 -999.25 82.0\n101.5 53.0 83.0\n102.0 54.0 84.0\n",
+    strt: str = "100.0",
+    stop: str = "102.0",
+    step: str = "0.5",
+    null_line: str = "NULL. -999.25 : NULL\n",
+) -> str:
+    return (
+        "~Version\nVERS. 2.0 : VERSION\nWRAP. NO : WRAP\n~Well\n"
+        f"STRT.M {strt} : START\nSTOP.M {stop} : STOP\nSTEP.M {step} : STEP\n{null_line}"
+        f"~Curve\n{curves}~ASCII\n{data}"
+    )
+
+
+def _write(directory: Path, body: str, name: str = "well.las") -> Path:
+    path = directory / name
+    path.write_text(body, encoding="utf-8", newline="\n")
+    return path
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+
+@pytest.fixture
+def window(app, tmp_path: Path):
+    shell = MainWindow(app_data=tmp_path / "app", local_tables_directory=tmp_path / "tables", synchronous=True)
+    yield shell
+    shell.close()
+
+
+def _finding(window: MainWindow, check: str):
+    found = [item for item in window.queue.findings_shown() if item.check == check]
+    assert len(found) == 1, f"{check}: {len(found)} findings"
+    return found[0]
+
+
+def _choose(window: MainWindow, check: str, action: UserAction) -> None:
+    assert window.queue.select_finding(_finding(window, check).id)
+    index = window.queue.action_box.findData(action)
+    assert index >= 0, f"{action.value} is not offered for {check}"
+    window.queue.action_box.setCurrentIndex(index)
+
+
+def _rail(window: MainWindow) -> list[str]:
+    return [window.rail.item(row).text() for row in range(window.rail.count())]
+
+
+def test_opening_a_file_shows_the_depth_and_curve_results_and_writes_nothing(window, tmp_path: Path):
+    path = _write(tmp_path, _las())
+    before = sorted(item.name for item in tmp_path.iterdir())
+    window.open_path(path)
+    rail = _rail(window)
+    assert [text.split(": ")[1] for text in rail[:5]] == ["COMPLETE"] * 5
+    assert all(text.endswith("NOT_RUN (not built)") for text in rail[5:])
+    assert "Regularity REGULAR" in window.depth_summary.text()
+    assert "Depth unit M" in window.depth_summary.text()
+    assert window.table.rowCount() == 3
+    assert window.table.item(1, 4).text() == "GAMMA_RAY_TOTAL"
+    assert window.table.item(1, 10).text() == "Validated against rule set v1"
+    assert "No value has been altered" in window.headline.text()
+    assert sorted(item.name for item in tmp_path.iterdir()) == before
+
+
+def test_a_structural_refusal_is_a_result_in_the_rail_with_no_disposition_controls(window, tmp_path: Path):
+    body = _las(
+        strt="102.0",
+        stop="100.0",
+        step="-0.5",
+        data="102.0 54.0 84.0\n101.5 53.0 83.0\n101.0 52.0 82.0\n",
+    )
+    window.open_path(_write(tmp_path, body))
+    rail = _rail(window)
+    assert rail[1] == "1  Depth axis: REFUSED_STRUCTURAL"
+    assert rail[2] == "2  Identification: NOT_RUN"
+    assert window.headline.text().startswith("This file cannot proceed past Depth Axis.")
+    assert window.queue.select_finding(_finding(window, "step_negative").id)
+    assert window.queue.offered_actions() == []
+    assert window.queue.form.isHidden()
+    assert wording.VIEW_ONLY in window.queue.detail.toPlainText()
+
+
+def test_only_actions_the_engine_can_carry_out_are_offered(window, tmp_path: Path):
+    body = _las(curves="DEPT.M : DEPTH\nAPPLE.GAPI : FRUIT\nDT.US/FT : SONIC\n", null_line="")
+    window.open_path(_write(tmp_path, body))
+    assert window.queue.select_finding(_finding(window, "null_undeclared").id)
+    assert window.queue.offered_actions() == ["REJECT_PROPOSAL", "DEFER"]
+    assert wording.NO_OPTIONS in window.queue.detail.toPlainText()
+    assert window.queue.select_finding(_finding(window, "mnemonic_unrecognised").id)
+    assert window.queue.offered_actions() == ["MAP_EXPLICITLY", "ACKNOWLEDGE", "DEFER"]
+    assert window.queue.select_finding(_finding(window, "vers_parsed_as_2").id)
+    assert window.queue.offered_actions() == ["ACKNOWLEDGE", "DEFER"]
+    detail = window.queue.detail.toPlainText()
+    for heading in ("WHAT POLISH OBSERVED", "WHAT IT MEANS", "WHAT YOU MAY DO", "WHAT HAPPENS NEXT"):
+        assert heading in detail
+
+
+def test_an_acknowledgement_is_saved_beside_the_well_and_shown_after_the_rerun(window, tmp_path: Path):
+    path = _write(tmp_path, _las())
+    window.open_path(path)
+    finding = _finding(window, "vers_parsed_as_2")
+    _choose(window, "vers_parsed_as_2", UserAction.ACKNOWLEDGE)
+    assert not session_path(path).exists()
+    window.queue.record_button.click()
+    assert session_path(path).is_file()
+    assert not (tmp_path / "app").exists()
+    assert window.queue.select_finding(finding.id)
+    assert window.queue.tree.currentItem().text(0).startswith("[ACCEPTED]")
+
+
+def test_a_deferral_without_a_reason_is_refused_inline_and_nothing_is_saved(window, tmp_path: Path):
+    path = _write(tmp_path, _las())
+    window.open_path(path)
+    _choose(window, "vers_parsed_as_2", UserAction.DEFER)
+    window.queue.record_button.click()
+    assert "requires a reason" in window.queue.message.text()
+    assert not session_path(path).exists()
+
+
+def test_mapping_a_curve_goes_through_the_engine_and_is_labelled_user_mapped(window, tmp_path: Path):
+    body = _las(curves="DEPT.M : DEPTH\nAPPLE.GAPI : FRUIT\nDT.US/FT : SONIC\n")
+    path = _write(tmp_path, body)
+    window.open_path(path)
+    assert window.table.item(1, 4).text() == ""
+    assert window.table.item(1, 10).text() == "Not automatically validated"
+    _choose(window, "mnemonic_unrecognised", UserAction.MAP_EXPLICITLY)
+    window.queue.family_box.setCurrentText("GAMMA_RAY_TOTAL")
+    window.queue.reason_edit.setText("behaves as gamma ray")
+    window.queue.record_button.click()
+    assert window.queue.message.text() == ""
+    assert session_path(path).is_file()
+    assert window.table.item(1, 2).text() == "APPLE"
+    assert window.table.item(1, 4).text() == "GAMMA_RAY_TOTAL"
+    assert "User-mapped — not identified by POLISH" in window.table.item(1, 6).text()
+    assert window.table.item(1, 10).text() == "Validated against rule set v1"
+
+
+def test_tracks_follow_the_ticked_curves_and_hover_reads_an_actual_sample(window, tmp_path: Path):
+    window.open_path(_write(tmp_path, _las()))
+    assert window.selected_columns() == [1, 2]
+    assert [column for _plot, column in window._plots] == [1, 2]
+    between = window.readout_text(1, 100.3)
+    assert between.startswith("Sample 1 · depth 100.5 M · GR 51 GAPI · MEASURED")
+    absent = window.readout_text(1, 101.02)
+    assert "Sample 2" in absent and "GR no value" in absent and "ABSENT" in absent
+    window.table.item(2, 0).setCheckState(QtCore.Qt.CheckState.Unchecked)
+    assert [column for _plot, column in window._plots] == [1]
+
+
+def test_presentation_actions_call_no_engine_function(window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    window.open_path(_write(tmp_path, _las()))
+    calls: list[str] = []
+    monkeypatch.setattr("polish_ui.window.load_well", lambda *a, **k: calls.append("load_well"))
+    monkeypatch.setattr("polish_ui.window.record_decision", lambda *a, **k: calls.append("record_decision"))
+    window.set_queue_visible(False)
+    window.set_queue_visible(True)
+    window.table.item(1, 0).setCheckState(QtCore.Qt.CheckState.Unchecked)
+    window.table.item(1, 0).setCheckState(QtCore.Qt.CheckState.Checked)
+    window.queue.select_finding(_finding(window, "vers_parsed_as_2").id)
+    window.readout_text(2, 101.0)
+    assert calls == []
+
+
+def test_hiding_the_queue_leaves_the_depth_view_geometry_identical(window, app, tmp_path: Path):
+    window.open_path(_write(tmp_path, _las()))
+    window.show()
+    app.processEvents()
+    before = window.tracks.geometry()
+    width = window.queue_region.width()
+    window.set_queue_visible(False)
+    app.processEvents()
+    assert window.tracks.geometry() == before
+    assert window.queue_region.width() == width
+    window.set_queue_visible(True)
+    app.processEvents()
+    assert window.tracks.geometry() == before
+
+
+def test_opening_a_second_file_carries_nothing_over(window, tmp_path: Path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    window.open_path(_write(first, _las(null_line="")))
+    assert any(item.check == "null_undeclared" for item in window.queue.findings_shown())
+    body = _las(curves="DEPT.M : DEPTH\nGR.GAPI : GAMMA\n", data="100.0 50.0\n100.5 51.0\n101.0 52.0\n", stop="101.0")
+    window.open_path(_write(second, body))
+    assert window.table.rowCount() == 2
+    assert all(item.check != "null_undeclared" for item in window.queue.findings_shown())
+    assert [column for _plot, column in window._plots] == [1]
+    assert not session_path(first / "well.las").exists()
+    assert not session_path(second / "well.las").exists()

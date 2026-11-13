@@ -9,3 +9,8 @@ scipy>=1.7.0
 scikit-learn>=1.0.0
 pywavelets>=1.1.0
 psutil>=5.8.0
+
+# Interface shell (polish_ui/). polish/ does not import these. Toolkit chosen
+# by the owner on 12 Nov 2026 from the P04 measurements (OD-07). PySide6 is LGPL.
+PySide6>=6.6
+pyqtgraph>=0.13
