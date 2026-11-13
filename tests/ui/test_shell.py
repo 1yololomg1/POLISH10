@@ -22,6 +22,7 @@ from PySide6 import QtCore, QtWidgets
 from polish.decisions import session_path
 from polish.model.states import UserAction
 from polish_ui import wording
+from polish_ui.loading import load_well
 from polish_ui.window import MainWindow
 
 
@@ -285,3 +286,26 @@ def test_identified_curves_are_ticked_first_in_the_expert_order(window, tmp_path
     assert families[5] == "NEUTRON_POROSITY" and families[6] == "SONIC_COMPRESSIONAL"
     assert window.selected_columns() == [3, 4, 5, 6]
     assert set(_pen_colours(window).values()) == {"#008000", "#FF0000", "#0000FF", "#800080"}
+
+
+def test_a_file_the_engine_cannot_handle_is_reported_not_hung(window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # A real case from 13 Nov 2026: a web server error page saved as .las. Stage 0
+    # let lasio's KeyError escape, and the window waited on "Running" forever.
+    page = (
+        '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n<html><head>\n'
+        "<title>502 Proxy Error</title>\n</head><body>\n<h1>Proxy Error</h1>\n"
+        "</body></html>\n"
+    )
+    path = _write(tmp_path, page, name="download.las")
+    result = load_well(path, app_data=tmp_path / "app", local_tables_directory=tmp_path / "tables")
+    assert result.run is None and result.error is not None
+
+    def engine_fault(*_args, **_kwargs):
+        raise KeyError("No ~ sections found. Is this a LAS file?")
+
+    monkeypatch.setattr("polish_ui.loading.run_well", engine_fault)
+    window.open_path(path)
+    assert window.headline.text().startswith("Not read.")
+    assert "Unexpected error while reading, KeyError" in window.headline.text()
+    assert window.table.rowCount() == 0
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["download.las"]

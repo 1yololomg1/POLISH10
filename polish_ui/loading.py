@@ -55,6 +55,19 @@ def load_well(
         return LoadResult(file_path, None, str(exc), exc.partial, None)
     except (OSError, ValueError, TypeError) as exc:
         return LoadResult(file_path, None, None, None, f"{type(exc).__name__}: {exc}")
+    except Exception as exc:  # noqa: BLE001 - the window must report, never hang
+        # Anything else the engine lets escape. On 13 Nov 2026 an HTML error page
+        # saved as .las raised KeyError from lasio in Stage 0's second pass; left
+        # uncaught it killed the load thread and the window sat on "Running"
+        # forever. The engine should classify such a file itself (Stage 0); until
+        # it does, the window says plainly that the file was not read and why.
+        return LoadResult(
+            file_path,
+            None,
+            None,
+            None,
+            f"Unexpected error while reading, {type(exc).__name__}: {exc}",
+        )
     return LoadResult(file_path, run, None, None, None)
 
 
