@@ -220,3 +220,45 @@ def test_opening_a_second_file_carries_nothing_over(window, tmp_path: Path):
     assert [column for _plot, column in window._plots] == [1]
     assert not session_path(first / "well.las").exists()
     assert not session_path(second / "well.las").exists()
+
+
+def _pen_colours(window) -> dict[int, str]:
+    return {
+        column: plot.listDataItems()[0].opts["pen"].color().name().upper()
+        for plot, column in window._plots
+    }
+
+
+def test_each_curve_is_drawn_in_its_family_colour(window, tmp_path: Path):
+    body = _las(
+        curves="DEPT.M : DEPTH\nGR.GAPI : GAMMA\nDT.US/FT : SONIC\nZZQ.M : UNKNOWN\n",
+        data="100.0 50.0 80.0 1.0\n100.5 51.0 81.0 2.0\n101.0 52.0 82.0 3.0\n",
+        stop="101.0",
+    )
+    window.open_path(_write(tmp_path, body))
+    assert window.table.item(1, 4).text() == "GAMMA_RAY_TOTAL"
+    assert window.table.item(2, 4).text() == "SONIC_COMPRESSIONAL"
+    assert window.table.item(3, 4).text() == ""
+    assert _pen_colours(window) == {1: "#008000", 2: "#800080", 3: "#000000"}
+    assert window.tracks.backgroundBrush().color().name().upper() == "#FFFFFF"
+
+
+def test_every_shipped_family_has_a_colour():
+    from polish.tables.loader import load_shipped_tables
+    from polish_ui.curve_colours import FAMILY_COLOURS
+
+    shipped = {family.id for family in load_shipped_tables().families}
+    assert shipped == set(FAMILY_COLOURS)
+
+
+def test_track_axes_show_values_as_written(window, tmp_path: Path):
+    body = _las(
+        curves="DEPT.M : DEPTH\nNPHI.V/V : NEUTRON\n",
+        data="100.0 0.21\n100.5 0.35\n101.0 0.52\n",
+        stop="101.0",
+    )
+    window.open_path(_write(tmp_path, body))
+    plot, _column = window._plots[0]
+    for side in ("left", "bottom"):
+        assert plot.getAxis(side).autoSIPrefix is False
+        assert plot.getAxis(side).autoSIPrefixScale == 1.0

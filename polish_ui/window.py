@@ -24,6 +24,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from polish.model.states import BlockType, StageStatus, UserAction
 from polish.render import annotate, hit_test
 from polish_ui import wording
+from polish_ui.curve_colours import curve_colour
 from polish_ui.loading import LoadResult, SessionNotWritten, load_well, record_decision
 from polish_ui.queue_panel import QueuePanel
 
@@ -45,6 +46,8 @@ MAX_TRACKS = 6
 _DEFAULT_TRACKS = 4
 _TITLE_CHARS = 18
 _TRACK_WIDTH = 160
+_CURVE_WIDTH = 1.5
+_AXIS_COLOUR = "#000000"
 _RAIL_WIDTH = 210
 _QUEUE_WIDTH = 440
 _COLUMNS = (
@@ -131,6 +134,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.setFixedHeight(230)
         self.table.itemChanged.connect(self._track_selection_changed)
         self.tracks = pyqtgraph.GraphicsLayoutWidget()
+        # White, like log paper: some family colours are black (caliper, depth,
+        # and any curve with no family), which a black background would hide.
+        self.tracks.setBackground("w")
         self.tracks.scene().sigMouseMoved.connect(self._hover)
         self.readout = QtWidgets.QLabel("Move the pointer over a track to read the nearest actual sample.")
         self.readout.setFixedHeight(40)
@@ -341,21 +347,42 @@ class MainWindow(QtWidgets.QMainWindow):
             # A long mnemonic is shortened in the track title only, so every
             # track keeps the same width. The table row carries it in full.
             short = name if len(name) <= _TITLE_CHARS else name[: _TITLE_CHARS - 1] + "…"
-            plot.setTitle(short, size="9pt")
+            colour = curve_colour(self._family_of(column))
+            plot.setTitle(short, size="9pt", color=colour)
             plot.titleLabel.setToolTip(f"{name} ({unit})")
-            plot.setLabel("bottom", unit)
+            for side in ("left", "bottom"):
+                plot.getAxis(side).setPen(_AXIS_COLOUR)
+                plot.getAxis(side).setTextPen(_AXIS_COLOUR)
+                # Show values as written: no automatic rescaling (porosity
+                # 0.2-0.6 must not read as 200-600 "x0.001").
+                plot.getAxis(side).enableAutoSIPrefix(False)
+            plot.setLabel("bottom", unit, color=_AXIS_COLOUR)
             plot.invertY(True)
             plot.showGrid(x=True, y=True, alpha=0.2)
-            plot.plot(numpy.asarray(curve.values), numpy.asarray(depths), connect="finite")
+            plot.plot(
+                numpy.asarray(curve.values),
+                numpy.asarray(depths),
+                connect="finite",
+                pen=pyqtgraph.mkPen(colour, width=_CURVE_WIDTH),
+            )
             if first is None:
                 first = plot
-                plot.setLabel("left", f"Depth ({dataset.grid.unit if dataset.grid.unit else 'no unit'})")
+                depth_unit = dataset.grid.unit if dataset.grid.unit else "no unit"
+                plot.setLabel("left", f"Depth ({depth_unit})", color=_AXIS_COLOUR)
             else:
                 plot.setYLink(first)
                 plot.getAxis("left").setStyle(showValues=False)
             self.tracks.ci.layout.setColumnStretchFactor(position, 1)
             self.tracks.ci.layout.setColumnPreferredWidth(position, _TRACK_WIDTH)
             self._plots.append((plot, column))
+
+    def _family_of(self, column: int) -> str | None:
+        """Stage 2's family for ``column``, or None when Stage 2 gave none."""
+
+        run = None if self._result is None else self._result.run
+        if run is None or run.identification is None:
+            return None
+        return run.identification.curves[column].family_id
 
     def _hover(self, position: object) -> None:
         for plot, column in self._plots:
