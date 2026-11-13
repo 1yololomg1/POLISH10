@@ -44,6 +44,15 @@ STAGES = (
 _BUILT_THROUGH = 4
 MAX_TRACKS = 6
 _DEFAULT_TRACKS = 4
+# Build plan P20 item 1 (domain expert, 14 Sept). Sw has no family yet.
+_PREFERRED_FAMILIES = (
+    "SONIC_COMPRESSIONAL",
+    "SONIC_SHEAR",
+    "BULK_DENSITY",
+    "NEUTRON_POROSITY",
+    "GAMMA_RAY_TOTAL",
+    "RESISTIVITY_DEEP",
+)
 _TITLE_CHARS = 18
 _TRACK_WIDTH = 160
 _CURVE_WIDTH = 1.5
@@ -80,6 +89,34 @@ class LoadWorker(QtCore.QThread):
         """Thread body."""
 
         self.loaded.emit(load_well(self._path, app_data=self._app_data, local_tables_directory=self._tables))
+
+
+def _default_tracks(run: object, columns: list[int]) -> set[int]:
+    """The curve columns ticked when a file opens, at most _DEFAULT_TRACKS.
+
+    Identified curves come first, in the domain expert's track order (build plan
+    P20 item 1, 14 Sept: compressional sonic, shear sonic, density, porosity, Sw,
+    GR, deep resistivity; matched by family, never by mnemonic), then any other
+    curve with a family in column order, then curves with no family. The index
+    column (0) is never a track. Presentation only: nothing is run or saved."""
+
+    identification = getattr(run, "identification", None)
+
+    def family(column: int) -> str | None:
+        if identification is None:
+            return None
+        return identification.curves[column].family_id
+
+    candidates = [column for column in columns if column != 0]
+    preferred = [
+        column
+        for wanted in _PREFERRED_FAMILIES
+        for column in candidates
+        if family(column) == wanted
+    ]
+    other_families = [c for c in candidates if family(c) is not None and c not in preferred]
+    no_family = [c for c in candidates if family(c) is None]
+    return set((preferred + other_families + no_family)[:_DEFAULT_TRACKS])
 
 
 def _reserved(text: str) -> QtWidgets.QLabel:
@@ -280,7 +317,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             rows = []
         has_data = run is not None and run.ingest.dataset is not None
-        shown = 0
+        ticked = _default_tracks(run, [column for column, _mnemonic, _unit in rows]) if has_data else set()
         for column, mnemonic, unit in rows:
             identified = None if run is None or run.identification is None else run.identification.curves[column]
             interpreted = None if run is None or run.units is None else run.units.curves[column]
@@ -307,8 +344,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 item = QtWidgets.QTableWidgetItem(text)
                 if position == 0 and has_data and column != 0:
                     item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-                    checked = shown < _DEFAULT_TRACKS
-                    shown += 1 if checked else 0
+                    checked = column in ticked
                     item.setCheckState(QtCore.Qt.CheckState.Checked if checked else QtCore.Qt.CheckState.Unchecked)
                 self.table.setItem(row, position, item)
         self.table.resizeColumnsToContents()
@@ -347,9 +383,11 @@ class MainWindow(QtWidgets.QMainWindow):
             # A long mnemonic is shortened in the track title only, so every
             # track keeps the same width. The table row carries it in full.
             short = name if len(name) <= _TITLE_CHARS else name[: _TITLE_CHARS - 1] + "…"
-            colour = curve_colour(self._family_of(column))
+            family = self._family_of(column)
+            colour = curve_colour(family)
             plot.setTitle(short, size="9pt", color=colour)
-            plot.titleLabel.setToolTip(f"{name} ({unit})")
+            what = family if family is not None else "no family: drawn grey"
+            plot.titleLabel.setToolTip(f"{name} ({unit}) · {what}")
             for side in ("left", "bottom"):
                 plot.getAxis(side).setPen(_AXIS_COLOUR)
                 plot.getAxis(side).setTextPen(_AXIS_COLOUR)

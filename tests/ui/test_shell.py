@@ -239,7 +239,7 @@ def test_each_curve_is_drawn_in_its_family_colour(window, tmp_path: Path):
     assert window.table.item(1, 4).text() == "GAMMA_RAY_TOTAL"
     assert window.table.item(2, 4).text() == "SONIC_COMPRESSIONAL"
     assert window.table.item(3, 4).text() == ""
-    assert _pen_colours(window) == {1: "#008000", 2: "#800080", 3: "#000000"}
+    assert _pen_colours(window) == {1: "#008000", 2: "#800080", 3: "#808080"}
     assert window.tracks.backgroundBrush().color().name().upper() == "#FFFFFF"
 
 
@@ -262,3 +262,26 @@ def test_track_axes_show_values_as_written(window, tmp_path: Path):
     for side in ("left", "bottom"):
         assert plot.getAxis(side).autoSIPrefix is False
         assert plot.getAxis(side).autoSIPrefixScale == 1.0
+
+
+def test_identified_curves_are_ticked_first_in_the_expert_order(window, tmp_path: Path):
+    # Unidentified and caliper curves come first in the file; the default tracks
+    # are still sonic, density, porosity and gamma ray (build plan P20 item 1).
+    body = _las(
+        curves=(
+            "DEPT.M : DEPTH\nZZQ.M : UNKNOWN\nCALI.IN : CALIPER\nGR.GAPI : GAMMA\n"
+            "RHOB.G/CM3 : DENSITY\nNPHI.V/V : NEUTRON\nDT.US/FT : SONIC\n"
+        ),
+        data=(
+            "100.0 1.0 8.5 50.0 2.30 0.25 80.0\n"
+            "100.5 2.0 8.6 51.0 2.31 0.26 81.0\n"
+            "101.0 3.0 8.7 52.0 2.32 0.27 82.0\n"
+        ),
+        stop="101.0",
+    )
+    window.open_path(_write(tmp_path, body))
+    families = {row: window.table.item(row, 4).text() for row in range(window.table.rowCount())}
+    assert families[3] == "GAMMA_RAY_TOTAL" and families[4] == "BULK_DENSITY"
+    assert families[5] == "NEUTRON_POROSITY" and families[6] == "SONIC_COMPRESSIONAL"
+    assert window.selected_columns() == [3, 4, 5, 6]
+    assert set(_pen_colours(window).values()) == {"#008000", "#FF0000", "#0000FF", "#800080"}

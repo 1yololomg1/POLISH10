@@ -10,16 +10,19 @@ green, bulk density red, neutron porosity blue, resistivity red.
 ``legacy_fields_not_carried`` list): colour is presentation, so it lives here,
 in the interface package, and the engine never reads it.
 
-A curve with no family is drawn in the legacy default, black (``CurveInfo``
-default in the same file). Provenance and validity must never be shown by
-colour alone (D73); nothing here does that.
+A curve with no family is drawn mid grey. The legacy default was black
+(``CurveInfo`` in the same file), but caliper and depth are designated black,
+so a black unidentified curve could not be told from a caliper (owner's report,
+13 Nov 2026: tracks "look not colored"). Grey says "no designated colour".
+Provenance and validity must never be shown by colour alone (D73); nothing
+here does that.
 """
 
 from __future__ import annotations
 
 SOURCE = "core/curve_identification.py industry_color (legacy LAS Visualizer table)"
 
-NO_FAMILY_COLOUR = "#000000"
+NO_FAMILY_COLOUR = "#808080"
 
 FAMILY_COLOURS: dict[str, str] = {
     "RESISTIVITY_DEEP": "#FF0000",
@@ -59,7 +62,7 @@ FAMILY_COLOURS: dict[str, str] = {
 
 
 def curve_colour(family_id: str | None) -> str:
-    """The colour a curve is drawn in: its family's colour, or black when it has no
+    """The colour a curve is drawn in: its family's colour, or grey when it has no
     family or a family this table does not list. D72."""
 
     if family_id is None:
