@@ -7,7 +7,8 @@ WellRun
 run_well
     Read the file and the session. Write nothing.
 
-Answers are applied in dependency order. A mapping is matched against the
+Answers are applied in dependency order. A depth-unit choice is matched against the Stage 1 run with no answers.
+A mapping is matched against the
 run that asks the unrecognised-name notice or the incompatible-unit warning.
 A pass choice is matched against identification after those mappings. A unit
 choice is matched against interpretation after the mappings and the pass
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from polish.decisions.apply import explicit_mappings, pass_choices, unit_choices
+from polish.decisions.apply import depth_unit_choices, explicit_mappings, pass_choices, unit_choices
 from polish.decisions.session import SessionLoad, load_session
 from polish.model.findings import DecisionRecord, FindingRecord
 from polish.model.states import StageStatus
@@ -43,7 +44,8 @@ class WellRun:
     that stage did not run. ``findings`` is the question set: the findings
     the final stages raised, plus each applied answer's question as it was
     asked when that question is no longer raised. ``applied`` are the
-    decisions a stage used, in order: mappings, pass choices, unit choices.
+    decisions a stage used, in order: depth-unit choices, mappings, pass
+    choices, unit choices.
     ``reasked`` are decisions a stage used whose question is raised again.
     ``session_load`` is the load of that question set. This run does not
     answer the changed-file question.
@@ -95,7 +97,8 @@ def run_well(
     Does not write a session file, a table, or a folder. Does not answer the
     changed-file question. A stage runs only when the stage before it is
     COMPLETE. Answers are applied only when the session is not on hold, and
-    only from the run that raises that kind of question.
+    only from the run that raises that kind of question. A depth-unit choice
+    is read against Stage 1 with no answers, then applied before later stages.
 
     Parameters
     ----------
@@ -136,14 +139,24 @@ def run_well(
     restored: tuple[FindingRecord, ...] = ()
     if ingested.status is StageStatus.COMPLETE and ingested.dataset is not None:
         depth = classify(ingested)
+        depth_load = load_session(file_path, _collect(ingested, depth), app_data=app_data)
+        if not depth_load.session.hold:
+            choices = depth_unit_choices(depth_load.session)
+            if choices:
+                depth = classify(ingested, depth_unit_choices=choices)
+        depth_applied, depth_reasked, depth_restored = _depth_used(depth, depth_load)
+        applied, reasked, restored = depth_applied, depth_reasked, depth_restored
         if depth.status is StageStatus.COMPLETE:
-            identification, units, validity, applied, reasked, restored = _with_answers(
+            identification, units, validity, later_applied, later_reasked, later_restored = _with_answers(
                 file_path,
                 ingested,
                 depth,
                 local_tables_directory,
                 app_data,
             )
+            applied = depth_applied + later_applied
+            reasked = depth_reasked + later_reasked
+            restored = depth_restored + later_restored
     findings = _question_set((ingested, depth, identification, units, validity), restored)
     session_load = load_session(file_path, findings, app_data=app_data)
     return WellRun(
@@ -233,6 +246,20 @@ def _with_answers(
         units_load,
     )
     return chosen, interpreted, validity, applied, reasked, restored
+
+
+def _depth_used(
+    depth: DepthAxisResult | None,
+    load: SessionLoad | None,
+) -> tuple[tuple[DecisionRecord, ...], tuple[DecisionRecord, ...], tuple[FindingRecord, ...]]:
+    """The Stage 1 depth-unit answer this run used, if its question was consumed. D98."""
+
+    if depth is None or load is None or depth.depth_unit_decision_id is None:
+        return (), (), ()
+    record, finding = _answer(load, depth.depth_unit_decision_id)
+    if any(item.id == finding.id for item in depth.findings):
+        return (), (record,), ()
+    return (record,), (), (finding,)
 
 
 def _used(

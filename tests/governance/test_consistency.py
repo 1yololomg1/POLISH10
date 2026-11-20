@@ -536,18 +536,32 @@ def test_continuity_check_fails_when_a_row_is_repeated(tmp_path: Path) -> None:
 
 def test_count_check_fails_when_the_total_is_wrong(tmp_path: Path) -> None:
     register = _copy(tmp_path, "docs/governing/POLISH_decision_register.md")
-    _rewrite(register, _read(register).replace("**Total register entries** | **98**", "**Total register entries** | **90**", 1))
+    text = _read(register)
+    total_row = _labelled_row(_section(text, "## Count"), "Total register entries")
+    assert total_row is not None
+    bold = re.search(r"\*\*(\d+)\*\*", total_row[1])
+    assert bold is not None
+    current = bold.group(1)
+    assert current != "90"
+    rewritten = text.replace(f"**Total register entries** | **{current}**", "**Total register entries** | **90**", 1)
+    _rewrite(register, rewritten)
     with pytest.raises(AssertionError, match=r"Total register entries: count 90 is not the kept-row total"):
         check_count_section(tmp_path)
 
 
 def test_d_range_check_fails_when_another_range_remains(tmp_path: Path) -> None:
-    _copy(tmp_path, "docs/governing/POLISH_decision_register.md")
+    register = _copy(tmp_path, "docs/governing/POLISH_decision_register.md")
     _copy(tmp_path, "docs/governing/POLISH_build_plan.md")
     _copy(tmp_path, ".cursor/rules/polish-rebuild.mdc")
     readme = _copy(tmp_path, "docs/governing/README.md")
-    _rewrite(readme, _read(readme).replace("D1\u2013D98", "D1\u2013D90", 1))
-    with pytest.raises(AssertionError, match=r"README\.md: D1.D90: D-range is not D1-D98"):
+    rows = _decision_rows(_read(register), register)
+    last = max(int(re.fullmatch(r"D(\d+)[a-z]?", cells[0]).group(1)) for cells in rows)
+    assert last != 90
+    current = f"D1\u2013D{last}"
+    readme_text = _read(readme)
+    assert current in readme_text
+    _rewrite(readme, readme_text.replace(current, "D1\u2013D90", 1))
+    with pytest.raises(AssertionError, match=rf"README\.md: D1.D90: D-range is not D1-D{last}"):
         check_d_range(tmp_path)
 
 

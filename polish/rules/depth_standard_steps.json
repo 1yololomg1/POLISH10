@@ -1,15 +1,49 @@
 {
   "id": "depth.standard_steps",
   "feet": {
-    "unit_aliases": ["FT", "FEET"],
+    "canonical": "FT",
+    "spellings": [
+      {
+        "text": "FT",
+        "source": "LAS 2.0 section 5.4 (CWLS, February 2017): if the index is depth, the units must be M (metres), F (feet) or FT (feet).",
+        "source_tier": "CITED"
+      },
+      {
+        "text": "F",
+        "source": "LAS 2.0 section 5.4 (CWLS, February 2017): if the index is depth, the units must be M (metres), F (feet) or FT (feet).",
+        "source_tier": "CITED"
+      },
+      {
+        "text": "FEET",
+        "source": "Harvested from core/curve_identification.py build_mnemonic_database DEPTH units and from _sync_depth_spacing_default at commit dc0bd5d.",
+        "source_tier": "CITED"
+      }
+    ],
     "steps": ["0.02", "0.1", "0.25", "0.5", "1.0", "2.0"],
     "primary": "0.5"
   },
   "metres": {
-    "unit_aliases": ["M", "METER", "METERS"],
+    "canonical": "M",
+    "spellings": [
+      {
+        "text": "M",
+        "source": "LAS 2.0 section 5.4 (CWLS, February 2017): if the index is depth, the units must be M (metres), F (feet) or FT (feet).",
+        "source_tier": "CITED"
+      },
+      {
+        "text": "METER",
+        "source": "Harvested from core/curve_identification.py build_mnemonic_database DEPTH units.",
+        "source_tier": "CITED"
+      },
+      {
+        "text": "METERS",
+        "source": "Harvested from core/curve_identification.py build_mnemonic_database DEPTH units.",
+        "source_tier": "CITED"
+      }
+    ],
     "steps": ["0.006096", "0.03048", "0.0762", "0.1524", "0.3048", "0.6096", "0.1", "0.25", "0.5", "1.0"],
     "primary": "0.1524"
   },
-  "source": "Domain expert, 30 Sept 2026 and 1 Oct 2026. Foot steps times 0.3048, rounded to 6 places, plus native metric 0.1, 0.25, 0.5, 1.0. Primary defaults stated for P09: FT 0.5, M 0.1524. Unit aliases harvested from core/curve_identification.py DEPTH units and from _sync_depth_spacing_default at commit dc0bd5d (FT, FEET). That function's metre branch sets 0.1; the primary metre step in this entry is the 0.1524 stated for P09.",
+  "source": "Domain expert, 30 Sept 2026 and 1 Oct 2026. Foot steps times 0.3048, rounded to 6 places, plus native metric 0.1, 0.25, 0.5, 1.0. Primary defaults stated for P09: FT 0.5, M 0.1524. The step numbers are this entry's source. Each depth-unit spelling carries its own source on the spelling.",
   "source_tier": "DAD"
 }

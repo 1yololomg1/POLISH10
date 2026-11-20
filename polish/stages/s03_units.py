@@ -29,7 +29,10 @@ declare_depth_conversion
 registered_stage
     The same interpretation behind the stage runner.
 
-Conversions are loaded from polish/tables/unit_spellings.json. The factors
+Depth-index spellings (M, F, FT, and the harvested feet and metre names) are
+read from polish/rules/depth_standard_steps.json, the same list Stage 1 uses.
+Other spellings, and the conversion factors, are loaded from
+polish/tables/unit_spellings.json. The factors
 were harvested from core/unit_standardization.py
 UnitStandardizer.unit_conversions. Three of those rows were not copied:
 conductivity to resistivity (a reciprocal), API gravity to kg/m3, and SG
@@ -62,6 +65,7 @@ from polish.model.states import (
     UserAction,
     permitted_actions,
 )
+from polish.model.depth_units import depth_unit_spellings
 from polish.model.unit_choice import UnitChoice
 from polish.stages.contract import StageContract, StageGuarantees, StageRequires
 from polish.stages.runner import RegisteredStage, RunContext, StageOutcome
@@ -246,6 +250,19 @@ def _resolve(
         return state, None, ()
     if declared is None:
         return UnitInterpretation.ABSENT, None, ()
+    if family is not None and family.id == "DEPTH":
+        spelling = depth_unit_spellings().match(declared)
+        if spelling is not None:
+            chosen = SpellingRecord(
+                spelling=spelling.text,
+                canonical_unit=spelling.canonical,
+                dimension="length",
+                source=spelling.source,
+                source_tier=spelling.source_tier,
+            )
+            if chosen.dimension in family.accepted_dimensions:
+                return UnitInterpretation.RECOGNISED, chosen, ()
+            return UnitInterpretation.INCOMPATIBLE_WITH_FAMILY, chosen, ()
     matches = spellings.meanings(declared)
     if len(matches) == 0:
         return UnitInterpretation.UNRECOGNISED, None, ()
@@ -730,6 +747,11 @@ def require_unit(view: ValuesView, reference_unit: str) -> ValuesView:
 
 
 def _canonical_length(unit: str, spellings: UnitSpellings) -> str:
+    """The canonical length unit. Feet and metres come from the depth-index list. D12, C4."""
+
+    spelling = depth_unit_spellings().match(unit)
+    if spelling is not None:
+        return spelling.canonical
     matches = tuple(match for match in spellings.meanings(unit) if match.dimension == "length")
     if len(matches) == 1:
         return matches[0].canonical_unit

@@ -178,7 +178,15 @@ class EvidenceSchema:
 # identification evidence. A finding may omit a key; it may not add one
 # that is not listed.
 _STAGE1_EVIDENCE_KEYS = frozenset(
-    {"declared", "observed", "difference", "difference_in_step_intervals"}
+    {
+        "declared",
+        "observed",
+        "difference",
+        "difference_in_step_intervals",
+        "compared_quantity",
+        "compared_value",
+        "options",
+    }
 )
 _STAGE1_EVIDENCE_BLOCKS = frozenset(
     {

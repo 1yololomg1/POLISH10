@@ -1,8 +1,12 @@
 """Stage 1: classify the depth axis. It does not rewrite samples.
 
-Implements D3 (F14, then ascending only), D8, D9 (record the alias, do not
-copy the curve), D28, F10, D67 (record STEP 0, do not enforce it), D86, D88
-as revised to ascending only, D89, C4, and contracts section 4 item 5.
+Implements D3 (ascending only; a bottom-up log is refused with the reason),
+D8, D9 (record the alias, do not copy the curve), D12 (implied interval from
+the first and last depths in the data; header STRT and STOP are judged by the
+endpoint check; grid measured from the first depth), D28, F10, D67 (record
+STEP 0, do not invent a step for an uneven grid), D86, D99 (a recorded
+depth-unit choice), D88 as revised to ascending only, D89, C4, and contracts
+section 4 item 5.
 
 Structure
 ---------
@@ -13,9 +17,10 @@ depth_index_mnemonics
 DerivedQuantity
     A number stored with the unit it was derived under. C4.
 classify
-    Read an ingest result and return a DepthAxisResult.
+    Read an ingest result and return a DepthAxisResult. A depth-unit
+    choice is applied only when the caller passes it. D86.
 registered_stage
-    The same classification behind the stage runner.
+    The same classification behind the stage runner, with no choice.
 
 Direction is stamped ASCENDING on an accepted result. DESCENDING is never
 stamped. Depths are not reversed, re-sorted, or replaced. A corrected step
@@ -24,15 +29,19 @@ onto the samples. Stages 0–4 cannot alter data (D24).
 
 Irregular-but-ascending grids are accepted (D67, the revised D88). A declared
 STEP that the samples do not meet is INFORMATIONAL, not a structural failure.
-The build plan says the same (P09 item 4, grid-inconsistent bullet).
+The allowance is one unit of each depth's own last written decimal, and never
+more than half the step (D12). The grid is measured from the first depth.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from polish.model.dataset import DepthDirection, DepthRegularity
+from polish.model.depth_unit_choice import DepthUnitChoice
+from polish.model.depth_units import depth_unit_spellings
 from polish.model.findings import Evidence, FindingRecord, finding_key
 from polish.model.ids import CurveRef, DatasetId
 from polish.model.states import BlockType, StageStatus
@@ -136,6 +145,7 @@ class DepthAxisResult:
     alias: DepthAlias | None
     primary_standard_step: DerivedQuantity | None
     depth_unit: str | None
+    depth_unit_decision_id: str | None
 
 
 CONTRACT = StageContract(
@@ -153,7 +163,8 @@ CONTRACT = StageContract(
     ),
     declines_when=(
         "The first curve is not a plausible depth index.",
-        "Depths decrease, repeat, or the header STEP is negative.",
+        "Depths decrease somewhere, repeat, or the header STEP is negative while the depths increase.",
+        "The log is recorded bottom-up. Valid LAS; POLISH supports increasing depth only.",
         "STRT or STOP disagrees with the first or last depth by more than one sample interval.",
     ),
     depends_on_stages=(0,),
@@ -185,12 +196,15 @@ _STAGE1_CHECKS: tuple[tuple[str, BlockType], ...] = (
     ("depth_token_not_decimal", BlockType.STRUCTURAL_DATA_FAILURE),
     ("depth_duplicate", BlockType.STRUCTURAL_DATA_FAILURE),
     ("depth_decreases", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_bottom_up", BlockType.STRUCTURAL_DATA_FAILURE),
     ("step_negative", BlockType.STRUCTURAL_DATA_FAILURE),
     ("depth_unit_unrecognised", BlockType.AMBIGUOUS_INTERPRETATION),
     ("step_zero", BlockType.INFORMATIONAL),
     ("step_blank_regular", BlockType.INFORMATIONAL),
     ("step_blank_irregular", BlockType.INFORMATIONAL),
     ("strt_blank", BlockType.INFORMATIONAL),
+    ("strt_not_a_number", BlockType.INFORMATIONAL),
+    ("depth_exponential", BlockType.INFORMATIONAL),
     ("grid_off_declared_step", BlockType.INFORMATIONAL),
     ("step_corrected", BlockType.INFORMATIONAL),
     ("step_not_standard", BlockType.INFORMATIONAL),
@@ -245,17 +259,49 @@ class _Ledger:
         )
 
 
-def classify(ingest: IngestResult) -> DepthAxisResult:
+def classify(
+    ingest: IngestResult,
+    depth_unit_choices: tuple[DepthUnitChoice, ...] = (),
+) -> DepthAxisResult:
     """Classify the depth axis of one Stage 0 result.
 
-    Implements D3, D8, D9, D28, F10, D67, D86, D88 (ascending only), D89, D96, C4.
-    Does not reverse, re-sort, or copy a curve. Does not open the network.
+    Implements D3, D8, D9, D12, D28, F10, D67, D86, D88 (ascending only), D89, D96, D99, C4.
+    ``depth_unit_choices`` are applied only because the caller passed them (D99).
+    One choice, of a spelling the depth-unit question lists, supplies the unit
+    for the standard steps and the endpoint checks. The question is not raised
+    again. A held session passes nothing, and a spelling the question does not
+    list is refused. The choice is used only when the file's own depth unit is
+    absent or not recognised. Does not reverse, re-sort, or copy a curve.
+    Does not open the network.
+
+    Parameters
+    ----------
+    ingest:
+        The Stage 0 result whose depth column is classified.
+    depth_unit_choices:
+        THIS_ITEM depth-unit choices. Empty applies none.
+
+    Returns
+    -------
+    DepthAxisResult
+        Direction, regularity, and the recorded quantities. Source arrays
+        are not included.
+
+    Raises
+    ------
+    TypeError
+        ``ingest`` is not an IngestResult, or a choice is not a DepthUnitChoice.
+    ValueError
+        More than one choice was passed, or the chosen unit is not one the
+        depth-unit question lists.
     """
 
     if not isinstance(ingest, IngestResult):
         raise TypeError("ingest must be an IngestResult.")
     load_rule(_GRID_RULE_ID)
     standards = _standard_steps()
+    spellings = depth_unit_spellings()
+    choice = _one_depth_choice(depth_unit_choices, spellings.options())
     ledger = _Ledger(ingest)
     curves = ingest.audit.curves
     tokens = ingest.audit.depth_tokens
@@ -264,7 +310,7 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
         return _refused(ledger)
 
     mnemonic = curves[0].mnemonic
-    unit = curves[0].unit
+    file_unit = curves[0].unit
     dataset_id = DatasetId.for_source(ingest.source_file.file_hash)
     alias = DepthAlias(CurveRef(dataset_id, 0), _CANONICAL_DEPTH_NAME)
     if mnemonic.strip().upper() not in depth_index_mnemonics():
@@ -282,7 +328,7 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
             (),
             "The depth column has fewer than 2 samples, so the axis cannot be classified.",
         )
-        return _refused(ledger, alias=alias, depth_unit=unit)
+        return _refused(ledger, alias=alias, depth_unit=file_unit)
 
     parsed = _decimals(tokens)
     if parsed is None:
@@ -291,7 +337,7 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
             (),
             "A depth token is not a finite decimal, so the axis was not classified.",
         )
-        return _refused(ledger, alias=alias, depth_unit=unit)
+        return _refused(ledger, alias=alias, depth_unit=file_unit)
     depths = parsed
 
     duplicate = _first_duplicate(depths)
@@ -303,7 +349,21 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
             f"Duplicate depth {text} at indexes {index} and {index + 1}.",
             {"observed": text},
         )
-        return _refused(ledger, alias=alias, depth_unit=unit)
+        return _refused(ledger, alias=alias, depth_unit=file_unit)
+
+    if _bottom_up(depths):
+        unit_suffix = f" {file_unit.strip()}" if file_unit.strip() != "" else ""
+        ledger.add(
+            "depth_bottom_up",
+            (),
+            (
+                f"This log is recorded bottom-up: depth decreases from {_dec_text(depths[0])} "
+                f"to {_dec_text(depths[-1])}{unit_suffix}. That is valid LAS, but POLISH supports "
+                "increasing depth only, so the file was not processed. The file is unchanged."
+            ),
+            {"declared": _dec_text(depths[0]), "observed": _dec_text(depths[-1])},
+        )
+        return _refused(ledger, alias=alias, depth_unit=file_unit)
 
     decrease = _first_decrease(depths)
     if decrease is not None:
@@ -320,47 +380,68 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
         ledger.add(
             "step_negative",
             (),
-            f"STEP {ingest.audit.step_text} is negative. Descending depth is a structural failure.",
+            (
+                f"STEP {ingest.audit.step_text} is negative, but the depths increase. "
+                "The header contradicts the data, so the file was not processed."
+            ),
             {"declared": ingest.audit.step_text or ""},
         )
     if ledger.items and any(item.block_type is BlockType.STRUCTURAL_DATA_FAILURE for item in ledger.items):
-        return _refused(ledger, alias=alias, depth_unit=unit)
+        return _refused(ledger, alias=alias, depth_unit=file_unit)
 
-    family = _family(unit, standards)
+    decision_id: str | None = None
+    unit = file_unit
+    if choice is not None and spellings.family_name(file_unit) is None:
+        unit = choice.unit
+        decision_id = choice.decision_id
+    family = spellings.family_name(unit)
     if family is None:
-        shown = unit if unit.strip() != "" else ""
+        shown = file_unit if file_unit.strip() != "" else ""
         ledger.add(
             "depth_unit_unrecognised",
             (),
             f"Depth unit {shown!r} is absent or not recognised. Feet or metres were not assumed.",
-            {"observed": shown},
+            {"observed": shown, "options": json.dumps(list(spellings.options()))},
         )
 
-    finest = _finest_places(tokens)
     declared = _declared_step(ingest, step, unit, standards, family)
     observed: DerivedQuantity | None = None
     corrected: DerivedQuantity | None = None
     displacement: DerivedQuantity | None = None
     regularity: DepthRegularity | None = None
     primary = _primary(family, unit, standards) if family is not None else None
+    _note_strt(ledger, ingest.audit.strt_text)
 
-    if step is None:
-        regularity, observed = _blank_step(ledger, depths, unit, finest)
-    elif step == 0:
-        regularity = DepthRegularity.IRREGULAR
+    if _any_exponent(tokens):
         ledger.add(
-            "step_zero",
+            "depth_exponential",
             (),
-            "STEP is 0. The header value was recorded. The grid was not given an invented step.",
-            {"declared": "0"},
+            (
+                "The depths are written in exponential form, which LAS 2.0 does not support, "
+                "so the spacing was not assessed."
+            ),
         )
-        declared = DerivedQuantity("declared_step", "0", _step_unit(ingest, unit))
+    elif step is None or step == 0:
+        regularity, observed = _median_grid(ledger, depths, tokens, unit, step == 0)
+        if step == 0:
+            declared = DerivedQuantity("declared_step", "0", _step_unit(ingest, unit))
     else:
-        regularity, observed = _declared_grid(ledger, ingest, depths, tokens, step, unit)
-        if family is not None and _same_family(ingest.audit.step_unit, unit, standards):
-            corrected, displacement = _standard_step(
-                ledger, ingest, depths, step, unit, family, finest, standards
-            )
+        regularity, observed = _declared_grid(ledger, depths, tokens, step, unit, ingest)
+
+    if family is not None and not _any_exponent(tokens):
+        compared_name, compared_value = _compared_spacing(depths)
+        corrected, displacement = _standard_step(
+            ledger,
+            ingest,
+            depths,
+            tokens,
+            compared_name,
+            compared_value,
+            unit,
+            family,
+            _finest_places(tokens),
+            standards,
+        )
 
     recorded_strt, recorded_stop = _endpoints(ledger, ingest, depths, step, observed, unit, standards)
     if primary is not None:
@@ -380,6 +461,7 @@ def classify(ingest: IngestResult) -> DepthAxisResult:
             alias,
             primary,
             unit,
+            decision_id,
         )
     )
 
@@ -403,7 +485,43 @@ def _refused(
         alias,
         None,
         depth_unit,
+        None,
     )
+
+
+def _one_depth_choice(choices: tuple[DepthUnitChoice, ...], options: tuple[str, ...]) -> DepthUnitChoice | None:
+    """The one passed choice, or None. A unit the question does not list is refused. D86."""
+
+    if type(choices) is not tuple or any(not isinstance(item, DepthUnitChoice) for item in choices):
+        raise TypeError("depth_unit_choices must be a tuple of DepthUnitChoice.")
+    if len(choices) > 1:
+        raise ValueError("Two depth-unit choices are in force.")
+    if not choices:
+        return None
+    choice = choices[0]
+    if choice.unit not in options:
+        shown = ", ".join(options) if options else "none"
+        raise ValueError(f"{choice.unit!r} is not an option this finding lists ({shown}).")
+    return choice
+
+
+def _bottom_up(depths: tuple[Decimal, ...]) -> bool:
+    """True when every depth is lower than the one before it. D3."""
+
+    return all(depths[index + 1] < depths[index] for index in range(len(depths) - 1))
+
+
+def _any_exponent(tokens: tuple[str, ...]) -> bool:
+    """True when a depth token is written with an exponent. LAS 2.0 section 3.0."""
+
+    return any(_exponent(token) for token in tokens)
+
+
+def _exponent(token: str) -> bool:
+    text = token.strip()
+    if text[:1] in "+-":
+        text = text[1:]
+    return "e" in text.lower()
 
 
 def _decimals(tokens: tuple[str, ...]) -> tuple[Decimal, ...] | None:
@@ -429,7 +547,20 @@ def _decimal_or_none(text: str | None) -> Decimal | None:
 
 
 def _dec_text(number: Decimal) -> str:
+    """The full decimal spelling. Evidence keeps this; messages do not."""
+
     return format(number, "f")
+
+
+def _display_decimal(number: Decimal, places: int) -> str:
+    """Fixed-point text with exactly ``places`` digits after the point.
+
+    Messages use this. The evidence field keeps ``_dec_text``. Half-even
+    rounding is Decimal's own rule for a digit that is exactly 5.
+    """
+
+    quantum = Decimal(1).scaleb(-places)
+    return format(number.quantize(quantum), "f")
 
 
 def _places(token: str) -> int | None:
@@ -480,15 +611,22 @@ def _first_decrease(depths: tuple[Decimal, ...]) -> tuple[int, str, str] | None:
     return None
 
 
-def _on_declared_grid(depths: tuple[Decimal, ...], tokens: tuple[str, ...], start: Decimal, step: Decimal) -> bool:
-    """True when each written depth is within one unit of its own last place."""
+def _on_declared_grid(depths: tuple[Decimal, ...], tokens: tuple[str, ...], step: Decimal) -> bool:
+    """True when each depth is within its own allowance of the first depth plus index times STEP. D12.
 
+    The allowance is the smaller of one unit of that depth's last written
+    decimal and half the absolute step. The comparison is inclusive.
+    """
+
+    start = depths[0]
+    half = abs(step) / 2
     for index, (depth, token) in enumerate(zip(depths, tokens)):
         places = _places(token)
         if places is None:
             return False
+        allowance = min(_tolerance(places), half)
         grid = start + (Decimal(index) * step)
-        if abs(depth - grid) > _tolerance(places):
+        if abs(depth - grid) > allowance:
             return False
     return True
 
@@ -497,13 +635,33 @@ def _increments(depths: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
     return tuple(depths[index + 1] - depths[index] for index in range(len(depths) - 1))
 
 
-def _increments_constant(depths: tuple[Decimal, ...], finest: int | None) -> bool:
-    if finest is None:
-        return False
-    increments = _increments(depths)
-    if not increments:
-        return False
-    return max(increments) - min(increments) <= _tolerance(finest)
+def _median(values: tuple[Decimal, ...]) -> Decimal:
+    """The median. An even count is the mean of the two middle values. D12."""
+
+    ordered = tuple(sorted(values))
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def _gaps_within(tokens: tuple[str, ...], gaps: tuple[Decimal, ...], median: Decimal) -> bool:
+    """True when every gap is within its allowance of the median. D12.
+
+    The allowance is the smaller of one unit of the coarser last written
+    decimal of the gap's two depths and half the median. Inclusive.
+    """
+
+    half = abs(median) / 2
+    for index, gap in enumerate(gaps):
+        left = _places(tokens[index])
+        right = _places(tokens[index + 1])
+        if left is None or right is None:
+            return False
+        allowance = min(_tolerance(min(left, right)), half)
+        if abs(gap - median) > allowance:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -538,13 +696,18 @@ def _step_group(payload: dict[str, object], key: str) -> tuple[frozenset[str], t
     group = payload[key]
     if not isinstance(group, dict):
         raise ValueError(f"{_STEP_RULE_ID} {key} must be an object.")
-    if "unit_aliases" not in group or "steps" not in group or "primary" not in group:
-        raise ValueError(f"{_STEP_RULE_ID} {key} is missing unit_aliases, steps, or primary.")
-    aliases = group["unit_aliases"]
+    if "spellings" not in group or "steps" not in group or "primary" not in group:
+        raise ValueError(f"{_STEP_RULE_ID} {key} is missing spellings, steps, or primary.")
+    spellings = group["spellings"]
     steps = group["steps"]
     primary = group["primary"]
-    if not isinstance(aliases, list) or not aliases or not all(isinstance(item, str) and item.strip() for item in aliases):
-        raise ValueError(f"{_STEP_RULE_ID} {key}.unit_aliases must be a non-empty list of strings.")
+    if not isinstance(spellings, list) or not spellings:
+        raise ValueError(f"{_STEP_RULE_ID} {key}.spellings must be a non-empty list.")
+    aliases: list[str] = []
+    for item in spellings:
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str) or item["text"].strip() == "":
+            raise ValueError(f"{_STEP_RULE_ID} {key} spellings must name a text.")
+        aliases.append(item["text"])
     if not isinstance(steps, list) or not steps:
         raise ValueError(f"{_STEP_RULE_ID} {key}.steps must be a non-empty list.")
     parsed: list[Decimal] = []
@@ -622,103 +785,213 @@ def _declared_step(
     return quantity
 
 
-def _blank_step(
+def _note_strt(ledger: _Ledger, strt_text: str | None) -> None:
+    """Record a blank or non-numeric STRT. The grid is still checked from the first depth. D12."""
+
+    if strt_text is None or strt_text.strip() == "":
+        ledger.add(
+            "strt_blank",
+            (),
+            "STRT is blank. The grid was checked from the first depth.",
+        )
+        return
+    if _decimal_or_none(strt_text) is None:
+        shown = strt_text.strip()
+        ledger.add(
+            "strt_not_a_number",
+            (),
+            f"STRT is not a number: '{shown}'.",
+            {"observed": shown},
+        )
+
+
+def _median_grid(
     ledger: _Ledger,
     depths: tuple[Decimal, ...],
+    tokens: tuple[str, ...],
     unit: str,
-    finest: int | None,
+    step_is_zero: bool,
 ) -> tuple[DepthRegularity, DerivedQuantity | None]:
-    if _increments_constant(depths, finest):
-        derived = _increments(depths)[0]
-        quantity = DerivedQuantity("observed_step", _dec_text(derived), unit)
+    """Judge a blank or zero STEP against the median gap. D12, D67.
+
+    A grid that passes records the median as the data-derived step. A grid
+    that fails is irregular. The median is named in the finding and is not
+    stored as a validated step.
+    """
+
+    gaps = _increments(depths)
+    median = _median(gaps)
+    median_text = _dec_text(median)
+    finest = _finest_places(tokens)
+    median_shown = _display_decimal(median, finest + 2) if finest is not None else median_text
+    if _gaps_within(tokens, gaps, median):
+        quantity = DerivedQuantity("observed_step", median_text, unit)
         assert_derived_unit(quantity, unit)
-        ledger.add(
-            "step_blank_regular",
-            (),
-            f"STEP is blank. Data-derived step {_dec_text(derived)} {unit} was recorded.",
-            {"observed": _dec_text(derived)},
-        )
+        if step_is_zero:
+            ledger.add(
+                "step_zero",
+                (),
+                f"STEP is 0. Data-derived step {median_shown} {unit} was recorded.",
+                {"declared": "0", "observed": median_text},
+            )
+        else:
+            ledger.add(
+                "step_blank_regular",
+                (),
+                f"STEP is blank. Data-derived step {median_shown} {unit} was recorded.",
+                {"observed": median_text},
+            )
         return DepthRegularity.REGULAR, quantity
-    ledger.add(
-        "step_blank_irregular",
-        (),
-        "STEP is blank. Depth increments are not constant. The grid is irregular.",
-    )
+    if step_is_zero:
+        ledger.add(
+            "step_zero",
+            (),
+            "STEP is 0. The header value was recorded. The grid was not given an invented step.",
+            {"declared": "0", "observed": median_text},
+        )
+    else:
+        ledger.add(
+            "step_blank_irregular",
+            (),
+            (
+                "STEP is blank. Depth increments are not constant. The grid is irregular. "
+                f"The median gap is {median_shown}. No step was validated."
+            ),
+            {"observed": median_text},
+        )
     return DepthRegularity.IRREGULAR, None
 
 
 def _declared_grid(
     ledger: _Ledger,
-    ingest: IngestResult,
     depths: tuple[Decimal, ...],
     tokens: tuple[str, ...],
     step: Decimal,
     unit: str,
-) -> tuple[DepthRegularity | None, DerivedQuantity | None]:
-    start = _decimal_or_none(ingest.audit.strt_text)
+    ingest: IngestResult,
+) -> tuple[DepthRegularity, DerivedQuantity | None]:
+    """Judge a declared non-zero STEP from the first depth. D12, D88.
+
+    A miss is irregular and informational. No step is recorded as validated.
+    """
+
     step_text = ingest.audit.step_text or _dec_text(step)
-    if start is None:
-        ledger.add(
-            "strt_blank",
-            (),
-            "STRT is blank, so the grid STRT + i × STEP was not reconstructed. The ascending samples were left as written.",
-            {"declared": step_text},
-        )
-        return DepthRegularity.IRREGULAR, None
-    if _on_declared_grid(depths, tokens, start, step):
+    if _on_declared_grid(depths, tokens, step):
         quantity = DerivedQuantity("observed_step", _dec_text(step), _step_unit(ingest, unit))
         return DepthRegularity.REGULAR, quantity
     ledger.add(
         "grid_off_declared_step",
         (),
         (
-            f"Declared STEP {step_text} does not put every depth on STRT + i × STEP "
-            "within the grid rounding tolerance. The ascending grid is irregular and was not modified."
+            f"Declared STEP {step_text} does not put every depth on the first depth + i × STEP "
+            "within the rounding allowance. The ascending grid is irregular and was not modified."
         ),
         {"declared": step_text},
     )
     return DepthRegularity.IRREGULAR, None
 
 
+def _compared_spacing(depths: tuple[Decimal, ...]) -> tuple[str, Decimal]:
+    """The interval the standard-step test uses. D12.
+
+    ``(last depth − first depth) / (NSAMPLES − 1)``, from the data. Header
+    STRT and STOP are not used. The endpoint check judges them. In a
+    conforming file the two agree, because LAS 2.0 section 5.4 requires
+    STRT to be the first depth and STOP the last.
+    """
+
+    return "implied_interval", (depths[-1] - depths[0]) / Decimal(len(depths) - 1)
+
+
+def _interval_uncertainty(tokens: tuple[str, ...], count: int) -> Decimal | None:
+    """How precisely the implied interval is known. D12.
+
+    One unit of the first depth's last written decimal, plus one unit of the
+    last depth's last written decimal, divided by the number of gaps. None
+    when either endpoint is not fixed-point.
+    """
+
+    if count < 2:
+        return None
+    first = _places(tokens[0])
+    last = _places(tokens[-1])
+    if first is None or last is None:
+        return None
+    return (_tolerance(first) + _tolerance(last)) / Decimal(count - 1)
+
+
+def _quantity_label(name: str) -> str:
+    if name == "implied_interval":
+        return "Implied interval"
+    if name == "median_gap":
+        return "Median gap"
+    raise ValueError(f"Unknown spacing quantity {name!r}.")
+
+
 def _standard_step(
     ledger: _Ledger,
     ingest: IngestResult,
     depths: tuple[Decimal, ...],
-    step: Decimal,
+    tokens: tuple[str, ...],
+    compared_name: str,
+    compared: Decimal,
     unit: str,
     family: str,
     finest: int | None,
     standards: _Standards,
 ) -> tuple[DerivedQuantity | None, DerivedQuantity | None]:
-    """Record a D89 correction, or the non-standard notice. Samples stay put."""
+    """Compare the implied interval with the standard steps. D12, D89.
+
+    The interval is taken from the first and last depths in the data. It is
+    known only to ``_interval_uncertainty``. Within that of one standard step,
+    and when the header STEP is already that step, the interval is that step:
+    endpoint rounding is not a correction. A wider gap is not rounding, so the
+    half-step gate is not offered a correction. A different written step that
+    is still within the uncertainty keeps the rounding correction. Samples
+    stay put. The finding records the quantity, and the evidence keeps the
+    full value.
+    """
 
     if finest is None:
         return None, None
     options = standards.feet_steps if family == "feet" else standards.metre_steps
-    nearest, tied = _nearest(step, options)
-    step_text = ingest.audit.step_text or _dec_text(step)
-    step_unit = _step_unit(ingest, unit)
+    uncertainty = _interval_uncertainty(tokens, len(depths))
+    nearest, tied = _nearest(compared, options)
+    header_step = _decimal_or_none(ingest.audit.step_text)
+    if (
+        not tied
+        and nearest is not None
+        and uncertainty is not None
+        and abs(compared - nearest) <= uncertainty
+        and header_step is not None
+        and header_step == nearest
+    ):
+        compared = nearest
+    compared_text = _dec_text(compared)
+    shown = _display_decimal(compared, finest + 2)
+    label = _quantity_label(compared_name)
+    origin = ", from the first and last depths in the data," if compared_name == "implied_interval" else ""
+    notice = (
+        f"{label} ({shown} {unit}){origin} is not a recognised standard interval; depths not modified."
+    )
+    common = {"compared_quantity": compared_name, "compared_value": compared_text, "declared": compared_text}
     if tied or nearest is None:
-        ledger.add(
-            "step_not_standard",
-            (),
-            f"step as written ({step_text} {step_unit}) is not a recognised standard interval; depths not modified.",
-            {"declared": step_text},
-        )
+        ledger.add("step_not_standard", (), notice, common)
         return None, None
-    tolerance = _tolerance(finest)
-    gap = abs(step - nearest)
+    gap = abs(compared - nearest)
     if gap == 0:
         return None, None
-    rounds = gap <= tolerance
+    rounds = gap <= _tolerance(finest)
+    if uncertainty is not None and gap > uncertainty:
+        rounds = False
     start = _decimal_or_none(ingest.audit.strt_text)
     if start is None:
         if not rounds:
             ledger.add(
                 "step_not_standard",
                 (),
-                f"step as written ({step_text} {step_unit}) is not a recognised standard interval; depths not modified.",
-                {"declared": step_text, "observed": _dec_text(nearest)},
+                notice,
+                {**common, "observed": _dec_text(nearest)},
             )
         return None, None
     last = depths[-1]
@@ -726,19 +999,19 @@ def _standard_step(
     shift = last - reconstructed
     gate = abs(shift) <= (Decimal("0.5") * nearest)
     if rounds and gate:
-        corrected = DerivedQuantity("corrected_step", _dec_text(nearest), step_unit)
-        displacement = DerivedQuantity("displacement", _dec_text(shift), step_unit)
-        assert_derived_unit(corrected, step_unit)
-        assert_derived_unit(displacement, step_unit)
+        corrected = DerivedQuantity("corrected_step", _dec_text(nearest), unit)
+        displacement = DerivedQuantity("displacement", _dec_text(shift), unit)
+        assert_derived_unit(corrected, unit)
+        assert_derived_unit(displacement, unit)
         ledger.add(
             "step_corrected",
             (),
             (
-                f"Declared step {step_text} {step_unit} corrected to {_dec_text(nearest)} {step_unit}; "
-                f"displacement {_dec_text(shift)} {step_unit}."
+                f"{label} {shown} {unit}{origin} corrected to {_dec_text(nearest)} {unit}; "
+                f"displacement {_dec_text(shift)} {unit}."
             ),
             {
-                "declared": step_text,
+                **common,
                 "observed": _dec_text(nearest),
                 "difference": _dec_text(shift),
             },
@@ -747,11 +1020,11 @@ def _standard_step(
     ledger.add(
         "step_not_standard",
         (),
-        f"step as written ({step_text} {step_unit}) is not a recognised standard interval; depths not modified.",
+        notice,
         {
-            "declared": step_text,
+            **common,
             "observed": _dec_text(nearest),
-            "difference": _dec_text(abs(step - nearest)),
+            "difference": _dec_text(abs(compared - nearest)),
         },
     )
     return None, None
@@ -831,7 +1104,7 @@ def _one_endpoint(
     assert_derived_unit(observed_quantity, depth_unit)
     if declared is None or declared_text is None:
         return observed_quantity
-    if declared_unit is not None and declared_unit.strip() != "" and not _same_family(declared_unit, depth_unit, standards):
+    if declared_unit is not None and declared_unit.strip() != "" and not _units_match(declared_unit, depth_unit, standards):
         ledger.add(
             "endpoint_unit_mismatch",
             (("endpoint", label),),
@@ -851,11 +1124,13 @@ def _one_endpoint(
         )
         return observed_quantity
     intervals = difference / interval
+    intervals_text = _dec_text(intervals)
+    intervals_shown = _display_decimal(intervals, 2)
     fields = {
         "declared": declared_text.strip(),
         "observed": _dec_text(observed),
         "difference": _dec_text(difference),
-        "difference_in_step_intervals": _dec_text(intervals),
+        "difference_in_step_intervals": intervals_text,
     }
     if abs(difference) <= interval:
         ledger.add(
@@ -863,7 +1138,7 @@ def _one_endpoint(
             (("endpoint", label),),
             (
                 f"{label} {declared_text.strip()} differs from the data {_dec_text(observed)} "
-                f"by {_dec_text(difference)} ({_dec_text(intervals)} step intervals)."
+                f"by {_dec_text(difference)} ({intervals_shown} step intervals)."
             ),
             fields,
         )
@@ -878,6 +1153,18 @@ def _one_endpoint(
         fields,
     )
     return None
+
+
+def _units_match(declared_unit: str, depth_unit: str, standards: _Standards) -> bool:
+    """True when the two unit texts are the same, or both name one depth family. D12.
+
+    Identical text matches even when neither spelling is recognised, so the
+    values can be subtracted. A recognised spelling still matches its family.
+    """
+
+    if declared_unit.strip().casefold() == depth_unit.strip().casefold():
+        return True
+    return _same_family(declared_unit, depth_unit, standards)
 
 
 def _finish_structural(result: DepthAxisResult) -> DepthAxisResult:
@@ -899,4 +1186,5 @@ def _finish_structural(result: DepthAxisResult) -> DepthAxisResult:
         result.alias,
         None,
         result.depth_unit,
+        result.depth_unit_decision_id,
     )

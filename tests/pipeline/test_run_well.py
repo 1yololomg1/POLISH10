@@ -173,6 +173,50 @@ def test_a_missing_file_is_refused(tmp_path: Path):
     _assert_empty(tables, app)
 
 
+def test_a_saved_depth_unit_choice_is_applied_and_its_question_is_not_outstanding(tmp_path: Path):
+    tables, app = _roots(tmp_path)
+    path = tmp_path / "well.las"
+    path.write_text(
+        (
+            "~VERSION INFORMATION\n"
+            "VERS. 2.0 : CWLS\n"
+            "WRAP. NO : WRAP\n"
+            "~WELL INFORMATION\n"
+            "STRT.FT 0.0 : START\n"
+            "STOP.FT 1.0 : STOP\n"
+            "STEP.FT 0.5 : STEP\n"
+            "NULL. -999.25 : NULL\n"
+            "~CURVE INFORMATION\n"
+            "DEPT. : DEPTH\n"
+            "GR.GAPI : GAMMA\n"
+            "~A\n"
+            "0.0 1.0\n"
+            "0.5 2.0\n"
+            "1.0 3.0\n"
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    first = _run(path, tables, app)
+    assert first.depth is not None
+    question = next(item for item in first.depth.findings if item.check == "depth_unit_unrecognised")
+    assert listed_options(question) == ("FT", "M")
+    saved = _choose(first.session_load.session, question, "FT", "the depth is in feet")
+    save_session(saved)
+    result = _run(path, tables, app)
+    decision_id = saved.decisions[-1].decision_id
+    assert result.depth is not None
+    assert result.depth.depth_unit == "FT"
+    assert result.depth.depth_unit_decision_id == decision_id
+    assert result.depth.primary_standard_step is not None
+    assert result.depth.primary_standard_step.text == "0.5"
+    assert not any(item.check == "depth_unit_unrecognised" for item in result.depth.findings)
+    assert _ids(result.applied) == (decision_id,)
+    assert result.reasked == ()
+    assert question.id not in _outstanding_ids(result.session_load.session)
+    _assert_empty(tables, app)
+
+
 def test_a_saved_unit_choice_is_applied_and_its_question_is_not_outstanding(tmp_path: Path):
     path, tables, app = _well(tmp_path, [("APPLE", "API")])
     first = _run(path, tables, app)

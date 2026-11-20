@@ -8,11 +8,19 @@ apply_decision
     Validate one action and append one record.
 pass_choices
     Pass choices Stage 2 takes as an input, this well or all wells.
+depth_unit_choices
+    Depth-unit choices Stage 1 takes as an input.
 session
     Load and save decisions beside the input file. No sample values.
 """
 
-from polish.decisions.apply import apply_decision, explicit_mappings, pass_choices, unit_choices
+from polish.decisions.apply import (
+    apply_decision,
+    depth_unit_choices,
+    explicit_mappings,
+    pass_choices,
+    unit_choices,
+)
 from polish.decisions.session import (
     Session,
     SessionLoad,
@@ -35,6 +43,7 @@ __all__ = [
     "SessionNotWritten",
     "apply_decision",
     "choose_changed_file",
+    "depth_unit_choices",
     "explicit_mappings",
     "kept_session_path",
     "load_session",
