@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import numpy
 import pytest
 
@@ -72,6 +74,56 @@ def test_bins_are_read_only_and_bad_input_is_refused():
         bin_curve([0.0, 1.0], [1.0, 2.0], (_M, _M), 1.0, 1.0, 2)
     with pytest.raises(ValueError, match="pixel_count"):
         bin_curve([0.0, 1.0], [1.0, 2.0], (_M, _M), 0.0, 1.0, 0)
+
+
+def test_created_changed_and_resampled_flag_separately():
+    statuses = (
+        SampleStatus.CREATED,
+        SampleStatus.CHANGED,
+        SampleStatus.RESAMPLED,
+        _M,
+    )
+    bins = bin_curve([0.0, 1.0, 2.0, 3.0], [1.0, 1.0, 1.0, 1.0], statuses, 0.0, 3.0, 4)
+    assert list(bins.any_created) == [True, False, False, False]
+    assert list(bins.any_changed) == [False, True, False, False]
+    assert list(bins.any_resampled) == [False, False, True, False]
+    assert list(bins.any_modified) == [True, True, True, False]
+
+
+def test_three_created_samples_among_twenty_thousand_stay_visible_at_every_pixel_count():
+    # The vanishing-fill failure: a created sample must mark a pixel at every
+    # scale, including one pixel for the whole curve and 2,000 pixels (P17).
+    count = 20_000
+    statuses = [_M] * count
+    for index in (0, count // 2, count - 1):
+        statuses[index] = SampleStatus.CREATED
+    depths = numpy.arange(count, dtype=float)
+    values = numpy.ones(count)
+    status_tuple = tuple(statuses)
+    top = float(depths[0])
+    bottom = float(depths[-1])
+    for pixels in range(1, 2001):
+        bins = bin_curve(depths, values, status_tuple, top, bottom, pixels)
+        assert bool(bins.any_modified.any())
+        assert bool(bins.any_created.any())
+
+
+@pytest.mark.performance
+def test_bin_twenty_thousand_samples_into_three_hundred_pixels():
+    # P17.6. The target slot is unfilled, so this reports the time and does
+    # not compare it to a threshold.
+    count = 20_000
+    depths = numpy.arange(count, dtype=float)
+    values = numpy.ones(count)
+    statuses = (_M,) * count
+    top = float(depths[0])
+    bottom = float(depths[-1])
+    bin_curve(depths, values, statuses, top, bottom, 300)
+    started = time.perf_counter()
+    bins = bin_curve(depths, values, statuses, top, bottom, 300)
+    elapsed = time.perf_counter() - started
+    assert bins.minimum.shape == (300,)
+    print(f"bin_curve 20000 samples into 300 pixels: {elapsed:.6f} seconds")
 
 
 def test_hit_test_returns_an_actual_sample_never_a_position_between():

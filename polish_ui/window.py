@@ -2,8 +2,10 @@
 
 Regions, each with its space reserved from the start: stage rail; coverage
 track (reserved, empty until OD-25 is decided); depth-axis and curve results;
-log tracks; hover readout; findings queue; export review (reserved, empty).
-Showing or hiding the queue does not change the geometry of the depth view.
+log tracks; hover readout; findings queue; detail/record pane (reserved);
+export review (reserved, empty). Showing or hiding the queue does not change
+the geometry of the depth view. Filling a reserved region later does not
+either: each one has a fixed size and a one-line note until it is built.
 
 Opening a file runs Stages 0-4 and alters nothing (C6). Track selection,
 zoom, pan, and panel visibility are presentation only and call no engine
@@ -21,26 +23,27 @@ import numpy
 import pyqtgraph
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from polish.decisions import Session
 from polish.model.states import BlockType, StageStatus, UserAction
 from polish.render import annotate, hit_test
 from polish_ui import wording
 from polish_ui.curve_colours import curve_colour
 from polish_ui.loading import LoadResult, SessionNotWritten, load_well, record_decision
 from polish_ui.queue_panel import QueuePanel
-
-STAGES = (
-    (0, "Ingest"),
-    (1, "Depth axis"),
-    (2, "Identification"),
-    (3, "Units"),
-    (4, "Validity"),
-    (5, "Resampling"),
-    (6, "Derivation"),
-    (7, "Gap filling"),
-    (8, "Denoising"),
-    (9, "Manifest"),
-    (10, "Export"),
+from polish_ui.theme import (
+    AXIS_COLOUR,
+    COVERAGE_HEIGHT,
+    CURVE_WIDTH,
+    DETAIL_HEIGHT,
+    EXPORT_HEIGHT,
+    QUEUE_WIDTH,
+    RAIL_WIDTH,
+    TABLE_HEIGHT,
+    TITLE_CHARS,
+    TRACK_WIDTH,
 )
+
+STAGES = tuple(enumerate(wording.STAGE_NAMES))
 _BUILT_THROUGH = 4
 MAX_TRACKS = 6
 _DEFAULT_TRACKS = 4
@@ -53,12 +56,6 @@ _PREFERRED_FAMILIES = (
     "GAMMA_RAY_TOTAL",
     "RESISTIVITY_DEEP",
 )
-_TITLE_CHARS = 18
-_TRACK_WIDTH = 160
-_CURVE_WIDTH = 1.5
-_AXIS_COLOUR = "#000000"
-_RAIL_WIDTH = 210
-_QUEUE_WIDTH = 440
 _COLUMNS = (
     "Show",
     "Col",
@@ -119,11 +116,23 @@ def _default_tracks(run: object, columns: list[int]) -> set[int]:
     return set((preferred + other_families + no_family)[:_DEFAULT_TRACKS])
 
 
-def _reserved(text: str) -> QtWidgets.QLabel:
+_READOUT_DEFAULT = "Move the pointer over a track to read the nearest actual sample."
+_NO_TRACKS = "No tracks: the depth axis did not pass."
+_LOAD_REASON = "A file is still being read."
+
+
+def _reserved(text: str, height: int) -> QtWidgets.QWidget:
+    """A fixed region. The note is the only contents until that region is built. P18.1."""
+
+    region = QtWidgets.QWidget()
+    region.setFixedHeight(height)
+    layout = QtWidgets.QVBoxLayout(region)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
     label = QtWidgets.QLabel(text)
-    label.setFixedHeight(26)
     label.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
-    return label
+    layout.addWidget(label)
+    return region
 
 
 def _quantity(value: object) -> str:
@@ -149,6 +158,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._synchronous = synchronous
         self._result: LoadResult | None = None
         self._worker: LoadWorker | None = None
+        self._saved: Session | None = None
+        self._queued_path: Path | None = None
+        self._epoch = 0
+        self._loading = False
         self._plots: list[tuple[object, int]] = []
         self.setWindowTitle("POLISH")
         self.resize(1500, 900)
@@ -158,35 +171,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.headline.setFixedHeight(44)
 
         self.rail = QtWidgets.QListWidget()
-        self.rail.setFixedWidth(_RAIL_WIDTH)
+        self.rail.setFixedWidth(RAIL_WIDTH)
         self.rail.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
 
-        self.coverage = _reserved("Coverage track: reserved. Not built (P19 waits on OD-25).")
+        self.coverage = _reserved("Coverage track: not built (P19 waits on OD-25).", COVERAGE_HEIGHT)
         self.depth_summary = QtWidgets.QLabel("")
         self.depth_summary.setWordWrap(True)
         self.depth_summary.setFixedHeight(64)
         self.table = QtWidgets.QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(list(_COLUMNS))
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setFixedHeight(230)
+        self.table.setFixedHeight(TABLE_HEIGHT)
         self.table.itemChanged.connect(self._track_selection_changed)
         self.tracks = pyqtgraph.GraphicsLayoutWidget()
         # White, like log paper: some family colours are black (caliper, depth,
         # and any curve with no family), which a black background would hide.
         self.tracks.setBackground("w")
         self.tracks.scene().sigMouseMoved.connect(self._hover)
-        self.readout = QtWidgets.QLabel("Move the pointer over a track to read the nearest actual sample.")
+        self.tracks_note = QtWidgets.QLabel(_NO_TRACKS, self.tracks)
+        self.tracks_note.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.tracks_note.hide()
+        self.tracks.installEventFilter(self)
+        self.readout = QtWidgets.QLabel(_READOUT_DEFAULT)
         self.readout.setFixedHeight(40)
         self.readout.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
-        self.export_review = _reserved("Export review: reserved. Not built (P22).")
+        self.export_review = _reserved("Export review: not built (P22).", EXPORT_HEIGHT)
+        self.detail_record = _reserved("Detail and record: not built.", DETAIL_HEIGHT)
 
         self.queue = QueuePanel()
         self.queue.decision_requested.connect(self._record)
         self.queue_region = QtWidgets.QWidget()
-        self.queue_region.setFixedWidth(_QUEUE_WIDTH)
+        self.queue_region.setFixedWidth(QUEUE_WIDTH)
         region = QtWidgets.QVBoxLayout(self.queue_region)
         region.setContentsMargins(0, 0, 0, 0)
-        region.addWidget(self.queue)
+        region.addWidget(self.queue, 1)
+        region.addWidget(self.detail_record)
 
         middle = QtWidgets.QVBoxLayout()
         middle.addWidget(self.headline)
@@ -222,6 +241,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.queue.setVisible(visible)
 
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        """Keep the track-area note inside the track widget when it resizes."""
+
+        if watched is self.tracks and event.type() == QtCore.QEvent.Type.Resize:
+            self.tracks_note.setGeometry(self.tracks.rect())
+        return super().eventFilter(watched, event)
+
     # ----- loading -----
 
     def _choose_file(self) -> None:
@@ -230,34 +256,98 @@ class MainWindow(QtWidgets.QMainWindow):
             self.open_path(Path(name))
 
     def open_path(self, path: Path) -> None:
-        """Run Stages 0-4 on ``path`` and show the result. Nothing is altered or written."""
+        """Run Stages 0-4 on ``path`` and show the result. Nothing is altered or written.
 
+        A load started while another is still running is queued. It is not
+        dropped (P21.7). The queue form takes no input until the load that is
+        showing has finished.
+        """
+
+        path = Path(path)
         if self._synchronous:
+            self._clear_for_load(path)
+            self._saved = None
             self.show_result(load_well(path, app_data=self._app_data, local_tables_directory=self._tables))
             return
+        if self._saved is not None and Path(self._saved.input_path) != path:
+            self._saved = None
+        # A result from a load that started before this request is stale.
+        self._epoch += 1
         if self._worker is not None and self._worker.isRunning():
-            self.statusBar().showMessage("A file is still being read.")
+            self._queued_path = path
+            self._clear_for_load(path)
             return
+        self._queued_path = None
+        self._start_worker(path)
+
+    def _start_worker(self, path: Path) -> None:
+        """Start one background load at the current epoch. The worker is deleted when it finishes."""
+
+        self._clear_for_load(path)
+        epoch = self._epoch
+        worker = LoadWorker(path, self._app_data, self._tables, self)
+        worker.loaded.connect(lambda result, epoch=epoch: self._accept_load(result, epoch))
+        worker.finished.connect(lambda worker=worker: self._retire(worker))
+        self._worker = worker
+        worker.start()
+
+    def _accept_load(self, result: LoadResult, epoch: int) -> None:
+        """Show ``result`` only when no later save or open has superseded this load."""
+
+        if epoch != self._epoch:
+            return
+        self._saved = None
+        self.show_result(result)
+
+    def _retire(self, worker: LoadWorker) -> None:
+        """Drop a finished worker and start the load that was waiting for it. P21.7."""
+
+        if self._worker is worker:
+            self._worker = None
+        worker.deleteLater()
+        if self._queued_path is None:
+            return
+        path = self._queued_path
+        self._queued_path = None
+        self._start_worker(path)
+
+    def _clear_for_load(self, path: Path) -> None:
+        """Show that this file is being read, and nothing from the previous file. P18.2, P18.3."""
+
+        self._loading = True
         self.headline.setText(f"Running Stages 0–4 on {path.name}. Nothing in the file is altered.")
-        self._worker = LoadWorker(path, self._app_data, self._tables, self)
-        self._worker.loaded.connect(self.show_result)
-        self._worker.start()
+        running = {
+            number: StageStatus.RUNNING if number <= _BUILT_THROUGH else StageStatus.NOT_RUN
+            for number, _name in STAGES
+        }
+        self._show_rail(running)
+        self.table.setRowCount(0)
+        self.tracks.clear()
+        self._plots = []
+        self.tracks_note.hide()
+        self.readout.setText(_READOUT_DEFAULT)
+        self.depth_summary.setText("Depth axis: not run.")
+        self.queue.set_items((), None, ())
+        self.queue.set_form_enabled(False, _LOAD_REASON)
 
     def show_result(self, result: LoadResult) -> None:
         """Fill every region from one load. No state is carried over from the previous file."""
 
+        self._loading = False
+        self._saved = None
         self._result = result
         self._show_rail(self._statuses(result))
         self.headline.setText(self._headline(result))
         self._show_depth(result)
         self._show_curves(result)
+        curves = self._loaded_curves(result)
         if result.run is not None:
             session = result.run.session_load.session
-            self.queue.set_items(session.findings, session)
+            self.queue.set_items(session.findings, session, curves)
         elif result.partial is not None:
-            self.queue.set_items(result.partial.findings, None)
+            self.queue.set_items(result.partial.findings, None, curves)
         else:
-            self.queue.set_items((), None)
+            self.queue.set_items((), None, curves)
         self._draw_tracks()
 
     def _statuses(self, result: LoadResult) -> dict[int, StageStatus]:
@@ -272,11 +362,44 @@ class MainWindow(QtWidgets.QMainWindow):
             statuses[0] = result.partial.status
         return statuses
 
+    def _loaded_curves(self, result: LoadResult) -> tuple:
+        """Curves of the dataset this load produced, or none."""
+
+        run = result.run
+        if run is not None and run.ingest.dataset is not None:
+            return run.ingest.dataset.curves
+        if result.partial is not None and result.partial.dataset is not None:
+            return result.partial.dataset.curves
+        return ()
+
     def _show_rail(self, statuses: dict[int, StageStatus]) -> None:
         self.rail.clear()
         for number, name in STAGES:
             suffix = "" if number <= _BUILT_THROUGH else " (not built)"
-            self.rail.addItem(f"{number}  {name}: {statuses[number].value}{suffix}")
+            status = statuses[number]
+            # Glossary line 193: the rail shows the structural sentence, not the token. UXC2.
+            shown = wording.structural_sentence(name) if status is StageStatus.REFUSED_STRUCTURAL else status.value
+            self.rail.addItem(f"{number}  {name}: {shown}{suffix}")
+
+    def _refused_stage(self, result: LoadResult) -> int | None:
+        """The stage whose status is REFUSED_STRUCTURAL, if one refused."""
+
+        if result.run is not None:
+            run = result.run
+            parts = (
+                (0, run.ingest),
+                (1, run.depth),
+                (2, run.identification),
+                (3, run.units),
+                (4, run.validity),
+            )
+            for number, part in parts:
+                if part is not None and part.status is StageStatus.REFUSED_STRUCTURAL:
+                    return number
+            return None
+        if result.partial is not None and result.partial.status is StageStatus.REFUSED_STRUCTURAL:
+            return 0
+        return None
 
     def _headline(self, result: LoadResult) -> str:
         if result.error is not None:
@@ -285,9 +408,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"Unclassified at Stage 0. {result.unclassified}"
         run = result.run
         findings = run.session_load.session.findings
-        structural = [item for item in findings if item.block_type is BlockType.STRUCTURAL_DATA_FAILURE]
-        if structural:
-            return f"{wording.BLOCK_WORDING[BlockType.STRUCTURAL_DATA_FAILURE]}. {structural[0].message}"
+        refused = self._refused_stage(result)
+        if refused is not None:
+            structural = [item for item in findings if item.block_type is BlockType.STRUCTURAL_DATA_FAILURE]
+            extra = f" {structural[0].message}" if structural else ""
+            return f"{wording.structural_sentence(wording.STAGE_NAMES[refused])}.{extra}"
         curves = 0 if run.ingest.dataset is None else len(run.ingest.dataset.curves)
         return f"Read {result.path.name}: {curves} curves, {len(findings)} findings. No value has been altered."
 
@@ -369,8 +494,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def _draw_tracks(self) -> None:
         self.tracks.clear()
         self._plots = []
+        self.tracks_note.hide()
         run = None if self._result is None else self._result.run
-        if run is None or run.ingest.dataset is None:
+        # Tracks are a Stage 1 view. A file that stopped earlier is not drawn,
+        # including a decreasing depth axis, which would not be strictly
+        # ascending (D3, P17, P20).
+        if run is None or run.depth is None or run.depth.status is not StageStatus.COMPLETE:
+            if self._result is not None:
+                self.tracks_note.setGeometry(self.tracks.rect())
+                self.tracks_note.show()
+            return
+        if run.ingest.dataset is None:
             return
         dataset = run.ingest.dataset
         depths = dataset.grid.values
@@ -382,36 +516,36 @@ class MainWindow(QtWidgets.QMainWindow):
             name = curve.original_mnemonic
             # A long mnemonic is shortened in the track title only, so every
             # track keeps the same width. The table row carries it in full.
-            short = name if len(name) <= _TITLE_CHARS else name[: _TITLE_CHARS - 1] + "…"
+            short = name if len(name) <= TITLE_CHARS else name[: TITLE_CHARS - 1] + "…"
             family = self._family_of(column)
             colour = curve_colour(family)
             plot.setTitle(short, size="9pt", color=colour)
             what = family if family is not None else "no family: drawn grey"
             plot.titleLabel.setToolTip(f"{name} ({unit}) · {what}")
             for side in ("left", "bottom"):
-                plot.getAxis(side).setPen(_AXIS_COLOUR)
-                plot.getAxis(side).setTextPen(_AXIS_COLOUR)
+                plot.getAxis(side).setPen(AXIS_COLOUR)
+                plot.getAxis(side).setTextPen(AXIS_COLOUR)
                 # Show values as written: no automatic rescaling (porosity
                 # 0.2-0.6 must not read as 200-600 "x0.001").
                 plot.getAxis(side).enableAutoSIPrefix(False)
-            plot.setLabel("bottom", unit, color=_AXIS_COLOUR)
+            plot.setLabel("bottom", unit, color=AXIS_COLOUR)
             plot.invertY(True)
             plot.showGrid(x=True, y=True, alpha=0.2)
             plot.plot(
                 numpy.asarray(curve.values),
                 numpy.asarray(depths),
                 connect="finite",
-                pen=pyqtgraph.mkPen(colour, width=_CURVE_WIDTH),
+                pen=pyqtgraph.mkPen(colour, width=CURVE_WIDTH),
             )
             if first is None:
                 first = plot
                 depth_unit = dataset.grid.unit if dataset.grid.unit else "no unit"
-                plot.setLabel("left", f"Depth ({depth_unit})", color=_AXIS_COLOUR)
+                plot.setLabel("left", f"Depth ({depth_unit})", color=AXIS_COLOUR)
             else:
                 plot.setYLink(first)
                 plot.getAxis("left").setStyle(showValues=False)
             self.tracks.ci.layout.setColumnStretchFactor(position, 1)
-            self.tracks.ci.layout.setColumnPreferredWidth(position, _TRACK_WIDTH)
+            self.tracks.ci.layout.setColumnPreferredWidth(position, TRACK_WIDTH)
             self._plots.append((plot, column))
 
     def _family_of(self, column: int) -> str | None:
@@ -464,16 +598,27 @@ class MainWindow(QtWidgets.QMainWindow):
     # ----- decisions -----
 
     def _record(self, finding: object, action: UserAction, fields: dict) -> None:
-        if self._result is None or self._result.run is None:
-            return
-        session = self._result.run.session_load.session
+        """Record against the session last saved, never against an older one. D47, P21.7.
+
+        The saved session stays current until the reload of that save is the
+        result on screen. A reload requested while a load is running is queued
+        by ``open_path``; it is not dropped.
+        """
+
+        session = self._saved
+        if session is None:
+            if self._loading or self._result is None or self._result.run is None:
+                self.queue.set_form_enabled(False, _LOAD_REASON)
+                return
+            session = self._result.run.session_load.session
         try:
-            written = record_decision(session, finding, action, app_data=self._app_data, **fields)
+            recorded = record_decision(session, finding, action, app_data=self._app_data, **fields)
         except SessionNotWritten as exc:
             self.queue.show_message(exc.finding.message)
             return
         except ValueError as exc:
             self.queue.show_message(f"Not recorded. {exc}")
             return
-        self.statusBar().showMessage(f"Decision recorded. Session saved to {written}")
+        self._saved = recorded.session
+        self.statusBar().showMessage(f"Decision recorded. Session saved to {recorded.path}")
         self.open_path(self._result.path)

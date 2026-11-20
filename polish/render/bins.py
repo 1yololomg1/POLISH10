@@ -7,8 +7,11 @@ hover annotation. Interval bands, the full provenance record, zoom thresholds
 Everything is positioned by depth, never by row index (C7.2). An absent
 sample is never binned as zero (C7.4). A pixel that holds a created, changed,
 or resampled sample is marked modified and is not averaged with measured
-samples (D74). At this milestone Stages 0-4 produce MEASURED, INVALID, and
-ABSENT only, so ``any_modified`` is false on real data.
+samples (D74). ``any_modified`` is the OR of ``any_created``, ``any_changed``
+and ``any_resampled`` (P17.1, D74). At this milestone Stages 0-4 produce
+MEASURED, INVALID, and ABSENT only, so those flags are false on real data.
+Statuses are mapped to small integer codes once per curve; the masks are
+numpy comparisons, not a Python loop per flag (P17.6).
 
 Structure
 ---------
@@ -30,7 +33,22 @@ import numpy
 
 from polish.model.states import OutputInclusion, SampleStatus
 
-_MODIFIED = frozenset({SampleStatus.CREATED, SampleStatus.CHANGED, SampleStatus.RESAMPLED})
+# One integer per status, assigned once per curve. The masks below are numpy
+# comparisons on this array (P17.6: no Python loop per flag).
+_CODE = {
+    SampleStatus.MEASURED: 0,
+    SampleStatus.INVALID: 1,
+    SampleStatus.ABSENT: 2,
+    SampleStatus.CREATED: 3,
+    SampleStatus.CHANGED: 4,
+    SampleStatus.RESAMPLED: 5,
+}
+_MEASURED = _CODE[SampleStatus.MEASURED]
+_INVALID = _CODE[SampleStatus.INVALID]
+_ABSENT = _CODE[SampleStatus.ABSENT]
+_CREATED = _CODE[SampleStatus.CREATED]
+_CHANGED = _CODE[SampleStatus.CHANGED]
+_RESAMPLED = _CODE[SampleStatus.RESAMPLED]
 
 
 @dataclass(frozen=True, eq=False)
@@ -39,9 +57,10 @@ class PixelBins:
 
     ``minimum`` and ``maximum`` cover MEASURED samples only and are NaN in a
     pixel that has none. ``sample_count`` is every sample in the pixel,
-    whatever its status. ``all_absent`` is true only for a pixel that holds
+    whatever its status.     ``all_absent`` is true only for a pixel that holds
     samples and all of them are ABSENT. A pixel with no sample is not absent
-    data; its count is 0.
+    data; its count is 0. ``any_created``, ``any_changed`` and ``any_resampled``
+    are separate (P17.1). ``any_modified`` is their OR (D74).
     """
 
     depth_top: float
@@ -52,6 +71,9 @@ class PixelBins:
     any_invalid: numpy.ndarray
     any_absent: numpy.ndarray
     all_absent: numpy.ndarray
+    any_created: numpy.ndarray
+    any_changed: numpy.ndarray
+    any_resampled: numpy.ndarray
     any_modified: numpy.ndarray
 
 
@@ -107,8 +129,6 @@ def bin_curve(
         raise ValueError("values and depths must have the same length.")
     if type(statuses) is not tuple or len(statuses) != depth_array.size:
         raise ValueError("statuses must be a tuple with one SampleStatus per sample.")
-    if any(not isinstance(item, SampleStatus) for item in statuses):
-        raise TypeError("statuses must contain SampleStatus values.")
     if type(pixel_count) is not int or pixel_count < 1:
         raise ValueError("pixel_count must be an int of at least 1.")
     top = float(depth_top)
@@ -116,10 +136,13 @@ def bin_curve(
     if not (numpy.isfinite(top) and numpy.isfinite(bottom)) or bottom <= top:
         raise ValueError("depth_bottom must be greater than depth_top.")
 
-    measured = numpy.fromiter((item is SampleStatus.MEASURED for item in statuses), dtype=bool, count=len(statuses))
-    invalid = numpy.fromiter((item is SampleStatus.INVALID for item in statuses), dtype=bool, count=len(statuses))
-    absent = numpy.fromiter((item is SampleStatus.ABSENT for item in statuses), dtype=bool, count=len(statuses))
-    modified = numpy.fromiter((item in _MODIFIED for item in statuses), dtype=bool, count=len(statuses))
+    codes = _status_codes(statuses)
+    measured = codes == _MEASURED
+    invalid = codes == _INVALID
+    absent = codes == _ABSENT
+    created = codes == _CREATED
+    changed = codes == _CHANGED
+    resampled = codes == _RESAMPLED
 
     inside = (depth_array >= top) & (depth_array <= bottom)
     position = (depth_array[inside] - top) / (bottom - top) * pixel_count
@@ -128,7 +151,9 @@ def bin_curve(
     counts = numpy.bincount(pixel, minlength=pixel_count)
     absent_counts = numpy.bincount(pixel, weights=absent[inside], minlength=pixel_count)
     invalid_counts = numpy.bincount(pixel, weights=invalid[inside], minlength=pixel_count)
-    modified_counts = numpy.bincount(pixel, weights=modified[inside], minlength=pixel_count)
+    created_counts = numpy.bincount(pixel, weights=created[inside], minlength=pixel_count)
+    changed_counts = numpy.bincount(pixel, weights=changed[inside], minlength=pixel_count)
+    resampled_counts = numpy.bincount(pixel, weights=resampled[inside], minlength=pixel_count)
 
     minimum = numpy.full(pixel_count, numpy.inf)
     maximum = numpy.full(pixel_count, -numpy.inf)
@@ -146,11 +171,34 @@ def bin_curve(
         invalid_counts > 0,
         absent_counts > 0,
         (counts > 0) & (absent_counts == counts),
-        modified_counts > 0,
+        created_counts > 0,
+        changed_counts > 0,
+        resampled_counts > 0,
+        (created_counts > 0) | (changed_counts > 0) | (resampled_counts > 0),
     )
     for array in arrays:
         array.flags.writeable = False
     return PixelBins(top, bottom, *arrays)
+
+
+def _status_codes(statuses: tuple[SampleStatus, ...]) -> numpy.ndarray:
+    """Map each sample status to a small integer, once per curve. P17.6, D74.
+
+    Raises
+    ------
+    TypeError
+        A member is not a SampleStatus. The check is this one pass, not a
+        second walk of the samples.
+    """
+
+    code_of = _CODE
+
+    def code(item: object) -> int:
+        if isinstance(item, SampleStatus):
+            return code_of[item]
+        raise TypeError("statuses must contain SampleStatus values.")
+
+    return numpy.fromiter((code(item) for item in statuses), dtype=numpy.int8, count=len(statuses))
 
 
 def hit_test(depths: object, depth: float) -> int:

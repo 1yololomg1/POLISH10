@@ -23,7 +23,20 @@ from polish.model.states import UserAction
 from polish.pipeline.run import WellRun, run_well
 from polish.stages.s00_ingest import IngestResult, UnclassifiedIngest
 
-__all__ = ["LoadResult", "SessionNotWritten", "load_well", "record_decision"]
+__all__ = ["LoadResult", "RecordedDecision", "SessionNotWritten", "load_well", "record_decision"]
+
+
+@dataclass(frozen=True)
+class RecordedDecision:
+    """One decision saved beside the well. D47.
+
+    ``session`` is the session that was written. The caller keeps it until a
+    reload of that save replaces it, so a second decision is not built on the
+    session from before the save.
+    """
+
+    path: Path
+    session: Session
 
 
 @dataclass(frozen=True)
@@ -82,7 +95,7 @@ def record_decision(
     user_label: str | None = None,
     role: str | None = None,
     app_data: Path | None = None,
-) -> Path:
+) -> RecordedDecision:
     """Record one this-well decision and save the session beside the well. D47, D48.
 
     The changed-file question is answered through ``choose_changed_file``,
@@ -90,8 +103,8 @@ def record_decision(
 
     Returns
     -------
-    Path
-        The session file that was written.
+    RecordedDecision
+        The session file that was written, and the session that was written to it.
 
     Raises
     ------
@@ -105,7 +118,7 @@ def record_decision(
         if chosen_option is None:
             raise ValueError("CHOOSE_OPTION requires a chosen option.")
         loaded = choose_changed_file(session, chosen_option)
-        return save_session(loaded.session)
+        return RecordedDecision(save_session(loaded.session), loaded.session)
     updated = apply_decision(
         session,
         finding,
@@ -117,4 +130,4 @@ def record_decision(
         role=role,
         app_data=app_data,
     )
-    return save_session(updated)
+    return RecordedDecision(save_session(updated), updated)

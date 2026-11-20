@@ -13,11 +13,17 @@ from PySide6 import QtCore, QtWidgets
 
 from polish.decisions import Session
 from polish.decisions.apply import current_decisions, listed_options
+from polish.model.dataset import Curve
 from polish.model.findings import FindingRecord
 from polish.model.mapping import roles_stated_by_family
 from polish.model.states import BlockType, IssueDisposition, UserAction, permitted_actions
 from polish.tables.loader import load_shipped_tables
 from polish_ui import wording
+from polish_ui.evidence_text import render_evidence
+
+# The family box starts here for every finding and every well. Record is
+# refused until the user moves off it (P18.6).
+CHOOSE_FAMILY = "Choose a family"
 
 _FINDING_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
@@ -56,6 +62,7 @@ class QueuePanel(QtWidgets.QWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._session: Session | None = None
+        self._mnemonics: dict[int, str] = {}
         self._shipped = load_shipped_tables()
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setHeaderHidden(True)
@@ -66,6 +73,7 @@ class QueuePanel(QtWidgets.QWidget):
         self.action_box.currentIndexChanged.connect(self._show_fields)
         self.option_box = QtWidgets.QComboBox()
         self.family_box = QtWidgets.QComboBox()
+        self.family_box.addItem(CHOOSE_FAMILY)
         self.family_box.addItems(sorted(record.id for record in self._shipped.families))
         self.family_box.currentIndexChanged.connect(self._show_roles)
         self.role_box = QtWidgets.QComboBox()
@@ -99,10 +107,22 @@ class QueuePanel(QtWidgets.QWidget):
         layout.addWidget(self.message)
         self._show_current(None, None)
 
-    def set_items(self, findings: tuple[FindingRecord, ...], session: Session | None) -> None:
-        """Show these findings. ``session`` is None when no decision can be recorded."""
+    def set_items(
+        self,
+        findings: tuple[FindingRecord, ...],
+        session: Session | None,
+        curves: tuple[Curve, ...] = (),
+    ) -> None:
+        """Show these findings. ``session`` is None when no decision can be recorded.
+
+        ``curves`` are the loaded dataset's curves, used to name a curve
+        reference by column and mnemonic. The family, role, option, label and
+        reason fields are cleared for the new file (P18.6).
+        """
 
         self._session = session
+        self._mnemonics = {curve.ref.column_index: curve.original_mnemonic for curve in curves}
+        self.form.setEnabled(True)
         current = {} if session is None else current_decisions(session.decisions, session.held_ids)
         self.tree.clear()
         self.message.setText("")
@@ -110,7 +130,10 @@ class QueuePanel(QtWidgets.QWidget):
             members = [item for item in findings if item.block_type is block]
             if not members:
                 continue
-            group = QtWidgets.QTreeWidgetItem([f"{block.value} — {wording.BLOCK_WORDING[block]} ({len(members)})"])
+            names = {wording.STAGE_NAMES[item.stage] for item in members}
+            stage_name = names.pop() if len(names) == 1 else wording.STAGE_NAMES[members[0].stage]
+            heading = wording.block_sentence(block, stage_name)
+            group = QtWidgets.QTreeWidgetItem([f"{block.value} — {heading} ({len(members)})"])
             self.tree.addTopLevelItem(group)
             for finding in members:
                 decision = current.get(finding.id)
@@ -153,6 +176,16 @@ class QueuePanel(QtWidgets.QWidget):
 
         self.message.setText(text)
 
+    def set_form_enabled(self, enabled: bool, reason: str = "") -> None:
+        """Let the form take input, or refuse it while a load runs. P21.7, D47.
+
+        ``reason`` is one line, shown under the form when input is refused.
+        """
+
+        self.form.setEnabled(enabled)
+        if not enabled:
+            self.message.setText(reason)
+
     def _current(self) -> tuple[FindingRecord, IssueDisposition] | None:
         item = self.tree.currentItem()
         if item is None:
@@ -165,6 +198,7 @@ class QueuePanel(QtWidgets.QWidget):
         self.action_box.clear()
         self.action_box.blockSignals(False)
         self.message.setText("")
+        self._reset_choices()
         if selected is None:
             self.detail.setHtml("<p>Select a finding.</p>")
             self.form.setVisible(False)
@@ -176,15 +210,15 @@ class QueuePanel(QtWidgets.QWidget):
         may_do: list[str] = [action.value for action in offered] + list(notes)
         if not permitted_actions(finding.block_type):
             may_do = [wording.VIEW_ONLY]
-        evidence = "".join(
-            f"<br>{html.escape(str(key))}: {html.escape(str(value))}" for key, value in finding.evidence.fields
-        )
+        evidence = render_evidence(finding.evidence.fields, self._mnemonics)
+        evidence_html = "".join(f"<br>{html.escape(line)}" for line in evidence.split("\n") if line)
         results = "; ".join(f"{action.value} → {wording.ACTION_RESULT[action].value}" for action in offered)
+        meaning = wording.block_sentence(finding.block_type, wording.STAGE_NAMES[finding.stage])
         self.detail.setHtml(
             "<p><b>WHAT POLISH OBSERVED</b><br>"
-            f"{html.escape(finding.message)}{evidence}</p>"
+            f"{html.escape(finding.message)}{evidence_html}</p>"
             "<p><b>WHAT IT MEANS</b><br>"
-            f"{finding.block_type.value}: {html.escape(wording.BLOCK_WORDING[finding.block_type])}</p>"
+            f"{finding.block_type.value}: {html.escape(meaning)}</p>"
             "<p><b>WHAT YOU MAY DO</b><br>"
             f"{'<br>'.join(html.escape(line) for line in may_do)}</p>"
             "<p><b>WHAT HAPPENS NEXT</b><br>"
@@ -199,12 +233,20 @@ class QueuePanel(QtWidgets.QWidget):
         for action in offered:
             self.action_box.addItem(action.value, action)
         self.action_box.blockSignals(False)
-        self.option_box.clear()
         self.option_box.addItems(list(listed_options(finding)))
-        self.label_edit.clear()
-        self.reason_edit.clear()
         self._show_roles()
         self._show_fields()
+
+    def _reset_choices(self) -> None:
+        """Clear the entry fields. The family box returns to "Choose a family". P18.6."""
+
+        self.family_box.blockSignals(True)
+        self.family_box.setCurrentIndex(0)
+        self.family_box.blockSignals(False)
+        self.option_box.clear()
+        self.role_box.clear()
+        self.label_edit.clear()
+        self.reason_edit.clear()
 
     def _set_row_visible(self, widget: QtWidgets.QWidget, visible: bool) -> None:
         self._form_layout.setRowVisible(widget, visible)
@@ -221,8 +263,13 @@ class QueuePanel(QtWidgets.QWidget):
         self._set_row_visible(self.reason_edit, action is not UserAction.ACKNOWLEDGE)
 
     def _show_roles(self) -> None:
-        roles = roles_stated_by_family(self._shipped, self.family_box.currentText())
+        family = self.family_box.currentText()
         self.role_box.clear()
+        if family == CHOOSE_FAMILY:
+            if self.action_box.currentData() is UserAction.MAP_EXPLICITLY:
+                self._set_row_visible(self.role_box, False)
+            return
+        roles = roles_stated_by_family(self._shipped, family)
         self.role_box.addItems([role.value for role in roles])
         if self.action_box.currentData() is UserAction.MAP_EXPLICITLY:
             self._set_row_visible(self.role_box, self.role_box.count() > 1)
@@ -238,6 +285,9 @@ class QueuePanel(QtWidgets.QWidget):
         if action is UserAction.CHOOSE_OPTION:
             fields["chosen_option"] = self.option_box.currentText()
         if action is UserAction.MAP_EXPLICITLY:
+            if self.family_box.currentText() == CHOOSE_FAMILY:
+                self.show_message("Choose a family before recording.")
+                return
             fields["family_id"] = self.family_box.currentText()
             label = self.label_edit.text().strip()
             fields["user_label"] = label if label else None

@@ -8,13 +8,53 @@ from __future__ import annotations
 
 from polish.model.states import BlockType, IssueDisposition, UserAction, ValidationOutcome
 
+# Title-case names for Stages 0-10. The shell's STAGES tuple is this list.
+# UXC2's structural sentence is built from the name of the stage that refused.
+STAGE_NAMES = (
+    "Ingest",
+    "Depth Axis",
+    "Identification",
+    "Units",
+    "Validity",
+    "Resampling",
+    "Derivation",
+    "Gap Filling",
+    "Denoising",
+    "Manifest",
+    "Export",
+)
+
+
+def structural_sentence(stage_name: str) -> str:
+    """UXC2 structural stop, naming the stage that refused.
+
+    The glossary's "past Depth Axis" sentence is this rule for Stage 1, which
+    is the worked example. A Stage 0 refusal names Ingest.
+    """
+
+    return f"This file cannot proceed past {stage_name}"
+
+
+def block_sentence(block: BlockType, stage_name: str) -> str:
+    """The sentence shown for one finding. UXC2.
+
+    A structural finding uses ``structural_sentence`` with its own stage.
+    """
+
+    if block is BlockType.STRUCTURAL_DATA_FAILURE:
+        return structural_sentence(stage_name)
+    return BLOCK_WORDING[block]
+
+
 # state_glossary.md, block_type table, "Preferred user-facing wording" (UXC2).
+# STRUCTURAL_DATA_FAILURE here is the Stage 1 example. Display goes through
+# block_sentence so a refusal at another stage names that stage.
 BLOCK_WORDING = {
     BlockType.INFORMATIONAL: "Recorded — no action required",
     BlockType.AMBIGUOUS_INTERPRETATION: "Your decision is required",
     BlockType.RULE_DEPENDENT_WARNING: "Map explicitly to continue this analysis",
     BlockType.SCIENTIFIC_PRECONDITION_FAILURE: "This method was not run",
-    BlockType.STRUCTURAL_DATA_FAILURE: "This file cannot proceed past Depth Axis",
+    BlockType.STRUCTURAL_DATA_FAILURE: structural_sentence("Depth Axis"),
     BlockType.EXPORT_CONFORMANCE_FAILURE: "Export is blocked until this is corrected",
 }
 
