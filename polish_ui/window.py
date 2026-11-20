@@ -28,7 +28,7 @@ from polish.model.states import BlockType, StageStatus, UserAction
 from polish.render import annotate, hit_test
 from polish_ui import wording
 from polish_ui.curve_colours import curve_colour
-from polish_ui.loading import LoadResult, SessionNotWritten, load_well, record_decision
+from polish_ui.loading import LoadResult, SessionNotWritten, finished_stage_lines, load_well, record_decision
 from polish_ui.queue_panel import QueuePanel
 from polish_ui.theme import (
     AXIS_COLOUR,
@@ -42,6 +42,62 @@ from polish_ui.theme import (
     TITLE_CHARS,
     TRACK_WIDTH,
 )
+
+class ValueAxis(pyqtgraph.AxisItem):
+    """Bottom value axis whose numbers do not run together.
+
+    The ticks are the ones pyqtgraph chooses. Labels that would touch are
+    moved onto later rows, and the axis is tall enough that those rows are
+    drawn rather than clipped.
+    """
+
+    _ROWS = 6
+
+    def __init__(self) -> None:
+        super().__init__(orientation="bottom")
+        self.enableAutoSIPrefix(False)
+        self.setStyle(hideOverlappingLabels=False)
+
+    def reserve_for_separate_labels(self) -> None:
+        """Reserve one row per label that may have to sit below the one before it."""
+
+        font = self.style["tickFont"]
+        metrics = QtGui.QFontMetrics(font if font is not None else QtGui.QFont())
+        line = metrics.height()
+        tick = max(0, int(self.style["tickLength"]))
+        offset = int(self.style["tickTextOffset"][1])
+        label = int(self.label.boundingRect().height()) if self.label.isVisible() else 0
+        self.setHeight(tick + offset + self._ROWS * line + label + 4)
+
+    def generateDrawSpecs(self, painter):
+        """Tick specs unchanged. Overlapping value labels move to later rows."""
+
+        axis_spec, tick_specs, text_specs = super().generateDrawSpecs(painter)
+        if self.orientation != "bottom" or len(text_specs) < 2:
+            return axis_spec, tick_specs, text_specs
+        return axis_spec, tick_specs, _separate_labels(text_specs)
+
+
+def _separate_labels(text_specs: list) -> list:
+    """Put each label on the first row where it does not meet the label already there."""
+
+    ordered = sorted(text_specs, key=lambda item: (item[0].left(), item[0].top()))
+    row_right: list[float] = []
+    placed = []
+    gap = 2.0
+    for rect, flags, text in ordered:
+        row = 0
+        while row < len(row_right) and rect.left() < row_right[row] + gap:
+            row += 1
+        if row == len(row_right):
+            row_right.append(rect.right())
+        else:
+            row_right[row] = rect.right()
+        moved = QtCore.QRectF(rect)
+        moved.translate(0, row * (rect.height() + gap))
+        placed.append((moved, flags, text))
+    return placed
+
 
 STAGES = tuple(enumerate(wording.STAGE_NAMES))
 _BUILT_THROUGH = 4
@@ -72,9 +128,15 @@ _COLUMNS = (
 
 
 class LoadWorker(QtCore.QThread):
-    """Runs Stages 0-4 off the interface thread. No dialog is shown while it runs."""
+    """Runs Stages 0-4 off the interface thread. No dialog is shown while it runs.
+
+    Each progress call from the engine is emitted as ``progressed``. The
+    window updates that stage when the call arrives. The calls are not in a
+    promised order: Stage 3 may start before Stage 2 finishes.
+    """
 
     loaded = QtCore.Signal(object)
+    progressed = QtCore.Signal(object)
 
     def __init__(self, path: Path, app_data: Path | None, tables: Path | None, parent: QtCore.QObject) -> None:
         super().__init__(parent)
@@ -85,7 +147,14 @@ class LoadWorker(QtCore.QThread):
     def run(self) -> None:
         """Thread body."""
 
-        self.loaded.emit(load_well(self._path, app_data=self._app_data, local_tables_directory=self._tables))
+        self.loaded.emit(
+            load_well(
+                self._path,
+                app_data=self._app_data,
+                local_tables_directory=self._tables,
+                progress=self.progressed.emit,
+            )
+        )
 
 
 def _default_tracks(run: object, columns: list[int]) -> set[int]:
@@ -114,6 +183,15 @@ def _default_tracks(run: object, columns: list[int]) -> set[int]:
     other_families = [c for c in candidates if family(c) is not None and c not in preferred]
     no_family = [c for c in candidates if family(c) is None]
     return set((preferred + other_families + no_family)[:_DEFAULT_TRACKS])
+
+
+def _with_stage_lines(base: str, run: object) -> str:
+    """Append one line for each stage the run finished. D98."""
+
+    lines = finished_stage_lines(run)  # the loader checks the run type
+    if not lines:
+        return base
+    return base + "\n" + "\n".join(lines)
 
 
 _READOUT_DEFAULT = "Move the pointer over a track to read the nearest actual sample."
@@ -162,6 +240,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._queued_path: Path | None = None
         self._epoch = 0
         self._loading = False
+        self._stage_status = {number: StageStatus.NOT_RUN for number, _name in STAGES}
+        self._progress_lines: list[str] = []
         self._plots: list[tuple[object, int]] = []
         self.setWindowTitle("POLISH")
         self.resize(1500, 900)
@@ -287,6 +367,7 @@ class MainWindow(QtWidgets.QMainWindow):
         epoch = self._epoch
         worker = LoadWorker(path, self._app_data, self._tables, self)
         worker.loaded.connect(lambda result, epoch=epoch: self._accept_load(result, epoch))
+        worker.progressed.connect(lambda notice, epoch=epoch: self._on_progress(notice, epoch))
         worker.finished.connect(lambda worker=worker: self._retire(worker))
         self._worker = worker
         worker.start()
@@ -311,16 +392,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self._queued_path = None
         self._start_worker(path)
 
+    def _on_progress(self, notice: object, epoch: int) -> None:
+        """Update the one stage this call names. A superseded load is ignored. D98.
+
+        The hook does not promise an order, so this does not assume Stage 3
+        arrives after Stage 2.
+        """
+
+        if epoch != self._epoch:
+            return
+        stage = getattr(notice, "stage", None)
+        phase = getattr(notice, "phase", None)
+        if type(stage) is not int or stage not in self._stage_status or phase not in ("started", "finished"):
+            return
+        if phase == "started":
+            self._stage_status[stage] = StageStatus.RUNNING
+        else:
+            status = getattr(notice, "status", None)
+            try:
+                self._stage_status[stage] = StageStatus(status)
+            except ValueError:
+                return
+            summary = getattr(notice, "summary", "")
+            if isinstance(summary, str) and summary.strip() != "":
+                self._progress_lines.append(summary)
+        self._show_rail(self._stage_status)
+        if self._progress_lines:
+            banner = self.headline.text().split("\n", 1)[0]
+            self.headline.setText(banner + "\n" + "\n".join(self._progress_lines))
+
     def _clear_for_load(self, path: Path) -> None:
         """Show that this file is being read, and nothing from the previous file. P18.2, P18.3."""
 
         self._loading = True
+        self._progress_lines = []
         self.headline.setText(f"Running Stages 0–4 on {path.name}. Nothing in the file is altered.")
-        running = {
+        self._stage_status = {
             number: StageStatus.RUNNING if number <= _BUILT_THROUGH else StageStatus.NOT_RUN
             for number, _name in STAGES
         }
-        self._show_rail(running)
+        self._show_rail(self._stage_status)
         self.table.setRowCount(0)
         self.tracks.clear()
         self._plots = []
@@ -407,14 +518,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if result.unclassified is not None:
             return f"Unclassified at Stage 0. {result.unclassified}"
         run = result.run
+        if run is None:
+            return "Not read."
         findings = run.session_load.session.findings
         refused = self._refused_stage(result)
         if refused is not None:
             structural = [item for item in findings if item.block_type is BlockType.STRUCTURAL_DATA_FAILURE]
             extra = f" {structural[0].message}" if structural else ""
-            return f"{wording.structural_sentence(wording.STAGE_NAMES[refused])}.{extra}"
+            sentence = f"{wording.structural_sentence(wording.STAGE_NAMES[refused])}.{extra}"
+            return _with_stage_lines(sentence, run)
         curves = 0 if run.ingest.dataset is None else len(run.ingest.dataset.curves)
-        return f"Read {result.path.name}: {curves} curves, {len(findings)} findings. No value has been altered."
+        base = f"Read {result.path.name}: {curves} curves, {len(findings)} findings. No value has been altered."
+        return _with_stage_lines(base, run)
 
     def _show_depth(self, result: LoadResult) -> None:
         depth = None if result.run is None else result.run.depth
@@ -511,7 +626,8 @@ class MainWindow(QtWidgets.QMainWindow):
         first = None
         for position, column in enumerate(self.selected_columns()):
             curve = dataset.curves[column]
-            plot = self.tracks.addPlot(row=0, col=position)
+            value_axis = ValueAxis()
+            plot = self.tracks.addPlot(row=0, col=position, axisItems={"bottom": value_axis})
             unit = curve.original_unit if curve.original_unit else "no unit"
             name = curve.original_mnemonic
             # A long mnemonic is shortened in the track title only, so every
@@ -529,6 +645,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # 0.2-0.6 must not read as 200-600 "x0.001").
                 plot.getAxis(side).enableAutoSIPrefix(False)
             plot.setLabel("bottom", unit, color=AXIS_COLOUR)
+            value_axis.reserve_for_separate_labels()
             plot.invertY(True)
             plot.showGrid(x=True, y=True, alpha=0.2)
             plot.plot(

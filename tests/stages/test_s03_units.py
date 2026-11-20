@@ -150,7 +150,12 @@ def test_absent_empty_and_unrecognised_are_distinct(tmp_path: Path):
     assert unknown.processing_eligibility is ProcessingEligibility.NOT_ELIGIBLE_LOW_TIER
     notice = _findings(result, BlockType.AMBIGUOUS_INTERPRETATION, "ZZ")
     assert notice
-    assert "NOTAUNIT" in notice[0].message
+    assert notice[0].message == (
+        "Curve ZZ has no family, so no unit is listed. Choose the curve's family first."
+    )
+    assert listed_options(notice[0]) == ()
+    empty_question = _findings(result, BlockType.AMBIGUOUS_INTERPRETATION, "GR")
+    assert listed_options(empty_question[0]) == ("GAPI", "CPS")
     curve = ingested.dataset.curves[1]
     object.__setattr__(curve, "original_unit", None)
     depth = classify(ingested)
@@ -606,3 +611,30 @@ def test_a_chosen_unit_changes_how_stage_4_treats_the_curve(tmp_path: Path):
     assert unchosen.family_rules_applied == ()
     assert selected.family_rules_applied == ()
     assert unchosen.ineligibility_reason != selected.ineligibility_reason
+
+
+def test_a_blank_gamma_ray_unit_lists_the_family_units_and_choosing_gapi_runs_the_rule(tmp_path: Path):
+    ingested, identified, plain = _run(tmp_path, [("GR", "")], [["0.0", "40.0"], ["1.0", "50.0"]])
+    question = _findings(plain, BlockType.AMBIGUOUS_INTERPRETATION, "GR")
+    assert len(question) == 1
+    assert listed_options(question[0]) == ("GAPI", "CPS")
+    assert "empty unit field" in question[0].message
+    session = open_session(ingested.source_file.path, plain.findings)
+    decided = apply_decision(
+        session,
+        question[0],
+        UserAction.CHOOSE_OPTION,
+        reason="the curve is in GAPI",
+        chosen_option="GAPI",
+        timestamp=_WHEN,
+    )
+    chosen = interpret(ingested, identified, unit_choices(decided))
+    gr = _curve(chosen, "GR")
+    assert gr.outcome is UnitInterpretation.RECOGNISED
+    assert gr.canonical_unit == "GAPI"
+    assert gr.decision_id == decided.decisions[-1].decision_id
+    depth = classify(ingested)
+    assessed = assess(ingested, depth, identified, chosen)
+    validity = _validity(assessed, "GR")
+    assert validity.family_rules_applied == ("GAMMA_RAY_TOTAL",)
+    assert validity.outcome is ValidationOutcome.PASSED

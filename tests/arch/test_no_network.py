@@ -39,7 +39,7 @@ def test_polish_sources_do_not_import_network_modules():
     assert offenders == []
 
 
-def test_runtime_socket_constructors_raise():
+def test_the_socket_fixture_makes_runtime_socket_constructors_raise():
     with pytest.raises(RuntimeError, match="D14"):
         socket.socket()
     with pytest.raises(RuntimeError, match="D14"):

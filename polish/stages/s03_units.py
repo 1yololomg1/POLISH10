@@ -336,12 +336,41 @@ def _candidates_json(matches: tuple[SpellingRecord, ...]) -> str:
     return json.dumps(payload, sort_keys=True)
 
 
+def _family_unit_candidates(family: FamilyRecord, spellings: UnitSpellings) -> tuple[SpellingRecord, ...]:
+    """The canonical unit of each accepted dimension, in that order. D93.
+
+    The first spelling of the dimension supplies the canonical unit. A later
+    spelling of the same canonical unit is not a second option. The stored
+    spelling is the canonical unit, so a choice of that unit matches this row.
+    """
+
+    chosen: list[SpellingRecord] = []
+    seen: set[str] = set()
+    for dimension in family.accepted_dimensions:
+        for row in spellings.spellings:
+            if row.dimension != dimension or row.canonical_unit in seen:
+                continue
+            seen.add(row.canonical_unit)
+            chosen.append(
+                SpellingRecord(
+                    spelling=row.canonical_unit,
+                    canonical_unit=row.canonical_unit,
+                    dimension=row.dimension,
+                    source=row.source,
+                    source_tier=row.source_tier,
+                )
+            )
+            break
+    return tuple(chosen)
+
+
 def _record_finding(
     ledger: _Ledger,
     item: CurveIdentification,
     outcome: UnitInterpretation,
     chosen: SpellingRecord | None,
     candidates: tuple[SpellingRecord, ...],
+    family_units: tuple[SpellingRecord, ...],
     family: FamilyRecord | None,
     declared: str | None,
 ) -> None:
@@ -368,13 +397,22 @@ def _record_finding(
                 f"Curve {mnemonic} unit {declared!r} has more than one meaning ({listed}). "
                 "The family does not accept exactly one of them, so the unit stays unrecognised."
             )
-        elif outcome is UnitInterpretation.ABSENT:
-            message = f"Curve {mnemonic} declares no unit. The unit is not assumed."
-        elif outcome is UnitInterpretation.EMPTY:
-            message = f"Curve {mnemonic} has an empty unit field. The unit is not assumed."
         else:
-            shown = declared if declared is not None else ""
-            message = f"Curve {mnemonic} unit {shown!r} is not a known unit. The unit is not assumed."
+            # Absent, empty, or unknown, with no spelling match. The family's
+            # canonical units are the options. A curve with no family lists none.
+            if family_units:
+                common["candidates"] = _candidates_json(family_units)
+            if family is None:
+                message = (
+                    f"Curve {mnemonic} has no family, so no unit is listed. Choose the curve's family first."
+                )
+            elif outcome is UnitInterpretation.ABSENT:
+                message = f"Curve {mnemonic} declares no unit. The unit is not assumed."
+            elif outcome is UnitInterpretation.EMPTY:
+                message = f"Curve {mnemonic} has an empty unit field. The unit is not assumed."
+            else:
+                shown = declared if declared is not None else ""
+                message = f"Curve {mnemonic} unit {shown!r} is not a known unit. The unit is not assumed."
         ledger.add(
             "unit_unresolved",
             (("column", str(item.curve.column_index)), ("mnemonic", mnemonic)),
@@ -531,7 +569,11 @@ def interpret(
         else:
             # The file's spelling list, the same meanings _resolve starts from.
             # A family that would have picked one of them does not hide the others.
+            # An absent, empty, or unknown unit has no spelling match. The
+            # family's canonical units are then the candidates a choice can name.
             matches = _spelling_candidates(curve.original_unit, spellings)
+            if not matches and family is not None:
+                matches = _family_unit_candidates(family, spellings)
             chosen = _matching_candidate(matches, choice.canonical_unit)
             if chosen is None:
                 _record_unmatched_choice(ledger, item, choice)
@@ -543,12 +585,26 @@ def interpret(
                     outcome = UnitInterpretation.RECOGNISED
                 else:
                     outcome = UnitInterpretation.INCOMPATIBLE_WITH_FAMILY
+        family_units: tuple[SpellingRecord, ...] = ()
+        if (
+            not candidates
+            and family is not None
+            and outcome
+            in (
+                UnitInterpretation.ABSENT,
+                UnitInterpretation.EMPTY,
+                UnitInterpretation.UNRECOGNISED,
+            )
+        ):
+            family_units = _family_unit_candidates(family, spellings)
         eligibility = units_eligibility(item.processing_eligibility, outcome)
         # A resolved choice does not raise the unit question. Stage 2 likewise
         # does not raise the unrecognised-mnemonic notice once a mapping
         # gives the curve a family. An incompatible choice still raises
         # today's RULE_DEPENDENT_WARNING.
-        _record_finding(ledger, item, outcome, chosen, candidates, family, curve.original_unit)
+        _record_finding(
+            ledger, item, outcome, chosen, candidates, family_units, family, curve.original_unit
+        )
         interpreted.append(
             CurveUnits(
                 curve=curve.ref,
@@ -559,7 +615,7 @@ def interpret(
                 canonical_unit=None if chosen is None else chosen.canonical_unit,
                 dimension=None if chosen is None else chosen.dimension,
                 family_id=item.family_id,
-                candidates=candidates,
+                candidates=candidates if candidates else family_units,
                 decision_id=decision_id,
             )
         )

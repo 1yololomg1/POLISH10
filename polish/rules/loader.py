@@ -57,6 +57,14 @@ _EFFECT_FOR_TYPE = {
     "PLAUSIBILITY": "WARNING",
 }
 _LIBRARY_VERSION = "1"
+# F13. The limits stay on source / source_tier. The family mapping is a
+# separate statement, required on a family rule and absent on the non-finite rule.
+_FAMILY_MAPPING_KEYS = ("family_mapping_source", "family_mapping_source_tier")
+_FAMILY_MAPPING_SOURCE = (
+    "Proposed by Claude 14 Oct 2026, approved by the owner by sending P12; "
+    "not confirmed by the domain expert."
+)
+_FAMILY_MAPPING_TIER = "AC"
 _RANGE_BOUND_KEYS = frozenset({"minimum", "maximum", "inclusivity"})
 _LOG_BOUND_KEYS = frozenset({"minimum", "maximum", "inclusivity", "outside_fraction_more_than"})
 _NONFINITE_BOUND_KEYS = frozenset({"condition"})
@@ -127,6 +135,8 @@ class ValidityRule:
     environmental_qualifiers: tuple[str, ...]
     source: str
     source_tier: str
+    family_mapping_source: str | None
+    family_mapping_source_tier: str | None
     library_version: str
     violation_effect: str
     overridable: bool
@@ -195,7 +205,7 @@ def _validate_validity_library(payload: dict[str, object]) -> None:
 def _validity_rule(row: object) -> ValidityRule:
     if not isinstance(row, dict):
         raise ValueError("A validity rule must be a JSON object.")
-    extra = set(row) - set(_RULE_KEYS)
+    extra = set(row) - set(_RULE_KEYS) - set(_FAMILY_MAPPING_KEYS)
     if extra:
         raise ValueError(f"Validity rule has unexpected keys: {sorted(extra)}.")
     for key in _RULE_KEYS:
@@ -216,6 +226,7 @@ def _validity_rule(row: object) -> ValidityRule:
     qualifiers = _text_list(row["environmental_qualifiers"], f"{rule_id} environmental_qualifiers")
     source = _text(row["source"], f"{rule_id} source")
     source_tier = _text(row["source_tier"], f"{rule_id} source_tier")
+    mapping_source, mapping_tier = _family_mapping(row, rule_id, family is None)
     version = _text(row["library_version"], f"{rule_id} library_version")
     if version != _LIBRARY_VERSION:
         raise ValueError(f"{rule_id} library_version must be '1'.")
@@ -245,11 +256,32 @@ def _validity_rule(row: object) -> ValidityRule:
         environmental_qualifiers=qualifiers,
         source=source,
         source_tier=source_tier,
+        family_mapping_source=mapping_source,
+        family_mapping_source_tier=mapping_tier,
         library_version=version,
         violation_effect=effect,
         overridable=overridable,
         override_recorded_as=recorded,
     )
+
+
+def _family_mapping(row: dict[str, object], rule_id: str, non_finite: bool) -> tuple[str | None, str | None]:
+    """The family-mapping provenance. Required on a family rule, absent otherwise. F13."""
+
+    present = [key for key in _FAMILY_MAPPING_KEYS if key in row]
+    if non_finite:
+        if present:
+            raise ValueError(f"{rule_id} has no family, so it has no family-mapping source.")
+        return None, None
+    if len(present) != len(_FAMILY_MAPPING_KEYS):
+        raise ValueError(f"{rule_id} must state family_mapping_source and family_mapping_source_tier.")
+    source = row["family_mapping_source"]
+    tier = row["family_mapping_source_tier"]
+    if source != _FAMILY_MAPPING_SOURCE:
+        raise ValueError(f"{rule_id} family_mapping_source is not the recorded mapping statement.")
+    if tier != _FAMILY_MAPPING_TIER:
+        raise ValueError(f"{rule_id} family_mapping_source_tier must be {_FAMILY_MAPPING_TIER!r}.")
+    return _FAMILY_MAPPING_SOURCE, _FAMILY_MAPPING_TIER
 
 
 def _bounds(value: object, rule_id: str, non_finite: bool) -> BoundValues:

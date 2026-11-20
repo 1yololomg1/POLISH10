@@ -190,9 +190,16 @@ def test_library_ships_the_stated_rules_and_rejects_a_missing_key():
     assert sp.bound_values.outside_fraction_more_than.numerator == 1
     assert sp.bound_values.outside_fraction_more_than.denominator == 5
     assert "Claude's reading of 'its samples', 14 Oct 2026, not the expert's words" in sp.source
-    assert "family mapping proposed 14 Oct 2026, not confirmed by the domain expert" in sp.source
+    assert "family mapping proposed" not in sp.source
+    assert sp.family_mapping_source == (
+        "Proposed by Claude 14 Oct 2026, approved by the owner by sending P12; "
+        "not confirmed by the domain expert."
+    )
+    assert sp.family_mapping_source_tier == "AC"
     finite = rules["non_finite_value"]
     assert finite.family is None
+    assert finite.family_mapping_source is None
+    assert finite.family_mapping_source_tier is None
     assert finite.canonical_unit is None
     assert finite.rule_type == "DOMAIN_CONSTRAINT"
     assert finite.violation_effect == "INVALID"
@@ -251,12 +258,13 @@ def test_non_finite_rule_alone_does_not_pass_and_flags_infinity(tmp_path: Path):
     assert flagged.non_finite_count == 1
     assert flagged.samples[0].status is SampleStatus.INVALID
     assert flagged.samples[0].invalid_rules == ("non_finite_value",)
-    assert flagged.samples[0].output_inclusion is OutputInclusion.PENDING_DECISION
+    assert flagged.samples[0].output_inclusion is OutputInclusion.EXCLUDED
     assert flagged.samples[1].status is SampleStatus.MEASURED
-    hard = _findings(inf_result, BlockType.AMBIGUOUS_INTERPRETATION, "CALI")
-    assert len(hard) == 1
-    assert hard[0].evidence.as_dict()["rule_id"] == "non_finite_value"
-    assert "non-finite value" in hard[0].message
+    hard = _findings(inf_result, BlockType.INFORMATIONAL, "CALI")
+    excluded = [item for item in hard if item.check == "invalid_samples_excluded"]
+    assert len(excluded) == 1
+    assert excluded[0].evidence.as_dict()["rule_id"] == "non_finite_value"
+    assert "sample(s) that are not finite numbers" in excluded[0].message
     assert math.isinf(float(replaced.dataset.curves[1].values[0]))
 
 
@@ -322,27 +330,56 @@ def test_dt_below_40_is_invalid_visible_and_unclipped(tmp_path: Path):
         SampleStatus.INVALID,
         SampleStatus.MEASURED,
     ]
-    assert dt.samples[0].output_inclusion is OutputInclusion.PENDING_DECISION
-    assert dt.samples[3].output_inclusion is OutputInclusion.PENDING_DECISION
+    assert dt.samples[0].output_inclusion is OutputInclusion.EXCLUDED
+    assert dt.samples[3].output_inclusion is OutputInclusion.EXCLUDED
     assert dt.outcome is ValidationOutcome.HARD_VIOLATION_EXCLUDED
     stored = ingested.dataset.curves[1].values
     assert list(stored) == [30.0, 40.0, 300.0, 301.0, 50.0]
     assert stored.flags.writeable is False
-    findings = _findings(result, BlockType.AMBIGUOUS_INTERPRETATION, "DT")
+    findings = [item for item in _findings(result, BlockType.INFORMATIONAL, "DT") if item.check == "invalid_samples_excluded"]
     assert len(findings) == 1
     evidence = findings[0].evidence.as_dict()
     assert evidence["rule_id"] == "SONIC_COMPRESSIONAL"
-    assert evidence["output_inclusion"] == "PENDING_DECISION"
-    assert json.loads(evidence["scope_options"]) == ["THIS_ITEM", "LOCAL_RULE"]
-    assert json.loads(evidence["options"]) == ["KEEP", "EXCLUDE"]
-    assert json.loads(evidence["depths"]) == [0.0, 3.0]
     assert evidence["sample_count"] == 2
-    assert "Exclude these samples" in findings[0].message
-    assert all(
-        sample.output_inclusion is not OutputInclusion.EXCLUDED
-        and sample.output_inclusion is not OutputInclusion.KEPT
-        for sample in dt.samples
+    assert "outside the impossible limits 40–300 US/FT" in findings[0].message
+    assert "left out of the processed file" in findings[0].message
+    assert _findings(result, BlockType.AMBIGUOUS_INTERPRETATION, "DT") == []
+
+
+def test_one_dt_value_of_20_us_per_foot_is_excluded(tmp_path: Path):
+    _ingested, _depth, _identified, _units, result = _pipeline(
+        tmp_path, _las([("DT", "US/F")], [["20", "80"]])
     )
+    dt = _one(result, "DT")
+    assert dt.samples[0].status is SampleStatus.INVALID
+    assert dt.samples[0].output_inclusion is OutputInclusion.EXCLUDED
+    assert dt.outcome is ValidationOutcome.HARD_VIOLATION_EXCLUDED
+    notice = next(item for item in result.findings if item.check == "invalid_samples_excluded")
+    assert notice.message == (
+        "Curve DT has 1 sample(s) outside the impossible limits 40–300 US/FT. "
+        "They were left out of the processed file, as the domain expert's rule says. "
+        "They are still shown, marked; the original file is unchanged."
+    )
+    assert not any(item.check == "suspicious_samples" for item in result.findings)
+
+
+def test_a_gamma_ray_with_no_measured_samples_is_not_validated(tmp_path: Path):
+    _ingested, _depth, _identified, _units, result = _pipeline(
+        tmp_path / "absent",
+        _las([("GR", "GAPI")], [["-999.25", "-999.25"]]),
+    )
+    gr = _one(result, "GR")
+    assert gr.outcome is ValidationOutcome.NOT_APPLICABLE
+    assert gr.outcome is not ValidationOutcome.PASSED
+    notice = next(item for item in result.findings if item.check == "no_measured_samples")
+    assert notice.message == "Curve GR has no measured samples, so it was not validated."
+    _ingested, _depth, _identified, _units, bare = _pipeline(
+        tmp_path / "cali",
+        _las([("CALI", "IN")], [["-999.25", "-999.25"]]),
+    )
+    cali = _one(bare, "CALI")
+    assert cali.outcome is ValidationOutcome.NOT_ELIGIBLE
+    assert not any(item.check == "no_measured_samples" for item in bare.findings)
 
 
 def test_undeclared_sentinel_stays_measured(tmp_path: Path):

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import io
 import json
 import math
 import subprocess
@@ -17,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from polish.model.null_choice import NullChoice
 from polish.model.states import BlockType, StageStatus
 from polish.stages.s00_ingest import CONTRACT, UnclassifiedIngest, ingest
 
@@ -201,8 +203,14 @@ def test_partial_d66_null_within_tolerance_is_absent_and_pass2_disagreement_is_s
     assert math.isnan(result.dataset.curves[1].values[0])
     assert result.dataset.curves[1].values[1] == 5.0
     assert result.null_sample_indexes[1] == (0,)
-    assert result.status is StageStatus.REFUSED_STRUCTURAL
-    assert any("disagree" in message for message in _messages(result, BlockType.STRUCTURAL_DATA_FAILURE))
+    assert result.status is StageStatus.COMPLETE
+    notes = [item for item in result.findings if item.check == "null_within_tolerance"]
+    assert len(notes) == 1
+    assert notes[0].message == (
+        "1 sample(s) in GR are within the NULL tolerance of -999.25 "
+        "without being exactly it (first: -999.2500004 at index 0). They were read as absent."
+    )
+    assert not any("disagree" in item.message for item in result.findings)
 
 
 @pytest.mark.parametrize("evidence", ["PARTIAL-D66-outside-tolerance-stays-number"])
@@ -228,8 +236,16 @@ def test_partial_d66_undeclared_null_converts_nothing(tmp_path: Path, evidence: 
     assert result.null_sample_indexes[1] == ()
     ambiguous = _messages(result, BlockType.AMBIGUOUS_INTERPRETATION)
     assert any("NULL is not declared" in message for message in ambiguous)
-    warnings = _messages(result, BlockType.RULE_DEPENDENT_WARNING)
-    assert any("-999.25" in message and "not converted" in message for message in warnings)
+    notes = [item for item in result.findings if item.check == "sentinel_candidate"]
+    assert len(notes) == 1
+    assert notes[0].message == (
+        "Column 1 'GR' has 1 sample(s) equal to -999.25, a common NULL value "
+        "that is not this file's declared NULL. They were kept as numbers."
+    )
+    assert json.loads(next(item for item in result.findings if item.check == "null_undeclared").evidence.as_dict()["options"]) == [
+        "-999.25",
+        "NONE",
+    ]
     assert BlockType.STRUCTURAL_DATA_FAILURE not in _blocks(result)
 
 
@@ -241,8 +257,11 @@ def test_partial_d66_sentinel_that_is_not_the_declared_null_stays_a_number(tmp_p
     assert result.dataset is not None
     assert result.dataset.curves[1].values[0] == -999.0
     assert not math.isnan(result.dataset.curves[1].values[0])
-    warnings = _messages(result, BlockType.RULE_DEPENDENT_WARNING)
-    assert any("sentinel" in message and "-999" in message for message in warnings)
+    notes = [item for item in result.findings if item.check == "sentinel_candidate"]
+    assert len(notes) == 1
+    assert "-999" in notes[0].message
+    assert "kept as numbers" in notes[0].message
+    assert notes[0].block_type is BlockType.INFORMATIONAL
     assert result.null_sample_indexes[1] == ()
 
 
@@ -311,7 +330,9 @@ def test_encoding_undeterminable_is_structural(tmp_path: Path):
     assert result.dataset is None
     assert result.status is StageStatus.REFUSED_STRUCTURAL
     assert result.audit.encoding_name is None
-    assert any("undeterminable" in message.lower() for message in _messages(result, BlockType.STRUCTURAL_DATA_FAILURE))
+    message = next(item.message for item in result.findings if item.check == "encoding_undetermined")
+    assert message.startswith("Line 1 has byte 0xFF, which is not valid UTF-8")
+    assert "No encoding was assumed, so the file was not processed." in message
 
 
 def test_missing_ascii_section_is_structural(tmp_path: Path):
@@ -380,19 +401,17 @@ def test_ignore_header_errors_is_used_only_after_the_line_is_recorded(tmp_path: 
 
 
 def test_input_hash_is_unchanged_and_opens_are_read_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    import builtins
-
     path = _write(tmp_path, _las())
     before = path.read_bytes()
     digest = hashlib.sha256(before).hexdigest()
     modes: list[str] = []
-    real_open = builtins.open
+    real_open = Path.open
 
-    def spy(file, mode="r", *args, **kwargs):
+    def spy(self, mode="r", *args, **kwargs):
         modes.append(mode if isinstance(mode, str) else repr(mode))
-        return real_open(file, mode, *args, **kwargs)
+        return real_open(self, mode, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "open", spy)
+    monkeypatch.setattr(Path, "open", spy)
     result = _read(path)
     assert path.read_bytes() == before
     assert result.source_file.file_hash.hex_digest == digest
@@ -645,3 +664,163 @@ def test_declared_version_two_is_recorded_as_parsed_like_las_2(tmp_path: Path):
     assert any("not major version 3" in message and "parsed as LAS 2.0" in message for message in messages)
     assert result.status is StageStatus.COMPLETE
     assert result.dataset is not None
+
+
+def test_an_html_error_page_is_not_a_las_file(tmp_path: Path):
+    page = (
+        "<!DOCTYPE html><html><head><title>502 Proxy Error</title></head>"
+        "<body><h1>502 Proxy Error</h1></body></html>\n"
+    )
+    path = tmp_path / "proxy.las"
+    path.write_bytes(page.encode("utf-8"))
+    result = ingest(path, read_at=_WHEN)
+    assert result.status is StageStatus.REFUSED_STRUCTURAL
+    assert result.dataset is None
+    sections = [item for item in result.findings if item.check == "no_sections"]
+    assert len(sections) == 1
+    assert sections[0].message == (
+        "This file has no LAS sections (no line starting with ~), so it is not a LAS file and was not processed."
+    )
+    assert not any(item.check in ("ascii_absent", "section_absent", "pass2_no_parse") for item in result.findings)
+
+
+def test_any_lasio_exception_is_pass2_no_parse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def broken(*_args, **_kwargs):
+        raise KeyError("No ~ sections found")
+
+    monkeypatch.setattr("lasio.read", broken)
+    result = _read(_write(tmp_path, _las()))
+    notes = [item for item in result.findings if item.check == "pass2_no_parse"]
+    assert len(notes) == 1
+    assert "KeyError" in notes[0].message
+    assert result.dataset is not None
+
+
+def test_ingest_given_a_url_shaped_file_name_never_calls_urlopen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    calls: list[object] = []
+
+    def boom(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("urlopen must not be called")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    import lasio.reader
+
+    monkeypatch.setattr(lasio.reader.urllib.request, "urlopen", boom)
+    with pytest.raises(OSError):
+        ingest("http://example.invalid/well.las", read_at=_WHEN)
+    import lasio
+
+    received: list[object] = []
+    real = lasio.read
+
+    def spy(source, *args, **kwargs):
+        received.append(source)
+        assert kwargs.get("null_policy") == "none"
+        return real(source, *args, **kwargs)
+
+    monkeypatch.setattr(lasio, "read", spy)
+    result = ingest(_write(tmp_path, _las()), read_at=_WHEN)
+    assert result.status is StageStatus.COMPLETE
+    assert received
+    assert all(isinstance(item, io.StringIO) for item in received)
+    assert calls == []
+
+
+def test_depths_from_9997_raise_no_sentinel_finding(tmp_path: Path):
+    depths = (9997.0, 9998.0, 9999.0, 10000.0, 10000.5)
+    data = "".join(f"{depth} 1.0\n" for depth in depths)
+    body = _las(strt="9997.0", stop="10000.5", step="1.0", data=data)
+    result = _read(_write(tmp_path, body))
+    assert result.status is StageStatus.COMPLETE
+    assert result.dataset is not None
+    assert result.dataset.grid.values.tolist() == list(depths)
+    assert not any(item.check == "sentinel_candidate" for item in result.findings)
+
+
+def test_null_zero_keeps_a_zero_depth(tmp_path: Path):
+    body = _las(null="0", data="0.0 1.0\n1.0 2.0\n")
+    result = _read(_write(tmp_path, body))
+    assert result.status is StageStatus.COMPLETE
+    assert result.dataset is not None
+    assert result.dataset.grid.values.tolist() == [0.0, 1.0]
+    assert result.dataset.curves[1].values.tolist() == [1.0, 2.0]
+
+
+def test_a_trailing_ctrl_z_is_ignored_and_the_hash_covers_it(tmp_path: Path):
+    body = _las().encode("utf-8") + b"\x1a"
+    path = tmp_path / "eof.las"
+    path.write_bytes(body)
+    result = ingest(path, read_at=_WHEN)
+    assert result.status is StageStatus.COMPLETE
+    assert result.dataset is not None
+    notes = [item.message for item in result.findings if item.check == "dos_end_of_file"]
+    assert notes == ["The file ends with a DOS end-of-file byte (Ctrl-Z). It was ignored; no value changed."]
+    assert result.source_file.file_hash.hex_digest == hashlib.sha256(body).hexdigest()
+
+
+def test_a_ctrl_z_that_is_not_trailing_is_not_stripped(tmp_path: Path):
+    body = _las().encode("utf-8").replace(b"0.0 1.0", b"0.0\x1a 1.0", 1)
+    path = tmp_path / "mid.las"
+    path.write_bytes(body)
+    result = ingest(path, read_at=_WHEN)
+    assert not any(item.check == "dos_end_of_file" for item in result.findings)
+    assert any(item.check == "data_token_not_numeric" for item in result.findings)
+
+
+@pytest.mark.parametrize("token", ["5_0.0", "nan", "inf", "-1.#IND"])
+def test_a_data_token_that_is_not_a_las_number_is_structural(tmp_path: Path, token: str):
+    body = _las(data=f"0.0 {token}\n1.0 2.0\n")
+    result = _read(_write(tmp_path, body))
+    assert result.status is StageStatus.REFUSED_STRUCTURAL
+    assert result.dataset is None
+    findings = [item for item in result.findings if item.check == "data_token_not_numeric"]
+    assert len(findings) == 1
+    assert findings[0].message.startswith("Line ")
+    assert f"has '{token}' where a number should be, so the file was not processed." in findings[0].message
+
+
+def test_a_byte_that_is_not_utf8_names_the_line_and_windows_1252(tmp_path: Path):
+    raw = bytearray()
+    for number in range(1, 14):
+        raw += f"# line {number}\n".encode("ascii")
+    raw += b"degree \xb0\n"
+    path = tmp_path / "latin.las"
+    path.write_bytes(bytes(raw))
+    result = ingest(path, read_at=_WHEN)
+    message = next(item.message for item in result.findings if item.check == "encoding_undetermined")
+    assert message == (
+        "Line 14 has byte 0xB0, which is not valid UTF-8 (in Windows-1252 it would be '\u00b0'). "
+        "LAS 2.0 allows plain ASCII only. No encoding was assumed, so the file was not processed."
+    )
+    assert result.status is StageStatus.REFUSED_STRUCTURAL
+
+
+def test_an_undefined_windows_1252_byte_is_named(tmp_path: Path):
+    path = tmp_path / "undefined.las"
+    path.write_bytes(b"~\x81\n")
+    result = ingest(path, read_at=_WHEN)
+    message = next(item.message for item in result.findings if item.check == "encoding_undetermined")
+    assert "Line 1 has byte 0x81" in message
+    assert "not defined in Windows-1252" in message
+
+
+def test_a_missing_null_can_be_chosen_and_an_unlisted_option_is_refused(tmp_path: Path):
+    body = _las(null=None, data="0.0 -999.25\n1.0 1.5\n")
+    path = _write(tmp_path, body)
+    asked = ingest(path, read_at=_WHEN)
+    question = next(item for item in asked.findings if item.check == "null_undeclared")
+    assert json.loads(question.evidence.as_dict()["options"]) == ["-999.25", "NONE"]
+    chosen = ingest(path, read_at=_WHEN, null_choices=(NullChoice("-999.25", "null-1"),))
+    assert chosen.status is StageStatus.COMPLETE
+    assert chosen.null_decision_id == "null-1"
+    assert chosen.dataset is not None
+    assert math.isnan(chosen.dataset.curves[1].values[0])
+    assert chosen.dataset.curves[1].values[1] == 1.5
+    assert not any(item.check in ("null_undeclared", "null_not_finite") for item in chosen.findings)
+    none = ingest(path, read_at=_WHEN, null_choices=(NullChoice("NONE", "null-2"),))
+    assert none.dataset is not None
+    assert none.dataset.curves[1].values.tolist() == [-999.25, 1.5]
+    assert none.null_decision_id == "null-2"
+    with pytest.raises(ValueError, match="not an option this finding lists"):
+        ingest(path, read_at=_WHEN, null_choices=(NullChoice("-999", "null-3"),))

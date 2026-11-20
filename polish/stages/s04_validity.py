@@ -30,11 +30,15 @@ curve PASSED. A family rule applies only when the curve is eligible and its
 unit is the rule's unit or converts to it exactly (OD-05, read_values and
 require_unit). A GAPI rule is never applied to a CPS curve.
 
-A sample outside a suspicious limit stays MEASURED, with output inclusion
-PENDING_DECISION until the user answers keep or exclude (D92). How a later
-stage treats a suspicious sample that is still PENDING_DECISION is not
-decided here (P23 onward). The SP rule stays a log-level review flag. It
-does not mark a sample.
+A sample outside an impossible limit (HARD_IMPOSSIBILITY or DOMAIN_CONSTRAINT)
+is INVALID and EXCLUDED at once. The domain expert's written follow-up
+answer 2 is to leave impossible values out of the processed file. The
+samples stay visible and marked. A sample outside a suspicious limit stays
+MEASURED, with output inclusion PENDING_DECISION until the user answers
+keep or exclude (D92). How a later stage treats a suspicious sample that is
+still PENDING_DECISION is not decided here (P23 onward). An eligible curve
+whose samples are all absent is NOT_APPLICABLE (F06, UXC9). The SP rule
+stays a log-level review flag. It does not mark a sample.
 """
 
 from __future__ import annotations
@@ -82,7 +86,7 @@ _LEGACY_GAP_SIZE_DEPTH_FT = {
 _NON_FINITE_ID = "non_finite_value"
 _SCOPE_OPTIONS = (DecisionScope.THIS_ITEM.value, DecisionScope.LOCAL_RULE.value)
 _KEEP_OR_EXCLUDE = ("KEEP", "EXCLUDE")
-_QUESTION = "Exclude these samples from the processed output, or keep them?"
+_EXCLUDED_TYPES = frozenset({"HARD_IMPOSSIBILITY", "DOMAIN_CONSTRAINT"})
 
 # OD-13 sentences. They are the record that the case cannot apply.
 _NO_CO_TOOL = "no co-tool evidence available"
@@ -179,11 +183,12 @@ class MeasuredInterval:
 class SampleMark:
     """Status of one sample, stored beside the array. D44, D66.
 
-    The source value is not in this record. INVALID carries
-    PENDING_DECISION and the rule ids that marked it. A measured sample
-    outside a plausibility limit also carries PENDING_DECISION and no rule
-    id (D92). ABSENT carries neither. EXCLUDED and KEPT are not set in this
-    stage. How a later stage treats PENDING_DECISION on a suspicious sample
+    The source value is not in this record. INVALID from a hard impossibility
+    or a domain constraint carries EXCLUDED and the rule ids that marked it
+    (D11, D92). PENDING_DECISION remains allowed so a mark built before that
+    choice is still a valid record. A measured sample outside a plausibility
+    limit carries PENDING_DECISION and no rule id (D92). ABSENT carries
+    neither. How a later stage treats PENDING_DECISION on a suspicious sample
     is not decided here (P23 onward).
     """
 
@@ -195,8 +200,8 @@ class SampleMark:
         if not isinstance(self.status, SampleStatus):
             raise TypeError("status must be a SampleStatus.")
         if self.status is SampleStatus.INVALID:
-            if self.output_inclusion is not OutputInclusion.PENDING_DECISION:
-                raise ValueError("An INVALID sample stays PENDING_DECISION until the user chooses.")
+            if self.output_inclusion not in (OutputInclusion.EXCLUDED, OutputInclusion.PENDING_DECISION):
+                raise ValueError("An INVALID sample is EXCLUDED, or PENDING_DECISION.")
             if not self.invalid_rules or not all(isinstance(rule_id, str) and rule_id for rule_id in self.invalid_rules):
                 raise ValueError("An INVALID sample names the rule that marked it.")
             return
@@ -390,10 +395,11 @@ class _Prepared:
 
 
 _STAGE4_CHECKS: tuple[tuple[str, BlockType], ...] = (
-    ("invalid_samples", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("invalid_samples_excluded", BlockType.INFORMATIONAL),
     ("log_level_flag", BlockType.INFORMATIONAL),
     ("suspicious_samples", BlockType.AMBIGUOUS_INTERPRETATION),
     ("not_validated", BlockType.INFORMATIONAL),
+    ("no_measured_samples", BlockType.INFORMATIONAL),
     ("tool_absence_gap", BlockType.INFORMATIONAL),
 )
 CHECKS = frozenset(name for name, _block in _STAGE4_CHECKS)
@@ -575,7 +581,7 @@ def _marks(
         if numpy.isinf(number):
             rules = (_NON_FINITE_ID,) + tuple(rule_id for rule_id in rules if rule_id != _NON_FINITE_ID)
         if rules:
-            marks.append(SampleMark(SampleStatus.INVALID, OutputInclusion.PENDING_DECISION, rules))
+            marks.append(SampleMark(SampleStatus.INVALID, OutputInclusion.EXCLUDED, rules))
         elif index in warning_indexes:
             marks.append(SampleMark(SampleStatus.MEASURED, OutputInclusion.PENDING_DECISION, ()))
         else:
@@ -807,6 +813,9 @@ def _outcome(
     if item.hits:
         return ValidationOutcome.PLAUSIBILITY_WARNING, None, None, None
     if item.family_rules_applied:
+        measured = any(sample.status is SampleStatus.MEASURED for sample in item.samples)
+        if not measured:
+            return ValidationOutcome.NOT_APPLICABLE, None, None, None
         return ValidationOutcome.PASSED, library_version, None, None
     reason, evidence = _why_ineligible(item)
     return ValidationOutcome.NOT_ELIGIBLE, None, reason, evidence
@@ -864,32 +873,37 @@ def _add_findings(
         )
         if rule is None:
             rule = _rule_by_id(rule_id)
-        fields: dict[str, str | int | float | bool] = {
+        if rule.rule_type not in _EXCLUDED_TYPES:
+            raise ValueError(f"{rule.id} marks INVALID but is not an impossible-value rule.")
+        count = len(indexes)
+        fields = {
             "rule_id": rule.id,
             "library_version": rule.library_version,
-            "depths": _depths(grid, tuple(indexes)),
-            "sample_indexes": json.dumps(indexes),
-            "sample_count": len(indexes),
-            "question": _QUESTION,
-            "output_inclusion": OutputInclusion.PENDING_DECISION.value,
-            "violation_effect": rule.violation_effect,
-            "scope_options": json.dumps(list(_SCOPE_OPTIONS)),
-            "options": json.dumps(list(_KEEP_OR_EXCLUDE)),
+            "sample_count": count,
             "mnemonic": mnemonic,
             "family_id": family_id,
         }
-        if rule.bound_values.minimum is not None and rule.bound_values.maximum is not None:
+        if rule.id == _NON_FINITE_ID:
+            message = (
+                f"Curve {mnemonic} has {count} sample(s) that are not finite numbers. "
+                "They were left out of the processed file, as the domain expert's rule says. "
+                "They are still shown, marked; the original file is unchanged."
+            )
+        else:
+            if rule.bound_values.minimum is None or rule.bound_values.maximum is None:
+                raise ValueError(f"{rule.id} has no impossible limits.")
+            low = _number_text(rule.bound_values.minimum)
+            high = _number_text(rule.bound_values.maximum)
+            unit = rule.canonical_unit if rule.canonical_unit is not None else ""
             fields["minimum"] = rule.bound_values.minimum
             fields["maximum"] = rule.bound_values.maximum
-        name = "non-finite value" if rule.id == _NON_FINITE_ID else rule.id
-        message = (
-            f"Curve {mnemonic} has {len(indexes)} samples marked INVALID by {name}. "
-            "They stay visible. Exclude these samples from the processed output, or keep them? "
-            "Scope is this well or all wells. Nothing is excluded until that choice is recorded. "
-            "Nothing is clipped. The original file is not altered. Every affected depth is listed."
-        )
+            message = (
+                f"Curve {mnemonic} has {count} sample(s) outside the impossible limits {low}–{high} {unit}. "
+                "They were left out of the processed file, as the domain expert's rule says. "
+                "They are still shown, marked; the original file is unchanged."
+            )
         ledger.add(
-            "invalid_samples",
+            "invalid_samples_excluded",
             (("column", str(ref.column_index)), ("mnemonic", mnemonic), ("rule_id", rule.id)),
             message,
             ref,
@@ -955,6 +969,14 @@ def _add_findings(
             message,
             ref,
             fields,
+        )
+    if outcome is ValidationOutcome.NOT_APPLICABLE:
+        ledger.add(
+            "no_measured_samples",
+            (("column", str(ref.column_index)), ("mnemonic", mnemonic)),
+            f"Curve {mnemonic} has no measured samples, so it was not validated.",
+            ref,
+            {"mnemonic": mnemonic, "family_id": family_id},
         )
     if outcome is ValidationOutcome.NOT_ELIGIBLE:
         if reason is None or evidence_text is None:
@@ -1163,8 +1185,9 @@ CONTRACT = StageContract(
         units="Unchanged. Values are not converted in the stored arrays and are not clipped.",
         validity=(
             "Each curve has a validation outcome, a sample-status mask, a measured interval, "
-            "a gap inventory, and interval summaries. INVALID samples stay visible with "
-            "output inclusion PENDING_DECISION. Nothing is excluded from a file."
+            "a gap inventory, and interval summaries. Samples outside an impossible limit "
+            "are INVALID and EXCLUDED, and stay visible. Suspicious samples stay MEASURED "
+            "with output inclusion PENDING_DECISION. Nothing is clipped."
         ),
     ),
     declines_when=(
@@ -1172,7 +1195,7 @@ CONTRACT = StageContract(
         "A unit with no exact conversion to the rule's unit is not compared.",
         "A GAPI rule is not applied to a CPS curve.",
         "OD-13 is unset, so dropout and an uninjected shared gap cannot be classified as such.",
-        "NOT_APPLICABLE is not used.",
+        "An eligible curve with no measured samples is NOT_APPLICABLE. It is not PASSED.",
     ),
     depends_on_stages=(0, 1, 2, 3),
     alters_data=False,

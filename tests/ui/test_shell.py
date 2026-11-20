@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import os
 import re
 import shutil
@@ -23,7 +24,7 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets")
 pytest.importorskip("pyqtgraph")
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from polish.decisions import session_path
 from polish.model.states import UserAction
@@ -97,6 +98,8 @@ def test_opening_a_file_shows_the_depth_and_curve_results_and_writes_nothing(win
     assert window.table.item(1, 4).text() == "GAMMA_RAY_TOTAL"
     assert window.table.item(1, 10).text() == "Validated against rule set v1"
     assert "No value has been altered" in window.headline.text()
+    assert "Stage 0:" in window.headline.text()
+    assert "Stage 4:" in window.headline.text()
     assert sorted(item.name for item in tmp_path.iterdir()) == before
 
 
@@ -122,8 +125,8 @@ def test_only_actions_the_engine_can_carry_out_are_offered(window, tmp_path: Pat
     body = _las(curves="DEPT.M : DEPTH\nAPPLE.GAPI : FRUIT\nDT.US/FT : SONIC\n", null_line="")
     window.open_path(_write(tmp_path, body))
     assert window.queue.select_finding(_finding(window, "null_undeclared").id)
-    assert window.queue.offered_actions() == ["REJECT_PROPOSAL", "DEFER"]
-    assert wording.NO_OPTIONS in window.queue.detail.toPlainText()
+    assert window.queue.offered_actions() == ["CHOOSE_OPTION", "REJECT_PROPOSAL", "DEFER"]
+    assert wording.NO_OPTIONS not in window.queue.detail.toPlainText()
     assert window.queue.select_finding(_finding(window, "mnemonic_unrecognised").id)
     assert window.queue.offered_actions() == ["MAP_EXPLICITLY", "ACKNOWLEDGE", "DEFER"]
     assert window.queue.select_finding(_finding(window, "vers_parsed_as_2").id)
@@ -240,6 +243,100 @@ def test_hiding_the_queue_leaves_the_depth_view_geometry_identical(window, app, 
     assert window.tracks.geometry() == before
 
 
+def _record_option(window: MainWindow, check: str, option: str, reason: str) -> None:
+    assert window.queue.select_finding(_finding(window, check).id)
+    shown = [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())]
+    assert option in shown
+    _choose(window, check, UserAction.CHOOSE_OPTION)
+    window.queue.option_box.setCurrentText(option)
+    window.queue.reason_edit.setText(reason)
+    window.queue.record_button.click()
+    assert window.queue.message.text() == ""
+
+
+def test_a_missing_null_can_be_chosen_from_the_queue(window, tmp_path: Path):
+    body = _las(
+        null_line="",
+        curves="DEPT.M : DEPTH\nGR.GAPI : GAMMA\n",
+        data="0.0 -999.25\n1.0 40.0\n",
+        strt="0.0",
+        stop="1.0",
+        step="1.0",
+    )
+    path = _write(tmp_path, body)
+    window.open_path(path)
+    assert [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())] == []
+    window.queue.select_finding(_finding(window, "null_undeclared").id)
+    assert [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())] == [
+        "-999.25",
+        "NONE",
+    ]
+    _record_option(window, "null_undeclared", "-999.25", "the file uses -999.25")
+    values = window._result.run.ingest.dataset.curves[1].values
+    assert math.isnan(float(values[0]))
+    assert float(values[1]) == 40.0
+    assert window.queue.select_finding(_finding(window, "null_undeclared").id)
+    assert window.queue.tree.currentItem().text(0).startswith("[RESOLVED]")
+    assert session_path(path).is_file()
+
+
+def test_a_blank_depth_unit_can_be_chosen_from_the_queue(window, tmp_path: Path):
+    body = _las(curves="DEPT. : DEPTH\nGR.GAPI : GAMMA\nDT.US/FT : SONIC\n")
+    window.open_path(_write(tmp_path, body))
+    window.queue.select_finding(_finding(window, "depth_unit_unrecognised").id)
+    assert [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())] == ["FT", "M"]
+    _record_option(window, "depth_unit_unrecognised", "FT", "the depth is in feet")
+    assert "Depth unit FT" in window.depth_summary.text()
+    assert window.queue.select_finding(_finding(window, "depth_unit_unrecognised").id)
+    assert window.queue.tree.currentItem().text(0).startswith("[RESOLVED]")
+
+
+def test_a_blank_curve_unit_can_be_chosen_from_the_queue(window, tmp_path: Path):
+    body = _las(
+        curves="DEPT.M : DEPTH\nGR. : GAMMA\n",
+        data="0.0 40.0\n1.0 50.0\n",
+        strt="0.0",
+        stop="1.0",
+        step="1.0",
+    )
+    window.open_path(_write(tmp_path, body))
+    window.queue.select_finding(_finding(window, "unit_unresolved").id)
+    assert [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())] == ["GAPI", "CPS"]
+    _record_option(window, "unit_unresolved", "GAPI", "the curve is in GAPI")
+    assert window.table.item(1, 9).text() == "GAPI"
+    assert window.table.item(1, 10).text() == "Validated against rule set v1"
+
+
+def test_value_axis_numbers_stay_separate(window, app, tmp_path: Path):
+    source = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "159-19A_LFP.las"
+    path = tmp_path / source.name
+    shutil.copy(source, path)
+    window.resize(1500, 900)
+    window.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    window.show()
+    window.open_path(path)
+    app.processEvents()
+    wanted = {"6000", "8000", "10000", "12000"}
+    matched = False
+    for plot, _column in window._plots:
+        axis = plot.getAxis("bottom")
+        picture = QtGui.QPicture()
+        painter = QtGui.QPainter(picture)
+        _axis_spec, _tick_specs, text_specs = axis.generateDrawSpecs(painter)
+        painter.end()
+        labels = [(text, rect) for rect, _flags, text in text_specs]
+        texts = {text for text, _rect in labels}
+        if not wanted <= texts:
+            continue
+        matched = True
+        chosen = [rect for text, rect in labels if text in wanted]
+        for index, left in enumerate(chosen):
+            for right in chosen[index + 1 :]:
+                assert not left.intersects(right)
+    assert matched
+    assert "Stage 0:" in window.headline.text()
+
+
 def test_opening_a_second_file_carries_nothing_over(window, tmp_path: Path):
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -322,8 +419,9 @@ def test_identified_curves_are_ticked_first_in_the_expert_order(window, tmp_path
 
 
 def test_a_file_the_engine_cannot_handle_is_reported_not_hung(window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # A real case from 13 Nov 2026: a web server error page saved as .las. Stage 0
-    # let lasio's KeyError escape, and the window waited on "Running" forever.
+    # A web server error page saved as .las is not a LAS file. Stage 0 records
+    # no_sections. The monkeypatch below is the backstop: an exception the
+    # engine still lets escape is reported, and the window does not stay on Running.
     page = (
         '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n<html><head>\n'
         "<title>502 Proxy Error</title>\n</head><body>\n<h1>Proxy Error</h1>\n"
@@ -331,7 +429,9 @@ def test_a_file_the_engine_cannot_handle_is_reported_not_hung(window, tmp_path: 
     )
     path = _write(tmp_path, page, name="download.las")
     result = load_well(path, app_data=tmp_path / "app", local_tables_directory=tmp_path / "tables")
-    assert result.run is None and result.error is not None
+    assert result.error is None
+    assert result.run is not None
+    assert any(item.check == "no_sections" for item in result.run.ingest.findings)
 
     def engine_fault(*_args, **_kwargs):
         raise KeyError("No ~ sections found. Is this a LAS file?")

@@ -20,10 +20,17 @@ from polish.decisions import (
 )
 from polish.model.findings import FindingRecord
 from polish.model.states import UserAction
-from polish.pipeline.run import WellRun, run_well
+from polish.pipeline.run import ProgressHook, WellRun, run_well, stage_lines
 from polish.stages.s00_ingest import IngestResult, UnclassifiedIngest
 
-__all__ = ["LoadResult", "RecordedDecision", "SessionNotWritten", "load_well", "record_decision"]
+__all__ = [
+    "LoadResult",
+    "RecordedDecision",
+    "SessionNotWritten",
+    "finished_stage_lines",
+    "load_well",
+    "record_decision",
+]
 
 
 @dataclass(frozen=True)
@@ -53,27 +60,48 @@ class LoadResult:
     error: str | None
 
 
+def finished_stage_lines(run: object) -> tuple[str, ...]:
+    """One headline line for each stage the run produced. D98.
+
+    The sentences are the ones the progress hook reports. This does not
+    re-run the well.
+    """
+
+    if not isinstance(run, WellRun):
+        raise TypeError("run must be a WellRun.")
+    return stage_lines(run)
+
+
 def load_well(
     path: Path,
     *,
     app_data: Path | None = None,
     local_tables_directory: Path | None = None,
+    progress: ProgressHook | None = None,
 ) -> LoadResult:
-    """Run Stages 0-4 with the saved answers. Writes nothing (D98)."""
+    """Run Stages 0-4 with the saved answers. Writes nothing (D98).
+
+    ``progress`` is the optional hook ``run_well`` calls as each stage starts
+    and finishes. The window turns those calls into a signal. None reports
+    nothing.
+    """
 
     file_path = Path(path)
     try:
-        run = run_well(file_path, app_data=app_data, local_tables_directory=local_tables_directory)
+        run = run_well(
+            file_path,
+            app_data=app_data,
+            local_tables_directory=local_tables_directory,
+            progress=progress,
+        )
     except UnclassifiedIngest as exc:
         return LoadResult(file_path, None, str(exc), exc.partial, None)
     except (OSError, ValueError, TypeError) as exc:
         return LoadResult(file_path, None, None, None, f"{type(exc).__name__}: {exc}")
     except Exception as exc:  # noqa: BLE001 - the window must report, never hang
-        # Anything else the engine lets escape. On 13 Nov 2026 an HTML error page
-        # saved as .las raised KeyError from lasio in Stage 0's second pass; left
-        # uncaught it killed the load thread and the window sat on "Running"
-        # forever. The engine should classify such a file itself (Stage 0); until
-        # it does, the window says plainly that the file was not read and why.
+        # Anything else the engine lets escape. Left uncaught it kills the load
+        # thread and the window sits on "Running". The window says the file was
+        # not read and names the error.
         return LoadResult(
             file_path,
             None,

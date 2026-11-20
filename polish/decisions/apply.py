@@ -10,6 +10,8 @@ unit_choices
     THIS_ITEM unit choices Stage 3 takes as an input.
 depth_unit_choices
     THIS_ITEM depth-unit choices Stage 1 takes as an input.
+null_choices
+    THIS_ITEM NULL choices Stage 0 takes as an input.
 pass_choices
     Pass choices Stage 2 takes as an input, this well or all wells.
 listed_options
@@ -35,6 +37,7 @@ from polish.decisions.local_store import (
 )
 from polish.model.depth_unit_choice import DepthUnitChoice
 from polish.model.mapping import ExplicitMapping, roles_stated_by_family
+from polish.model.null_choice import NullChoice
 from polish.model.pass_choice import PassChoice
 from polish.model.unit_choice import UnitChoice
 from polish.decisions.versions import versions_in_force
@@ -278,6 +281,65 @@ def depth_unit_choices(session: object) -> tuple[DepthUnitChoice, ...]:
         built.append(DepthUnitChoice(option, decision.decision_id))
     if len(built) > 1:
         raise ValueError("Two depth-unit choices are in force.")
+    return tuple(built)
+
+
+def null_choices(session: object) -> tuple[NullChoice, ...]:
+    """THIS_ITEM NULL choices for a later Stage 0 call. D66.
+
+    A choice in force qualifies when it is CHOOSE_OPTION, scope THIS_ITEM,
+    actor USER, on the Stage 0 missing-NULL question or the non-finite NULL
+    question. A held session contributes none. The chosen option must be one
+    the finding lists. Two choices in force are refused.
+
+    Parameters
+    ----------
+    session:
+        A Session. Typed as object here so this module can import Session
+        without a cycle; the attribute check is the guard.
+
+    Returns
+    -------
+    tuple[NullChoice, ...]
+        The choices in force, in decision order.
+
+    Raises
+    ------
+    ValueError
+        The chosen option is not one the finding lists, or two choices are
+        in force.
+    """
+
+    from polish.decisions.session import Session
+
+    if not isinstance(session, Session):
+        raise TypeError("session must be a Session")
+    if session.hold:
+        return ()
+    by_id = {finding.id: finding for finding in session.findings}
+    built: list[NullChoice] = []
+    questions = ("null_undeclared", "null_not_finite")
+    for decision in current_decisions(session.decisions, session.held_ids).values():
+        if decision.action is not UserAction.CHOOSE_OPTION or decision.scope is not DecisionScope.THIS_ITEM:
+            continue
+        if decision.actor is not DecisionActor.USER:
+            continue
+        finding = by_id.get(decision.finding_id)
+        if finding is None or finding.stage != 0 or finding.check not in questions:
+            continue
+        if finding.block_type is not BlockType.AMBIGUOUS_INTERPRETATION:
+            continue
+        options = listed_options(finding)
+        option = decision.chosen_option
+        if not isinstance(option, str) or option not in options:
+            shown = ", ".join(options) if options else "none"
+            raise ValueError(
+                f"Decision {decision.decision_id} chooses {option!r}, "
+                f"which is not an option this finding lists ({shown})."
+            )
+        built.append(NullChoice(option, decision.decision_id))
+    if len(built) > 1:
+        raise ValueError("Two NULL choices are in force.")
     return tuple(built)
 
 

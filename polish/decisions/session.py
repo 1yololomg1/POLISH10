@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -792,21 +793,22 @@ def _unwritable(target: Path) -> FindingRecord:
 
 
 def _can_write(path: Path) -> bool:
+    """True when a file can be created in the session folder. F01.
+
+    The check opens a temporary file in that folder. The operating system
+    removes it when the file is closed, so the folder is left as it was.
+    """
+
     if path.exists() and not path.is_file():
         return False
     directory = path.parent
     if not directory.is_dir():
         return False
-    probe = directory / ".polish-write-probe"
     try:
-        probe.write_text("", encoding="utf-8")
+        with tempfile.TemporaryFile(dir=directory):
+            return True
     except OSError:
         return False
-    try:
-        probe.unlink()
-    except OSError:
-        return True
-    return True
 
 
 def _encode(session: Session) -> str:

@@ -7,6 +7,7 @@ accepts gamma_api and count_rate. BULK_DENSITY accepts density.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import pytest
 from polish.decisions.apply import apply_decision, listed_options
 from polish.decisions.session import outstanding, save_session, session_path
 from polish.model.mapping import roles_stated_by_family
-from polish.model.states import CurveRole, UnitInterpretation, UserAction
+from polish.model.states import CurveRole, StageStatus, UnitInterpretation, UserAction
 from polish.provenance.describe import _continue
 from polish.stages.s00_ingest import UnclassifiedIngest, ingest
 from polish.tables.loader import load_shipped_tables
@@ -163,6 +164,92 @@ def test_a_fixture_with_no_session_matches_the_unanswered_stages(path: Path, tmp
         assert result.reasked == ()
     assert _folder_snapshot(path.parent) == before
     assert session_path(path).is_file() is False
+    _assert_empty(tables, app)
+
+
+def test_progress_on_34_10_19_reports_each_stage_once(tmp_path: Path):
+    tables, app = _roots(tmp_path)
+    path = _FIXTURES / "34_10-19.las"
+    notices: list[object] = []
+    result = run_well(
+        path,
+        read_at=_WHEN,
+        local_tables_directory=tables,
+        app_data=app,
+        progress=notices.append,
+    )
+    by_stage: dict[int, list[object]] = {}
+    for notice in notices:
+        by_stage.setdefault(notice.stage, []).append(notice)
+    assert set(by_stage) == {0, 1, 2, 3, 4}
+    parts = (result.ingest, result.depth, result.identification, result.units, result.validity)
+    for stage, part in enumerate(parts):
+        calls = by_stage[stage]
+        assert [item.phase for item in calls] == ["started", "finished"]
+        assert calls[0].status is None
+        assert calls[1].status == part.status.value
+        assert calls[1].summary.startswith(f"Stage {stage}:")
+    assert result.depth is not None
+    assert result.identification is not None
+    _assert_empty(tables, app)
+
+
+def test_a_file_refused_at_stage_1_gets_no_later_progress(tmp_path: Path):
+    tables, app = _roots(tmp_path)
+    path = tmp_path / "up.las"
+    path.write_text(
+        "~VERSION INFORMATION\nVERS. 2.0 : CWLS\nWRAP. NO : WRAP\n"
+        "~WELL INFORMATION\nSTRT.M 102.0 : START\nSTOP.M 100.0 : STOP\nSTEP.M -0.5 : STEP\n"
+        "NULL. -999.25 : NULL\n~CURVE INFORMATION\nDEPT.M : DEPTH\nGR.GAPI : GAMMA\n~A\n"
+        "102.0 50.0\n101.5 51.0\n101.0 52.0\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    notices: list[object] = []
+    result = run_well(
+        path,
+        read_at=_WHEN,
+        local_tables_directory=tables,
+        app_data=app,
+        progress=notices.append,
+    )
+    assert result.depth is not None
+    assert result.depth.status is StageStatus.REFUSED_STRUCTURAL
+    assert result.identification is None
+    assert {notice.stage for notice in notices} == {0, 1}
+    finished = [notice for notice in notices if notice.phase == "finished"]
+    assert [notice.stage for notice in finished] == [0, 1]
+    assert finished[1].status == result.depth.status.value
+    _assert_empty(tables, app)
+
+
+def test_a_held_session_applies_no_null_choice(tmp_path: Path):
+    tables, app = _roots(tmp_path)
+    path = tmp_path / "well.las"
+    path.write_text(
+        "~VERSION INFORMATION\nVERS. 2.0 : CWLS\nWRAP. NO : WRAP\n"
+        "~WELL INFORMATION\nSTRT.M 0.0 : START\nSTOP.M 1.0 : STOP\nSTEP.M 1.0 : STEP\n"
+        "~CURVE INFORMATION\nDEPT.M : DEPTH\nGR.GAPI : GAMMA\n~A\n"
+        "0.0 -999.25\n1.0 40.0\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    first = _run(path, tables, app)
+    question = next(item for item in first.ingest.findings if item.check == "null_undeclared")
+    assert listed_options(question) == ("-999.25", "NONE")
+    saved = _choose(first.session_load.session, question, "-999.25", "the file uses -999.25")
+    save_session(saved)
+    applied = _run(path, tables, app)
+    assert applied.ingest.dataset is not None
+    assert math.isnan(applied.ingest.dataset.curves[1].values[0])
+    assert applied.ingest.null_decision_id == saved.decisions[-1].decision_id
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace(": GAMMA\n", ": GAMMA edited\n"), encoding="utf-8", newline="\n")
+    held = _run(path, tables, app)
+    assert held.applied == ()
+    assert held.ingest.dataset is not None
+    assert held.ingest.dataset.curves[1].values[0] == -999.25
+    assert held.ingest.null_decision_id is None
     _assert_empty(tables, app)
 
 

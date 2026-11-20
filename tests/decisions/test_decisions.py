@@ -21,6 +21,7 @@ from polish.decisions.local_store import tables_directory
 from polish.model.mapping import ExplicitMapping, roles_stated_by_family
 from polish.decisions.session import (
     SessionNotWritten,
+    _can_write,
     choose_changed_file,
     kept_session_path,
     load_session,
@@ -1288,3 +1289,13 @@ def test_a_version_1_session_is_refused_and_a_saved_file_is_schema_2(tmp_path: P
     save_preferences(tmp_path / "prefs", {"note": "as recorded"})
     preferences = json.loads(preferences_path(tmp_path / "prefs").read_text(encoding="utf-8"))
     assert preferences["schema_version"] == "1"
+
+
+def test_the_session_write_check_leaves_no_file(tmp_path: Path):
+    folder = tmp_path / "beside"
+    folder.mkdir()
+    target = folder / "well.polish-session.json"
+    before = sorted(path.name for path in folder.iterdir())
+    assert _can_write(target) is True
+    assert sorted(path.name for path in folder.iterdir()) == before
+    assert not (folder / ".polish-write-probe").exists()

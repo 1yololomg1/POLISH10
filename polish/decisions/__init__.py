@@ -10,6 +10,8 @@ pass_choices
     Pass choices Stage 2 takes as an input, this well or all wells.
 depth_unit_choices
     Depth-unit choices Stage 1 takes as an input.
+null_choices
+    NULL choices Stage 0 takes as an input.
 session
     Load and save decisions beside the input file. No sample values.
 """
@@ -18,6 +20,7 @@ from polish.decisions.apply import (
     apply_decision,
     depth_unit_choices,
     explicit_mappings,
+    null_choices,
     pass_choices,
     unit_choices,
 )
@@ -46,6 +49,7 @@ __all__ = [
     "depth_unit_choices",
     "explicit_mappings",
     "kept_session_path",
+    "null_choices",
     "load_session",
     "outstanding",
     "pass_choices",
