@@ -21,7 +21,7 @@ This document adds exactly two handles and nothing else:
 - **OD-nn** — an open decision listed in Part 1
 - **Pnn** — a Cursor prompt in Part 5
 
-Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D98**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
+Everything else keeps the handle its source document gave it: **Stage 0–10**, **D1–D99**, **F1–F19**, **UXC1–UXC10**, **DEP-UX-nn**, **C1–C7**. No "Phase" numbers appear here — milestones are named, not numbered, because the contracts document and the supplement each already have a different "Phase 0" (see OD-08).
 
 Slots in prompts look like **⟦OD-nn: …⟧**. A prompt with an unfilled slot is not ready to send.
 
@@ -121,7 +121,7 @@ The 16 Sept follow-up did not tick either of the two numbered boxes. The written
 
 That is a matching rule, not a single tolerance number. It is recorded on D12. These 144 wells are all Norwegian (Volve / FORCE 2020). KEOUGH is not in this set.
 
-The second half of the question — whether "the processed file's header states the real last depth from the data, and the change is recorded. The original file is never altered" — has both Yes/No boxes blank and the written line "See the previous question". That is not a yes or a no. Needs an explicit yes/no from Alvaro before D12's second half can be closed.
+The second half of the question — whether "the processed file's header states the real last depth from the data, and the change is recorded. The original file is never altered" — is answered. The follow-up answers show [x] Yes, and the 23 Sept decision is YES: if a well's depth grid is corrected via step-step calculation, the exported STOP depth in the final output file header must be rewritten to the newly calculated true depth (STRT + (n-1) * S_corrected). The original file is never altered.
 
 ### 1.0.3 Where his answers conflict with the plan
 
@@ -523,7 +523,7 @@ but was invented is the worst possible defect.
 
 ## Governing documents (in docs/governing/)
 - POLISH_pipeline_contracts.md — invariants C1–C7
-- POLISH_decision_register.md — decisions D1–D98, findings F1–F19
+- POLISH_decision_register.md — decisions D1–D99, findings F1–F19
 - POLISH_design_brief.md — interface intent
 - POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
 - POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
@@ -1150,55 +1150,60 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
    file is left untouched and later stages do not run. User message: "valid LAS,
    but POLISH supports increasing depth only."
 
-3. Regularity: REGULAR or IRREGULAR. STEP=0 as the irregular convention is UNVER
-   (D67): record what the header says; do not require it.
-   Blank STEP (domain expert, 14 Sept: "verify the depth curve and fill the step if
-   appropriate; otherwise skip"): if the depth increments are constant within the same
-   rounding rule as item 4, record the data-derived step (used in the exported header)
-   and raise INFORMATIONAL. Otherwise accept as irregular (D88): invent no step,
-   raise INFORMATIONAL ("STEP is blank. Depth increments are not constant. The grid is
-   irregular."), samples unchanged, well not skipped. The domain expert's answer is
-   quoted at line 54.
-   Irregular-but-ascending grids with a declared STEP: accepted as irregular and
-   recorded as irregular (D88, kept half); a regular step is never invented.
+3. Regularity: REGULAR or IRREGULAR. One allowance covers a declared STEP and a
+   blank or zero STEP (owner, 18 Nov 2026). When STEP is given and not zero, each
+   depth passes when its distance from the first depth in the data plus its index
+   times STEP is at most the smaller of one unit of that depth's own last written
+   decimal and half the absolute step. The grid is measured from the first depth,
+   not from STRT. When STEP is blank or zero, the step is the median of the
+   neighbouring gaps, and each gap passes when its distance from that median is at
+   most the smaller of one unit of the coarser last written decimal of the gap's two
+   depths and half the median. The recorded data-derived step is that median. A miss
+   is IRREGULAR with an INFORMATIONAL finding, and no step is invented (domain-expert
+   follow-up answer 3; D67; D88; LAS 2.0 section 5.4). STEP 0 is recorded. It is not
+   required, and an uneven grid is not given an invented step.
+   Per-depth precision and one full unit: domain expert, 7 Oct 2026, relayed by owner.
+   Half-step cap and median step: owner, 18 Nov 2026.
 
-4. Header vs data (D8 as resolved via D86), each producing a Finding with evidence
-   (declared value, observed value, difference, difference in sample intervals):
+4. Header vs data (D8 as resolved via D86), and the standard-step test (D12):
    - non-monotonic or duplicate depths → STRUCTURAL_DATA_FAILURE, no override
+   - a log recorded bottom-up throughout → one STRUCTURAL_DATA_FAILURE,
+     depth_bottom_up. The message says that is valid LAS, but POLISH supports
+     increasing depth only, so the file was not processed and is unchanged (D3,
+     confirmed by owner, 18 Nov 2026). A decrease that is not bottom-up throughout
+     keeps depth_decreases. A negative STEP with rising depths keeps step_negative,
+     and the message says the header contradicts the data.
    - first curve not a plausible index → STRUCTURAL_DATA_FAILURE, halt
-   - grid-inconsistent (a declared non-zero STEP that does not put every depth
-     on STRT + i × STEP within the grid rounding tolerance) → INFORMATIONAL
-     (D88, kept half). The finding message is: "Declared STEP {step} does not
-     put every depth on STRT + i × STEP within the grid rounding tolerance. The
-     ascending grid is irregular and was not modified." Regularity is recorded
-     as irregular. The samples are not modified.
-   - STRT/STOP differences: per the rounding rule below
-   Domain-expert rule (D12, answered 14 Sept): "verify whether the difference can be
-   due to a rounding error; if so, correct accordingly; otherwise skip the well."
-   What counts as rounding is recorded under D12: a depth counts as rounding if it
-   is within one full unit of its own last written decimal place of a grid built
-   from STRT. The comparison is inclusive (exactly one unit passes). The full-unit
-   rule and the per-depth precision rule were confirmed by the domain expert on
-   7 Oct 2026 (relayed by owner).
-   Declared-STEP grid (_declared_grid, _on_declared_grid): every depth within one
-   full unit of its own last written decimal of STRT + i × STEP is regular, and no
-   finding is raised. Otherwise the finding is INFORMATIONAL, the grid is recorded
-   as irregular, the samples are unchanged, and the well is not skipped. The
-   finding message is the grid-inconsistent bullet above.
-   STRT and STOP against the first and last depth (_one_endpoint): equal values
-   raise no finding. A difference within one sample interval is INFORMATIONAL, with
-   the evidence, and the data value is recorded for the export (D59). Stage 1
-   rewrites no header. A difference of more than one sample interval is
-   STRUCTURAL_DATA_FAILURE ("beyond one step") and the well is refused. When no
-   sample interval is established the finding is INFORMATIONAL ("not compared").
-   This test uses the sample interval, not the decimal-place tolerance.
-   The rule and its interpretation live in the rule library entry
-   "depth.grid_rounding", with source "Derived by rounding analysis, consistent with the domain expert's rule that differences must be checked for rounding error. Each written depth is judged at its own last decimal place. STRT carries up to half a unit of rounding and each depth up to half a unit independently, so the worst-case combined error is one full unit. The domain expert confirmed the full-unit rule and the per-depth precision rule on 7 Oct 2026 (relayed by owner).".
-   The report must include, for every fixture, which branch it took.
-   Create polish/rules/ with a minimal loader and this one entry now; P12 extends it.
+   - a declared non-zero STEP that misses the allowance in item 3 → INFORMATIONAL
+     (grid_off_declared_step). Regularity is irregular. No step is validated.
+     The samples are not modified.
+   - STRT and STOP against the first and last depth: equal values raise no finding.
+     A difference up to one sample interval is INFORMATIONAL at both ends (owner,
+     18 Nov 2026; nothing in the domain expert's answer separates top from bottom).
+     Beyond one step the well is refused. That refusal is the domain expert's D8
+     rule. When no sample interval is established the finding is INFORMATIONAL.
+   - The standard-step test compares (STOP − STRT) / (NSAMPLES − 1) with the
+     standard steps. When STRT or STOP is blank or not a number, it uses the median
+     gap instead, and the finding records which quantity was used and its value.
+   - Depths written with an exponent: one INFORMATIONAL finding (depth_exponential).
+     LAS 2.0 does not support that form, so the spacing is not assessed and
+     regularity stays unrecorded. The grid is not called irregular.
+   - STRT present but not a number: one INFORMATIONAL finding (strt_not_a_number)
+     quoting the text. A blank STRT keeps strt_blank. In both cases the declared
+     grid is still checked from the first depth.
+   The allowance lives in "depth.grid_rounding". Its statement and application say
+   the same thing. Source: "Per-depth precision and one full unit: domain expert,
+   7 Oct 2026, relayed by owner. Half-step cap and median step: owner, 18 Nov 2026."
 
-5. Depth unit: from the header. Absent or unrecognised → AMBIGUOUS_INTERPRETATION
-   (a resolution point, contracts §4). Never assume feet or metres.
+5. Depth unit: LAS 2.0 section 5.4 requires M, F or FT when the index is depth.
+   Stages 1 and 3 take the depth-index spellings from depth_standard_steps.json,
+   one list. Each spelling carries its own source. M, F and FT cite LAS 2.0
+   section 5.4. FEET, METER and METERS cite the harvested mnemonic list.
+   Absent or unrecognised → AMBIGUOUS_INTERPRETATION, listing the canonical feet
+   and metres spellings (FT and M). Feet or metres are not assumed. A recorded
+   THIS_ITEM choice of one listed spelling is the unit for the standard steps and
+   the endpoint checks (owner, 18 Nov 2026). Two units whose text is identical are
+   the same unit in the endpoint check even when neither is recognised.
 
 6. D9 copy rule: Stage 1 RECORDS the alias decision (source CurveRef, canonical name
    DEPT) as a result field. It does not create a curve. Materialisation belongs to
@@ -1207,14 +1212,27 @@ Create polish/stages/s01_depth.py (alters_data=False, depends_on_stages=(0,)).
 7. C4: any parameter derived here (e.g. observed step) is stored with the unit it was
    derived under, and a helper asserts that unit at point of use.
 
-Tests — tests/stages/test_s01_depth.py: ascending; a decrease or a negative STEP
-is a structural failure and the samples stay as written; irregular ascending;
+Tests — tests/stages/test_s01_depth.py: ascending; a bottom-up log is one structural
+finding whose message says valid LAS and increasing depth only, nothing is reordered,
+and later stages do not run; a decrease that is not bottom-up keeps depth_decreases;
+a negative STEP with rising depths keeps step_negative; irregular ascending;
 duplicate depth; non-monotonic; first curve not a depth curve;
 STOP differing by pure decimal rounding; STOP differing by less than one
-step but not by decimal rounding; STOP differing by more than one step; blank STEP
-with regular data; blank STEP with irregular data; missing depth unit; two depth
-curves (the first governs, the second is preserved unchanged); every fixture against
-golden facts; data never reordered.
+step but not by decimal rounding; STOP differing by more than one step;
+STRT within one step is informational; STRT beyond one step is structural;
+one missing sample on a 0.1 grid, declared and blank, is irregular, and the blank
+path records median 0.1 without validating a step; the same for integer step 1;
+a complete 0.1 grid, declared and blank, is regular; a 0.1524 m grid rounded to
+three decimals is regular, and irregular when one sample is missing; both ends
+disturbed with a blank STEP is irregular; STRT off the first depth does not make
+a regular grid irregular; blank STEP with regular data; blank STEP with irregular
+data; missing depth unit; a recorded feet choice runs the standard-step and endpoint
+checks in feet; a choice that is not listed is refused; a held session applies
+nothing; DEPT.F with STOP 500 is refused like DEPT.FT; DEPT.F with a matching STOP
+is complete; the standard-step test follows the implied interval; exponential depths
+leave regularity unrecorded; a STRT value that is not a number is not called blank;
+two depth curves (the first governs, the second is preserved unchanged); every
+fixture against golden facts; data never reordered.
 
 Report in the standard format, including how many fixtures raise each finding kind.
 ````
@@ -2191,7 +2209,7 @@ the old version stale, and the cause names the table and both versions. An
 answer that removed its own question is applied; run_well already does this.
 
 The glossary line that the schema does not decide which nodes affect export
-stays. D99 is the caller policy, not a schema change. Do not edit
+stays. D100 is the caller policy, not a schema change. Do not edit
 state_glossary.md. Do not edit export_permission, DependencyRecord,
 IssueDisposition, Runner, declare_depth_conversion, run_well, or the session
 schema. Do not add a StaleCause type and do not add a timestamp field.
@@ -2318,7 +2336,7 @@ DecisionRecord.
    While 3 is in that set, the runner does not call a stage that depends on 3,
    so Stage 4 is not cleared by the runner either. Do not add a second clear.
 
-8. Docs. Register D99 (owner AC, status NEW; the status cell names both dates,
+8. Docs. Register D100 (owner AC, status NEW; the status cell names both dates,
    23 Oct 2026 and 29 Oct 2026): "Staleness is a stamp of what a stage result
    was built from: the answers it used, the rule and table versions in force,
    and the upstream results. Unchanged answers stay current. Only a changed
@@ -2327,9 +2345,9 @@ DecisionRecord.
    versions. An answer that removed its own question stays applied. Until P28,
    any stale Stage 0–10 result or answer blocks export. Dispositions are not
    given a stale state, and decision history is not rewritten." Re-parse Count.
-   Expected if the only new row is this one: total 99, AC 29, NEW 17, and the
-   closing sentence also says "D99 is NEW." If the parse differs, stop and
-   report the tables. Change D1–D98 to D1–D99 everywhere tests/governance
+   Expected if the only new row is this one: total 100, AC 30, NEW 18, and the
+   closing sentence also says "D100 is NEW." If the parse differs, stop and
+   report the tables. Change D1–D98 to D1–D100 everywhere tests/governance
    checks the range, including the register title, the end note, the Count
    parenthetical, the README, the rules file, and the build plan outside
    fenced prompts. Do not edit ranges inside fenced prompts.
