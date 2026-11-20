@@ -112,7 +112,7 @@ def test_a_structural_refusal_is_a_result_in_the_rail_with_no_disposition_contro
     assert rail[1] == "1  Depth Axis: This file cannot proceed past Depth Axis"
     assert rail[2] == "2  Identification: NOT_RUN"
     assert window.headline.text().startswith("This file cannot proceed past Depth Axis.")
-    assert window.queue.select_finding(_finding(window, "step_negative").id)
+    assert window.queue.select_finding(_finding(window, "depth_bottom_up").id)
     assert window.queue.offered_actions() == []
     assert window.queue.form.isHidden()
     assert wording.VIEW_ONLY in window.queue.detail.toPlainText()
