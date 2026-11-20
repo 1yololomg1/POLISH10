@@ -82,7 +82,7 @@ Applies to a curve. Rows: UXC9. Wording is the UXC9 status language table.
 | `HARD_VIOLATION_EXCLUDED` | A rule was applied and a hard violation was found; the measured value is excluded from processing. | UXC9 | Measured value excluded from processing |
 | `NOT_ELIGIBLE` | No eligible rule was applied, because family or unit confidence is insufficient. This is not a pass. | UXC9, D11, D87 | Not automatically validated |
 | `PENDING` | Validation has not been run. | UXC9 | Validation pending |
-| `NOT_APPLICABLE` | The validation method is blocked by a scientific precondition. | UXC9 | Validation method not applicable |
+| `NOT_APPLICABLE` | An eligible curve whose samples are all absent was not validated. It is not a pass. | UXC9, F06 | Validation method not applicable |
 
 ## sample_status
 
@@ -91,7 +91,7 @@ Applies to a sample. Rows: D44. There is no `REFUSED` value.
 | Value | Meaning | Rows | Preferred user-facing wording |
 |---|---|---|---|
 | `MEASURED` | The sample is the measured value. | D44 | Not specified in the UXC2 or UXC9 language tables. |
-| `INVALID` | The value is outside a confirmed hard limit. Exclusion from the processed file is a separate `output_inclusion` decision. | D44 | Not specified in the UXC2 or UXC9 language tables. |
+| `INVALID` | The value is outside a confirmed hard limit. An impossible value is `EXCLUDED` at once. A suspicious sample's include-or-exclude decision is separate. | D44, D11, D92 | Not specified in the UXC2 or UXC9 language tables. |
 | `ABSENT` | No value is present at this sample, including samples in a gap POLISH declined to fill. | D44, Appendix A.2 | Not specified in the UXC2 or UXC9 language tables. |
 | `CREATED` | POLISH created this value, and a provenance record exists for it. | D44 | Not specified in the UXC2 or UXC9 language tables. |
 | `CHANGED` | POLISH changed the stored value. Unit conversion is not this status (OD-05). | D44, OD-05 | Not specified in the UXC2 or UXC9 language tables. |
@@ -99,12 +99,12 @@ Applies to a sample. Rows: D44. There is no `REFUSED` value.
 
 ## output_inclusion
 
-Applies to an invalid sample, and to a measured sample outside a plausibility limit (D92). Rows: D17, D44, D92 (dad, 1.2). The original file is never opened for writing.
+Applies to an invalid sample, and to a measured sample outside a plausibility limit (D92). An impossible sample is EXCLUDED at once (domain expert, follow-up answer 2, written). A suspicious sample stays PENDING_DECISION until the user answers. Rows: D17, D44, D92 (dad, 1.2), D11. The original file is never opened for writing.
 
 | Value | Meaning | Rows | Preferred user-facing wording |
 |---|---|---|---|
-| `PENDING_DECISION` | The sample has no recorded include-or-exclude decision yet. | D44, D92 | Not specified in the UXC2 or UXC9 language tables. |
-| `EXCLUDED` | The sample is left out of the processed file and not used by later stages. It stays visible and marked. The original file is unchanged. | D17, D44, D92 | Not specified in the UXC2 or UXC9 language tables. |
+| `PENDING_DECISION` | A suspicious sample has no recorded include-or-exclude decision yet. | D44, D92 | Not specified in the UXC2 or UXC9 language tables. |
+| `EXCLUDED` | The sample is left out of the processed file and not used by later stages. Impossible samples are excluded automatically. It stays visible and marked. The original file is unchanged. | D17, D44, D92, D11 | Not specified in the UXC2 or UXC9 language tables. |
 | `KEPT` | A recorded decision keeps the sample in the processed file; a kept suspicious sample is used by later stages and stays flagged. | D44, D92 | Not specified in the UXC2 or UXC9 language tables. |
 
 ## gap_class

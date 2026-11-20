@@ -2209,7 +2209,7 @@ the old version stale, and the cause names the table and both versions. An
 answer that removed its own question is applied; run_well already does this.
 
 The glossary line that the schema does not decide which nodes affect export
-stays. D100 is the caller policy, not a schema change. Do not edit
+stays. The next free D number is the caller policy, not a schema change. Do not edit
 state_glossary.md. Do not edit export_permission, DependencyRecord,
 IssueDisposition, Runner, declare_depth_conversion, run_well, or the session
 schema. Do not add a StaleCause type and do not add a timestamp field.
@@ -2336,7 +2336,7 @@ DecisionRecord.
    While 3 is in that set, the runner does not call a stage that depends on 3,
    so Stage 4 is not cleared by the runner either. Do not add a second clear.
 
-8. Docs. Register D100 (owner AC, status NEW; the status cell names both dates,
+8. Docs. Register the next free D number (owner AC, status NEW; the status cell names both dates,
    23 Oct 2026 and 29 Oct 2026): "Staleness is a stamp of what a stage result
    was built from: the answers it used, the rule and table versions in force,
    and the upstream results. Unchanged answers stay current. Only a changed
@@ -2346,13 +2346,8 @@ DecisionRecord.
    any stale Stage 0–10 result or answer blocks export. Dispositions are not
    given a stale state, and decision history is not rewritten." Re-parse Count.
    Expected if the only new row is this one: total 100, AC 30, NEW 18, and the
-   closing sentence also says "D100 is NEW." If the parse differs, stop and
-   report the tables. Change D1–D98 to D1–D100 everywhere tests/governance
-   checks the range, including the register title, the end note, the Count
-   parenthetical, the README, the rules file, and the build plan outside
-   fenced prompts. Do not edit ranges inside fenced prompts.
-   tests/governance/test_consistency.py hard-codes the current total and the
-   current range. Make these two tests read them from the register copy:
+   closing sentence also says "the next free D number is NEW." If the parse differs, stop and
+   report the tables. Make these two tests read them from the register copy:
    a. test_count_check_fails_when_the_total_is_wrong: read the bold integer in
       the Total register entries row (the same **N** the count check reads).
       Replace that **N** with **90**. The expected message stays a wrong count
