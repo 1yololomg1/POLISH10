@@ -681,7 +681,7 @@ def test_an_html_error_page_is_not_a_las_file(tmp_path: Path):
     assert sections[0].message == (
         "This file has no LAS sections (no line starting with ~), so it is not a LAS file and was not processed."
     )
-    assert not any(item.check in ("ascii_absent", "section_absent", "pass2_no_parse") for item in result.findings)
+    assert [item.check for item in result.findings] == ["no_sections"]
 
 
 def test_any_lasio_exception_is_pass2_no_parse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -696,6 +696,14 @@ def test_any_lasio_exception_is_pass2_no_parse(tmp_path: Path, monkeypatch: pyte
     assert result.dataset is not None
 
 
+def _lasio_source_is_text(source: object) -> bool:
+    """Pass 2 may receive decoded text or a stream. Never a path or a URL."""
+
+    if isinstance(source, io.StringIO):
+        return True
+    return isinstance(source, str) and "\n" in source
+
+
 def test_ingest_given_a_url_shaped_file_name_never_calls_urlopen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     calls: list[object] = []
 
@@ -704,11 +712,6 @@ def test_ingest_given_a_url_shaped_file_name_never_calls_urlopen(tmp_path: Path,
         raise AssertionError("urlopen must not be called")
 
     monkeypatch.setattr("urllib.request.urlopen", boom)
-    import lasio.reader
-
-    monkeypatch.setattr(lasio.reader.urllib.request, "urlopen", boom)
-    with pytest.raises(OSError):
-        ingest("http://example.invalid/well.las", read_at=_WHEN)
     import lasio
 
     received: list[object] = []
@@ -716,14 +719,17 @@ def test_ingest_given_a_url_shaped_file_name_never_calls_urlopen(tmp_path: Path,
 
     def spy(source, *args, **kwargs):
         received.append(source)
+        assert _lasio_source_is_text(source)
         assert kwargs.get("null_policy") == "none"
         return real(source, *args, **kwargs)
 
     monkeypatch.setattr(lasio, "read", spy)
+    with pytest.raises(OSError):
+        ingest("http://example.invalid/well.las", read_at=_WHEN)
     result = ingest(_write(tmp_path, _las()), read_at=_WHEN)
     assert result.status is StageStatus.COMPLETE
     assert received
-    assert all(isinstance(item, io.StringIO) for item in received)
+    assert all(_lasio_source_is_text(item) for item in received)
     assert calls == []
 
 

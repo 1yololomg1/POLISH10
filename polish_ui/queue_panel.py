@@ -2,7 +2,9 @@
 
 Every item is shown the same way, in the same place: what POLISH observed,
 what it means, what you may do, what happens next. Only the actions the
-engine permits and can carry out for that finding are offered.
+engine permits and can carry out for that finding are offered. A question
+with six options or fewer shows them as radio buttons. More than six keeps
+the dropdown.
 """
 
 from __future__ import annotations
@@ -24,6 +26,10 @@ from polish_ui.evidence_text import render_evidence
 # The family box starts here for every finding and every well. Record is
 # refused until the user moves off it (P18.6).
 CHOOSE_FAMILY = "Choose a family"
+
+# A question with this many options or fewer is drawn as radio buttons, so a
+# grab shows every option. More than this keeps the dropdown. P13k-b.
+_RADIO_OPTIONS = 6
 
 _FINDING_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
@@ -72,6 +78,15 @@ class QueuePanel(QtWidgets.QWidget):
         self.action_box = QtWidgets.QComboBox()
         self.action_box.currentIndexChanged.connect(self._show_fields)
         self.option_box = QtWidgets.QComboBox()
+        self.option_radios = QtWidgets.QWidget()
+        self._option_layout = QtWidgets.QVBoxLayout(self.option_radios)
+        self._option_layout.setContentsMargins(0, 0, 0, 0)
+        self._option_group = QtWidgets.QButtonGroup(self)
+        self.options = QtWidgets.QWidget()
+        options_layout = QtWidgets.QVBoxLayout(self.options)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        options_layout.addWidget(self.option_radios)
+        options_layout.addWidget(self.option_box)
         self.family_box = QtWidgets.QComboBox()
         self.family_box.addItem(CHOOSE_FAMILY)
         self.family_box.addItems(sorted(record.id for record in self._shipped.families))
@@ -90,7 +105,7 @@ class QueuePanel(QtWidgets.QWidget):
         form = QtWidgets.QFormLayout(self.form)
         form.setContentsMargins(0, 0, 0, 0)
         form.addRow("Action", self.action_box)
-        form.addRow("Option", self.option_box)
+        form.addRow("Option", self.options)
         form.addRow("Family", self.family_box)
         form.addRow("Role", self.role_box)
         form.addRow("Label", self.label_edit)
@@ -233,7 +248,7 @@ class QueuePanel(QtWidgets.QWidget):
         for action in offered:
             self.action_box.addItem(action.value, action)
         self.action_box.blockSignals(False)
-        self.option_box.addItems(list(listed_options(finding)))
+        self._show_options(listed_options(finding))
         self._show_roles()
         self._show_fields()
 
@@ -243,10 +258,64 @@ class QueuePanel(QtWidgets.QWidget):
         self.family_box.blockSignals(True)
         self.family_box.setCurrentIndex(0)
         self.family_box.blockSignals(False)
-        self.option_box.clear()
+        self._clear_options()
         self.role_box.clear()
         self.label_edit.clear()
         self.reason_edit.clear()
+
+    def option_labels(self) -> list[str]:
+        """The options currently shown, in order. Empty when none are shown."""
+
+        labels = [button.text() for button in self._option_group.buttons()]
+        if labels:
+            return labels
+        return [self.option_box.itemText(index) for index in range(self.option_box.count())]
+
+    def select_option(self, text: str) -> bool:
+        """Select this option. False when it is not shown."""
+
+        for button in self._option_group.buttons():
+            if button.text() == text:
+                button.setChecked(True)
+                return True
+        index = self.option_box.findText(text)
+        if index < 0:
+            return False
+        self.option_box.setCurrentIndex(index)
+        return True
+
+    def chosen_option(self) -> str:
+        """The option that Record will store."""
+
+        button = self._option_group.checkedButton()
+        if button is not None:
+            return button.text()
+        return self.option_box.currentText()
+
+    def _clear_options(self) -> None:
+        for button in list(self._option_group.buttons()):
+            self._option_group.removeButton(button)
+            self._option_layout.removeWidget(button)
+            button.setParent(None)
+            button.deleteLater()
+        self.option_box.clear()
+
+    def _show_options(self, labels: tuple[str, ...]) -> None:
+        """Radio buttons for six options or fewer. A dropdown above that. P13k-b."""
+
+        self._clear_options()
+        if len(labels) <= _RADIO_OPTIONS:
+            self.option_box.hide()
+            self.option_radios.show()
+            for index, label in enumerate(labels):
+                button = QtWidgets.QRadioButton(label)
+                button.setChecked(index == 0)
+                self._option_group.addButton(button)
+                self._option_layout.addWidget(button)
+            return
+        self.option_radios.hide()
+        self.option_box.show()
+        self.option_box.addItems(list(labels))
 
     def _set_row_visible(self, widget: QtWidgets.QWidget, visible: bool) -> None:
         self._form_layout.setRowVisible(widget, visible)
@@ -256,7 +325,7 @@ class QueuePanel(QtWidgets.QWidget):
         if action is None:
             return
         mapping = action is UserAction.MAP_EXPLICITLY
-        self._set_row_visible(self.option_box, action is UserAction.CHOOSE_OPTION)
+        self._set_row_visible(self.options, action is UserAction.CHOOSE_OPTION)
         self._set_row_visible(self.family_box, mapping)
         self._set_row_visible(self.role_box, mapping and self.role_box.count() > 1)
         self._set_row_visible(self.label_edit, mapping)
@@ -283,7 +352,7 @@ class QueuePanel(QtWidgets.QWidget):
         if action is not UserAction.ACKNOWLEDGE:
             fields["reason"] = self.reason_edit.text().strip()
         if action is UserAction.CHOOSE_OPTION:
-            fields["chosen_option"] = self.option_box.currentText()
+            fields["chosen_option"] = self.chosen_option()
         if action is UserAction.MAP_EXPLICITLY:
             if self.family_box.currentText() == CHOOSE_FAMILY:
                 self.show_message("Choose a family before recording.")

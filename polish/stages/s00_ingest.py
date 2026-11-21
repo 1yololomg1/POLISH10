@@ -675,9 +675,12 @@ def _record_text_conditions(
     """Ledger entries for conditions pass 1 used to store only on the audit.
 
     The first value of a repeated mnemonic is the one already stored. A second
-    VERS or WRAP is kept on the audit as well as here. D64.
+    VERS or WRAP is kept on the audit as well as here. A file with no section
+    records none of these. D64, D65.
     """
 
+    if not sections:
+        return
     if preamble_lines:
         shown = ", ".join(str(number) for number in preamble_lines[:10])
         extra = ""
@@ -697,12 +700,9 @@ def _record_text_conditions(
             (("section", letter),),
             f"Section ~{letter} appears {count} times, at lines {lines}.",
         )
-    # A file with no "~" line is not LAS. The absent-section notes are not
-    # also raised for that file; no_sections is recorded in _pass1. D65.
-    if sections:
-        for letter in ("V", "W", "C"):
-            if letter_counts[letter] == 0:
-                ledger.add("section_absent", (("section", letter),), f"Section ~{letter} is absent.")
+    for letter in ("V", "W", "C"):
+        if letter_counts[letter] == 0:
+            ledger.add("section_absent", (("section", letter),), f"Section ~{letter} is absent.")
     has_ascii = any(mark.letter == "A" for mark in sections)
     if has_ascii and sections and sections[-1].letter != "A":
         start = next(mark.lineno for mark in sections if mark.letter == "A")
@@ -757,7 +757,11 @@ def _record_text_conditions(
 
 
 def _pass1(text: str, ledger: _Ledger) -> _Pass1:
-    """Walk the text. Parser libraries are not used. D64, D65, D66, D68."""
+    """Walk the text. Parser libraries are not used. D64, D65, D66, D68.
+
+    A file with no line starting with ``~`` records ``no_sections`` and no
+    other finding. D65.
+    """
 
     endings = _line_endings(text)
     sections: list[SectionMark] = []
@@ -887,7 +891,18 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
 
     null_text = well["NULL"][1] if "NULL" in well else None
     null_number = well["NULL"][2] if "NULL" in well else None
-    if "NULL" not in well:
+    # A file with no section is not LAS. That one finding replaces the NULL,
+    # preamble, and version notes, which would all be true of any non-LAS text. D65.
+    if not sections:
+        ledger.add(
+            "no_sections",
+            (),
+            (
+                "This file has no LAS sections (no line starting with ~), so it is not a LAS file "
+                "and was not processed."
+            ),
+        )
+    elif "NULL" not in well:
         ledger.add(
             "null_undeclared",
             (),
@@ -908,18 +923,9 @@ def _pass1(text: str, ledger: _Ledger) -> _Pass1:
     depth_tokens: list[str] = []
     parse_data = vers_major != 3
 
-    if parse_data and not sections:
-        ledger.add(
-            "no_sections",
-            (),
-            (
-                "This file has no LAS sections (no line starting with ~), so it is not a LAS file "
-                "and was not processed."
-            ),
-        )
-    elif parse_data and "A" not in letter_counts:
+    if sections and parse_data and "A" not in letter_counts:
         ledger.add("ascii_absent", (), "No ~A section.")
-    elif parse_data:
+    elif sections and parse_data:
         content = [(lineno, line) for lineno, line in data_lines if not _blank_or_comment(line)]
         n_curves = len(curves)
         if wrapped is None:

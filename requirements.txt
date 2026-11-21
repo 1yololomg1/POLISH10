@@ -1,16 +1,17 @@
 # Runtime dependencies for POLISH (also used by CI).
 # Tkinter ships with the interpreter; on Linux install python3-tk.
+# Pinned 21 Nov 2026 to the versions the suite passes on. Upgrade deliberately, with the suite.
 
-numpy>=1.20.0
-pandas>=1.3.0
-matplotlib>=3.3.0
-lasio>=0.29
-scipy>=1.7.0
-scikit-learn>=1.0.0
-pywavelets>=1.1.0
-psutil>=5.8.0
+numpy==1.26.4
+pandas==2.3.3
+matplotlib==3.10.8
+lasio==0.31
+scipy==1.16.3
+scikit-learn==1.5.0
+PyWavelets==1.8.0
+psutil==7.0.0
 
 # Interface shell (polish_ui/). polish/ does not import these. Toolkit chosen
 # by the owner on 12 Nov 2026 from the P04 measurements (OD-07). PySide6 is LGPL.
-PySide6>=6.6
-pyqtgraph>=0.13
+PySide6==6.11.2
+pyqtgraph==0.14.0

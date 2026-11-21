@@ -1,7 +1,8 @@
 """Interface shell over Stages 0-4. D71, D81, D83, D86, UXC2, UXC5, C6.
 
 Qt runs on the offscreen platform. The tests are skipped where PySide6 or
-pyqtgraph cannot be imported. Loads are synchronous so no thread is involved.
+pyqtgraph cannot be imported, unless POLISH_REQUIRE_UI is set, in which case
+a missing library fails the run. Loads are synchronous so no thread is involved.
 App-data and local tables are temporary directories.
 """
 
@@ -21,8 +22,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
-pytest.importorskip("PySide6.QtWidgets")
-pytest.importorskip("pyqtgraph")
+if os.environ.get("POLISH_REQUIRE_UI"):
+    import PySide6.QtWidgets  # noqa: F401
+    import pyqtgraph  # noqa: F401
+else:
+    pytest.importorskip("PySide6.QtWidgets")
+    pytest.importorskip("pyqtgraph")
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -245,10 +250,9 @@ def test_hiding_the_queue_leaves_the_depth_view_geometry_identical(window, app, 
 
 def _record_option(window: MainWindow, check: str, option: str, reason: str) -> None:
     assert window.queue.select_finding(_finding(window, check).id)
-    shown = [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())]
-    assert option in shown
+    assert option in window.queue.option_labels()
     _choose(window, check, UserAction.CHOOSE_OPTION)
-    window.queue.option_box.setCurrentText(option)
+    assert window.queue.select_option(option)
     window.queue.reason_edit.setText(reason)
     window.queue.record_button.click()
     assert window.queue.message.text() == ""
@@ -265,12 +269,11 @@ def test_a_missing_null_can_be_chosen_from_the_queue(window, tmp_path: Path):
     )
     path = _write(tmp_path, body)
     window.open_path(path)
-    assert [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())] == []
+    assert window.queue.option_labels() == []
     window.queue.select_finding(_finding(window, "null_undeclared").id)
-    assert [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())] == [
-        "-999.25",
-        "NONE",
-    ]
+    assert window.queue.option_labels() == ["-999.25", "NONE"]
+    assert window.queue.option_box.isHidden()
+    assert [button.text() for button in window.queue._option_group.buttons()] == ["-999.25", "NONE"]
     _record_option(window, "null_undeclared", "-999.25", "the file uses -999.25")
     values = window._result.run.ingest.dataset.curves[1].values
     assert math.isnan(float(values[0]))
@@ -284,7 +287,8 @@ def test_a_blank_depth_unit_can_be_chosen_from_the_queue(window, tmp_path: Path)
     body = _las(curves="DEPT. : DEPTH\nGR.GAPI : GAMMA\nDT.US/FT : SONIC\n")
     window.open_path(_write(tmp_path, body))
     window.queue.select_finding(_finding(window, "depth_unit_unrecognised").id)
-    assert [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())] == ["FT", "M"]
+    assert window.queue.option_labels() == ["FT", "M"]
+    assert window.queue.option_box.isHidden()
     _record_option(window, "depth_unit_unrecognised", "FT", "the depth is in feet")
     assert "Depth unit FT" in window.depth_summary.text()
     assert window.queue.select_finding(_finding(window, "depth_unit_unrecognised").id)
@@ -301,10 +305,59 @@ def test_a_blank_curve_unit_can_be_chosen_from_the_queue(window, tmp_path: Path)
     )
     window.open_path(_write(tmp_path, body))
     window.queue.select_finding(_finding(window, "unit_unresolved").id)
-    assert [window.queue.option_box.itemText(index) for index in range(window.queue.option_box.count())] == ["GAPI", "CPS"]
+    assert window.queue.option_labels() == ["GAPI", "CPS"]
+    assert window.queue.option_box.isHidden()
     _record_option(window, "unit_unresolved", "GAPI", "the curve is in GAPI")
     assert window.table.item(1, 9).text() == "GAPI"
     assert window.table.item(1, 10).text() == "Validated against rule set v1"
+
+
+def test_more_than_six_options_stay_in_the_dropdown(window, tmp_path: Path):
+    from datetime import datetime, timezone
+
+    from polish.decisions.session import open_session
+    from polish.model.findings import Evidence, FindingRecord, finding_key
+    from polish.model.states import BlockType
+
+    labels = [f"U{number}" for number in range(7)]
+    finding = FindingRecord(
+        id=finding_key(0, "null_undeclared", ()),
+        stage=0,
+        check="null_undeclared",
+        identity=(),
+        block_type=BlockType.AMBIGUOUS_INTERPRETATION,
+        subject_refs=(),
+        evidence=Evidence(BlockType.AMBIGUOUS_INTERPRETATION.value, (("options", json.dumps(labels)),)),
+        message="NULL is not declared.",
+        created_at=datetime(2026, 11, 21, tzinfo=timezone.utc),
+    )
+    path = tmp_path / "seven.las"
+    path.write_text("x\n", encoding="utf-8")
+    window.queue.set_items((finding,), open_session(path, (finding,)))
+    assert window.queue.select_finding(finding.id)
+    assert window.queue.option_labels() == labels
+    assert window.queue.option_radios.isHidden()
+    assert window.queue.select_option("U6")
+    assert window.queue.chosen_option() == "U6"
+
+
+def test_the_screenshot_tool_refuses_the_offscreen_platform():
+    import subprocess
+    import sys
+
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    result = subprocess.run(
+        [sys.executable, "tools/progress_screenshots.py", "P13k"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "offscreen" in result.stderr
+    assert "no letters" in result.stderr
 
 
 def test_value_axis_numbers_stay_separate(window, app, tmp_path: Path):
