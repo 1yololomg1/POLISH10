@@ -5805,13 +5805,14 @@ Your feedback contributes to software quality and reliability.
                 ci = ds.get('curve_info', {}) or {}
                 null_value = str(self.null_value_var.get()) if hasattr(self, 'null_value_var') else '-999.25'
                 # Header and spacing come from the well being exported, not the active well.
+                source_path = ds.get('file_path')
                 resampled_spacing = (ds.get('processing_results') or {}).get('resampled_spacing')
                 las_text = self._generate_las_text_from_dataframe(
                     pdf,
                     ci,
                     null_value,
                     max_rows=None,
-                    source_path=ds.get('file_path'),
+                    source_path=source_path,
                     resampled_spacing=resampled_spacing,
                 )
                 
@@ -5841,7 +5842,13 @@ Your feedback contributes to software quality and reliability.
                         messagebox.showerror(ERROR_TITLE_SECURITY, f"Invalid export path generated: {sanitized}")
                     continue
                 
-                with open(str(final_validated), 'w', encoding='utf-8') as f:
+                _sections, source_encoding = _read_source_las_header(source_path)
+                with open(
+                    str(final_validated),
+                    'w',
+                    encoding=source_encoding or 'utf-8',
+                    errors='replace',
+                ) as f:
                     f.write(las_text)
                 exported += 1
             
@@ -8291,17 +8298,18 @@ Your feedback contributes to software quality and reliability.
     ) -> str:
         """Create LAS v2.0 text from a DataFrame and curve metadata.
 
-        ``source_path`` is the well being exported. Its ~Well and ~Parameter
-        sections are read with lasio. The active well's path and captured
-        header are not used. ``resampled_spacing`` is that well's recorded
-        spacing, or None when the data was not resampled.
+        ``source_path`` is the well being exported. A .las source's header is
+        copied as text by ``_read_source_las_header``. The active well's path
+        and captured header are not used. ``resampled_spacing`` is that well's
+        recorded spacing, or None when the data was not resampled.
 
         Depth is written first when a depth column is present. NaN becomes
         ``null_value``. ``max_rows`` limits the ASCII section for preview.
+        STRT, STOP and STEP describe the whole depth column.
         """
         try:
             from datetime import datetime as _dt
-            from decimal import Decimal
+            from decimal import Decimal, InvalidOperation
 
             def format_number(val):
                 # Positional, not 6 significant digits: 10000.25 must stay
@@ -8342,26 +8350,55 @@ Your feedback contributes to software quality and reliability.
                 unit = depth_info.get('unit', '')
                 depth_unit = '' if unit is None else str(unit)
 
-            # A missing or unreadable source contributes no header. STRT, STOP,
-            # STEP and NULL are still written from the rows below.
-            header = None
+            # A source that is not a readable .las file contributes no header.
+            # STRT, STOP, STEP and NULL are still written from the rows below.
             source_name = ''
             if source_path is not None and str(source_path).strip():
                 source_name = os.path.basename(os.fspath(source_path))
-                try:
-                    header = lasio.read(source_path, ignore_data=True)
-                except Exception:
-                    header = None
+            sections, _source_encoding = _read_source_las_header(source_path)
+            if not sections:
+                sections = {}
+
+            def length_kind(unit_text):
+                # F, FT and FEET are feet. M and the metre spellings are metres.
+                # Anything else, including an empty unit, is unknown.
+                key = '' if unit_text is None else str(unit_text).strip().upper()
+                if key in ('F', 'FT', 'FEET'):
+                    return 'ft'
+                if key in ('M', 'METER', 'METERS', 'METRE', 'METRES'):
+                    return 'm'
+                return None
+
+            def first_mnemonic(section_lines, mnemonic):
+                for section_line in section_lines:
+                    parsed = _parse_las_header_line(section_line)
+                    if parsed is not None and parsed[0] == mnemonic:
+                        return parsed
+                return None
+
+            def plain_decimal(number):
+                # Decimal text, not a binary float. 0.5 * 0.3048 stays 0.1524.
+                text = format(abs(number), 'f')
+                if '.' in text:
+                    text = text.rstrip('0').rstrip('.')
+                return text if text else '0'
 
             nv = null_value
             data_lines = []
-            written_depths = []
+            all_depth_texts = []
             depth_index = ordered_cols.index(depth_col) if depth_col in ordered_cols else None
             count = 0
             if ordered_cols:
                 for row in df[ordered_cols].itertuples(index=False, name=None):
+                    if depth_index is not None:
+                        raw_depth = row[depth_index]
+                        if not pd.isna(raw_depth):
+                            try:
+                                all_depth_texts.append(format_number(raw_depth))
+                            except (TypeError, ValueError):
+                                pass
                     if max_rows is not None and count >= max_rows:
-                        break
+                        continue
                     formatted = []
                     for val in row:
                         if pd.isna(val):
@@ -8372,84 +8409,123 @@ Your feedback contributes to software quality and reliability.
                             except Exception:
                                 formatted.append(str(val))
                     data_lines.append(" ".join(formatted))
-                    if depth_index is not None:
-                        raw_depth = row[depth_index]
-                        if not pd.isna(raw_depth):
-                            try:
-                                written_depths.append(float(raw_depth))
-                            except (TypeError, ValueError):
-                                pass
                     count += 1
 
-            # STEP magnitude, first match wins: resampled spacing, then the
-            # original header, then one equal gap, otherwise 0. The sign
-            # follows the order the depths were written.
+            # STEP magnitude. The first rule that yields a number wins.
+            # 1. Resampled spacing, when given.
+            # 2. The source STEP, when it is a number other than 0 and its
+            #    length unit is the exported depth unit. Feet converted to
+            #    metres uses 0.3048, the factor in core/unit_standardization.py.
+            # 3. One equal gap between consecutive depths of the whole column,
+            #    compared as decimals of the formatted text.
+            # 4. Otherwise 0.
             magnitude = None
             if resampled_spacing is not None:
                 try:
-                    magnitude = abs(float(resampled_spacing))
-                except (TypeError, ValueError):
-                    magnitude = None
-            if magnitude is None and header is not None:
-                for item in header.well:
-                    if str(item.original_mnemonic).strip().upper() != 'STEP':
-                        continue
-                    try:
-                        number = float(item.value)
-                    except (TypeError, ValueError):
-                        number = 0.0
-                    if number != 0 and np.isfinite(number):
-                        magnitude = abs(number)
-                    break
-            if magnitude is None and len(written_depths) >= 2:
-                texts = [format_number(depth) for depth in written_depths]
-                try:
-                    depth_decimals = [Decimal(text) for text in texts]
-                    gaps = [
-                        depth_decimals[i + 1] - depth_decimals[i]
-                        for i in range(len(depth_decimals) - 1)
-                    ]
-                except Exception:
-                    gaps = []
-                if gaps and all(gap == gaps[0] for gap in gaps):
-                    magnitude = abs(float(gaps[0]))
+                    resampled_number = Decimal(str(resampled_spacing))
+                except InvalidOperation:
+                    resampled_number = None
+                if resampled_number is not None and resampled_number.is_finite():
+                    magnitude = abs(resampled_number)
+            well_lines = sections.get('W', [])
             if magnitude is None:
-                magnitude = 0.0
-            if len(written_depths) >= 2 and written_depths[-1] < written_depths[0]:
-                signed_step = -abs(float(magnitude))
+                step_item = first_mnemonic(well_lines, 'STEP')
+                if step_item is not None:
+                    _step_mnemonic, step_unit, step_value = step_item
+                    try:
+                        step_number = Decimal(step_value)
+                    except InvalidOperation:
+                        step_number = None
+                    if step_number is not None and step_number.is_finite() and step_number != 0:
+                        if step_unit == '':
+                            start_item = first_mnemonic(well_lines, 'STRT')
+                            if start_item is not None:
+                                step_unit = start_item[1]
+                        found_curve = False
+                        curve_unit = ''
+                        for curve_line in sections.get('C', []):
+                            parsed_curve = _parse_las_header_line(curve_line)
+                            if parsed_curve is None:
+                                continue
+                            found_curve = True
+                            curve_unit = parsed_curve[1]
+                            break
+                        if not found_curve:
+                            curve_unit = step_unit
+                        step_kind = length_kind(step_unit)
+                        export_kind = length_kind(depth_unit)
+                        source_kind = length_kind(curve_unit)
+                        if step_kind is not None and step_kind == export_kind:
+                            magnitude = abs(step_number)
+                        elif step_kind == 'ft' and export_kind == 'm' and source_kind == 'ft':
+                            magnitude = abs(step_number * Decimal('0.3048'))
+            if magnitude is None and len(all_depth_texts) >= 2:
+                try:
+                    depth_decimals = [Decimal(text) for text in all_depth_texts]
+                except InvalidOperation:
+                    depth_decimals = []
+                gaps = [
+                    depth_decimals[i + 1] - depth_decimals[i]
+                    for i in range(len(depth_decimals) - 1)
+                ]
+                if gaps and all(gap == gaps[0] for gap in gaps):
+                    magnitude = abs(gaps[0])
+            if magnitude is None:
+                magnitude = Decimal('0')
+            negative = False
+            if len(all_depth_texts) >= 2:
+                try:
+                    negative = Decimal(all_depth_texts[-1]) < Decimal(all_depth_texts[0])
+                except InvalidOperation:
+                    negative = False
+            step_text = plain_decimal(magnitude)
+            if negative and step_text != '0':
+                step_text = '-' + step_text
+            if all_depth_texts:
+                strt_text = all_depth_texts[0]
+                stop_text = all_depth_texts[-1]
             else:
-                signed_step = abs(float(magnitude))
+                strt_text = str(nv)
+                stop_text = str(nv)
+
+            replaced = {
+                'STRT': header_line('STRT', depth_unit, strt_text, 'START DEPTH'),
+                'STOP': header_line('STOP', depth_unit, stop_text, 'STOP DEPTH'),
+                'STEP': header_line('STEP', depth_unit, step_text, 'STEP'),
+                'NULL': header_line('NULL', '', str(nv), 'NULL VALUE'),
+            }
+            present = set()
+            for well_line in well_lines:
+                parsed_well = _parse_las_header_line(well_line)
+                if parsed_well is not None and parsed_well[0] in replaced:
+                    present.add(parsed_well[0])
 
             lines = []
             lines.append("~Version")
             lines.append("VERS.                  2.0:   CWLS LOG ASCII STANDARD - VERSION 2.0")
             lines.append("WRAP.                   NO:   One line per depth step")
-            lines.append("DLM .                 SPACE:   Column Data Section Delimiter")
             lines.append("")
             lines.append("~Well")
             stamp = _dt.now().strftime('%Y-%m-%d %H:%M:%S')
             lines.append(f"# Exported by POLISH from {source_name} on {stamp}")
-            skipped = {'STRT', 'STOP', 'STEP', 'NULL'}
-            if header is not None:
-                for item in header.well:
-                    if str(item.original_mnemonic).strip().upper() in skipped:
+            for mnemonic in ('STRT', 'STOP', 'STEP', 'NULL'):
+                if mnemonic not in present:
+                    lines.append(replaced[mnemonic])
+            seen_replaced = set()
+            for well_line in well_lines:
+                parsed_well = _parse_las_header_line(well_line)
+                if parsed_well is not None and parsed_well[0] in replaced:
+                    mnemonic = parsed_well[0]
+                    if mnemonic in seen_replaced:
                         continue
-                    lines.append(header_line(
-                        item.original_mnemonic, item.unit, item.value, item.descr
-                    ))
-            if written_depths:
-                strt_text = format_number(written_depths[0])
-                stop_text = format_number(written_depths[-1])
-            else:
-                strt_text = str(nv)
-                stop_text = str(nv)
-            lines.append(header_line('STRT', depth_unit, strt_text, 'START DEPTH'))
-            lines.append(header_line('STOP', depth_unit, stop_text, 'STOP DEPTH'))
-            lines.append(header_line('STEP', depth_unit, format_number(signed_step), 'STEP'))
-            lines.append(header_line('NULL', depth_unit, str(nv), 'NULL VALUE'))
+                    seen_replaced.add(mnemonic)
+                    lines.append(replaced[mnemonic])
+                else:
+                    lines.append(well_line)
             lines.append("")
 
             # Curve Information block. Unit is glued to the mnemonic.
+            # The source ~Curve value field is not carried.
             lines.append("~Curve")
             for col in ordered_cols:
                 curve_meta = info.get(col, {})
@@ -8462,13 +8538,11 @@ Your feedback contributes to software quality and reliability.
                 lines.append(f"{col}.{safe_unit}  : {safe_desc}")
             lines.append("")
 
-            if header is not None and len(header.params) > 0:
-                lines.append("~Parameter")
-                for item in header.params:
-                    lines.append(header_line(
-                        item.original_mnemonic, item.unit, item.value, item.descr
-                    ))
-                lines.append("")
+            parameter_lines = sections.get('P', [])
+            if any(parameter_line.strip() for parameter_line in parameter_lines):
+                lines.extend(parameter_lines)
+                if parameter_lines[-1].strip():
+                    lines.append("")
 
             lines.append("~Ascii")
             lines.extend(data_lines)
@@ -8632,15 +8706,17 @@ Your feedback contributes to software quality and reliability.
                             'description': 'Gap-fill uncertainty' if col.endswith('_UNC') else 'Gap-fill confidence (0-1)',
                             'curve_type': 'QC',
                         })
+                source_path = self.file_path_var.get()
                 las_text = self._generate_las_text_from_dataframe(
                     export_df,
                     export_info,
                     str(null_value),
                     max_rows=None,
-                    source_path=self.file_path_var.get(),
+                    source_path=source_path,
                     resampled_spacing=self.processing_results.get('resampled_spacing'),
                 )
-                with open(sp, 'w', encoding='utf-8') as f:
+                _sections, source_encoding = _read_source_las_header(source_path)
+                with open(sp, 'w', encoding=source_encoding or 'utf-8', errors='replace') as f:
                     f.write(las_text)
             messagebox.showinfo("Export", f"Exported data to: {sp}")
             try:
@@ -14555,6 +14631,100 @@ Your feedback contributes to software quality and reliability.
         if messagebox.askokcancel("Quit", "Do you want to quit the application?"):
 
             self.root.destroy()
+
+
+def _parse_las_header_line(line):
+    """Split one LAS header line into mnemonic, unit and value.
+
+    A comment, a blank line, and a line with no period have no mnemonic.
+    The mnemonic is the text before the first period, stripped and uppercased.
+    When the character immediately after the period is a space, or the line
+    ends there, the unit is empty. Otherwise the unit is the text up to the
+    next space. The value is the remaining text up to the last colon, stripped.
+    Returns None when the line has no mnemonic.
+    """
+    if line.strip() == '' or line.lstrip().startswith('#'):
+        return None
+    dot = line.find('.')
+    if dot < 0:
+        return None
+    mnemonic = line[:dot].strip().upper()
+    if mnemonic == '':
+        return None
+    after = line[dot + 1:]
+    if after == '' or after[0] == ' ':
+        unit = ''
+        remainder = after
+    else:
+        space = after.find(' ')
+        if space < 0:
+            unit = after
+            remainder = ''
+        else:
+            unit = after[:space]
+            remainder = after[space + 1:]
+    colon = remainder.rfind(':')
+    if colon < 0:
+        value = remainder.strip()
+    else:
+        value = remainder[:colon].strip()
+    return mnemonic, unit, value
+
+
+def _read_source_las_header(source_path):
+    """Return a .las source's header sections and the encoding that decoded them.
+
+    Only a path ending in .las, ignoring case, is opened. A CSV, Excel, DLIS,
+    missing, or empty path contributes no header, and this does not raise.
+    The file is read in binary up to, and not including, the first line whose
+    first non-blank characters are ~A. Those bytes are decoded as UTF-8, or as
+    Latin-1 when that fails. Each section starts at a line whose first non-blank
+    character is ~; the next letter, uppercased, names it. Every line of the
+    section is kept as written.
+
+    Returns (sections, encoding). ``sections`` maps that letter to the lines.
+    ``encoding`` is ``utf-8`` or ``latin-1``. Both are None when there is no header.
+    """
+    if source_path is None:
+        return None, None
+    try:
+        text_path = os.fspath(source_path)
+    except TypeError:
+        return None, None
+    if not str(text_path).strip().lower().endswith('.las'):
+        return None, None
+    try:
+        with open(text_path, 'rb') as handle:
+            chunks = []
+            while True:
+                raw_line = handle.readline()
+                if raw_line == b'':
+                    break
+                stripped = raw_line.lstrip(b' \t\v\f\r\n')
+                if len(stripped) >= 2 and stripped[0:1] == b'~' and stripped[1:2] in (b'A', b'a'):
+                    break
+                chunks.append(raw_line)
+    except OSError:
+        return None, None
+    raw = b''.join(chunks)
+    try:
+        text = raw.decode('utf-8')
+        encoding = 'utf-8'
+    except UnicodeDecodeError:
+        text = raw.decode('latin-1')
+        encoding = 'latin-1'
+    sections = {}
+    current = None
+    for line in text.splitlines():
+        stripped = line.lstrip(' \t\v\f')
+        if stripped.startswith('~') and len(stripped) > 1 and stripped[1].isalpha():
+            current = sections.setdefault(stripped[1].upper(), [])
+            current.append(line)
+            continue
+        if current is not None:
+            current.append(line)
+    return sections, encoding
+
 
 def main():
     """Main application entry point.
