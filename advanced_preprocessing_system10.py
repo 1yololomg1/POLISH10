@@ -312,6 +312,63 @@ class SafeFileHandler:
                 "PathValidationError"
             )
             return None
+
+    @staticmethod
+    def validate_output_path(filepath: str, allowed_dir: str = None) -> Optional["Path"]:
+        """Resolve an export path. The file itself need not exist yet.
+
+        Accepts a new file in an existing folder. Returns None when the parent
+        folder is missing or is not a folder, when the path is an existing
+        folder, or when allowed_dir is set and the resolved path is outside it.
+        Creates nothing.
+
+        Args:
+            filepath: Path to resolve. Forward slashes are accepted.
+            allowed_dir: Optional directory the resolved path must stay inside.
+
+        Returns:
+            Resolved Path if the destination is a legal new or existing file,
+            None if it is not.
+        """
+        try:
+            from pathlib import Path
+
+            # Resolve without creating the file. The parent must already exist.
+            path = Path(filepath).resolve()
+            parent = path.parent
+            if not parent.exists() or not parent.is_dir():
+                SafeFileHandler._debug_log(
+                    f"Output path rejected: parent is missing or not a folder (sanitized: {SafeFileHandler.sanitize_path_for_display(str(path))})",
+                    "PathValidation"
+                )
+                return None
+
+            # A directory is not a file destination.
+            if path.exists() and path.is_dir():
+                SafeFileHandler._debug_log(
+                    f"Output path rejected: path is an existing folder (sanitized: {SafeFileHandler.sanitize_path_for_display(str(path))})",
+                    "PathValidation"
+                )
+                return None
+
+            if allowed_dir:
+                try:
+                    allowed = Path(allowed_dir).resolve()
+                    path.relative_to(allowed)
+                except ValueError:
+                    SafeFileHandler._debug_log(
+                        f"Security violation: output path outside allowed directory (sanitized: {SafeFileHandler.sanitize_path_for_display(str(path))})",
+                        "SecurityViolation"
+                    )
+                    return None
+
+            return path
+        except Exception as e:
+            SafeFileHandler._debug_log(
+                f"Output path validation exception: {type(e).__name__} (sanitized path: {SafeFileHandler.sanitize_path_for_display(str(filepath))})",
+                "PathValidationError"
+            )
+            return None
     
     @staticmethod
     def validate_file_size(filepath: str, max_size_mb: float = None) -> bool:
@@ -3947,8 +4004,18 @@ class AdvancedPreprocessingApplication(WellLoadingMixin, AppUIMixin):
             
             # Phase 3: Processing results cleanup - more aggressive (reduce from 50 to 20)
             if hasattr(self, 'processing_results') and len(self.processing_results) > 20:
-                # Keep only recent processing results to prevent memory bloat
-                recent_results = dict(list(self.processing_results.items())[-20:])
+                # Keep only recent curve results. resampled_spacing is a number
+                # stored beside those results and must survive the trim, or a
+                # wide well loses the spacing before export.
+                has_spacing = 'resampled_spacing' in self.processing_results
+                preserved_spacing = self.processing_results.get('resampled_spacing') if has_spacing else None
+                curve_items = [
+                    item for item in self.processing_results.items()
+                    if item[0] != 'resampled_spacing'
+                ]
+                recent_results = dict(curve_items[-20:])
+                if has_spacing:
+                    recent_results['resampled_spacing'] = preserved_spacing
                 removed_count = len(self.processing_results) - len(recent_results)
                 self.processing_results = recent_results
                 cleanup_actions.append(f"Processing results trimmed ({removed_count} removed)")
@@ -5737,7 +5804,16 @@ Your feedback contributes to software quality and reliability.
                     continue
                 ci = ds.get('curve_info', {}) or {}
                 null_value = str(self.null_value_var.get()) if hasattr(self, 'null_value_var') else '-999.25'
-                las_text = self._generate_las_text_from_dataframe(pdf, ci, null_value, max_rows=None)
+                # Header and spacing come from the well being exported, not the active well.
+                resampled_spacing = (ds.get('processing_results') or {}).get('resampled_spacing')
+                las_text = self._generate_las_text_from_dataframe(
+                    pdf,
+                    ci,
+                    null_value,
+                    max_rows=None,
+                    source_path=ds.get('file_path'),
+                    resampled_spacing=resampled_spacing,
+                )
                 
                 # Security: Validate output filename and ensure it stays within target directory
                 # Sanitize well ID to prevent path traversal in filename
@@ -5747,8 +5823,9 @@ Your feedback contributes to software quality and reliability.
                 
                 out_path = os.path.join(target_dir, f"{safe_wid}_processed.las")
                 
-                # Security: Final validation - ensure output path is within target directory
-                final_validated = SafeFileHandler.validate_file_path(out_path, allowed_dir=target_dir)
+                # Security: Final validation - ensure output path is within target directory.
+                # The file is new, so existence is not required.
+                final_validated = SafeFileHandler.validate_output_path(out_path, allowed_dir=target_dir)
                 if not final_validated:
                     sanitized = SafeFileHandler.sanitize_path_for_display(out_path)
                     if self.error_handler:
@@ -8203,15 +8280,49 @@ Your feedback contributes to software quality and reliability.
             except Exception:
                 pass
 
-    def _generate_las_text_from_dataframe(self, df: pd.DataFrame, curve_info: dict, null_value: str, max_rows: int = None) -> str:
-        """Create a minimally compliant LAS v2.0 text from a DataFrame and curve metadata.
-        - Ensures depth curve appears first when available
-        - Uses units/descriptions from curve_info where possible
-        - Replaces NaN with provided null_value
-        - If max_rows provided, limits ASCII section to that many rows (for preview)
+    def _generate_las_text_from_dataframe(
+        self,
+        df: pd.DataFrame,
+        curve_info: dict,
+        null_value: str,
+        max_rows: int = None,
+        source_path: str = None,
+        resampled_spacing: float = None,
+    ) -> str:
+        """Create LAS v2.0 text from a DataFrame and curve metadata.
+
+        ``source_path`` is the well being exported. Its ~Well and ~Parameter
+        sections are read with lasio. The active well's path and captured
+        header are not used. ``resampled_spacing`` is that well's recorded
+        spacing, or None when the data was not resampled.
+
+        Depth is written first when a depth column is present. NaN becomes
+        ``null_value``. ``max_rows`` limits the ASCII section for preview.
         """
         try:
             from datetime import datetime as _dt
+            from decimal import Decimal
+
+            def format_number(val):
+                # Positional, not 6 significant digits: 10000.25 must stay
+                # 10000.25, and an exponent is not written.
+                return np.format_float_positional(
+                    float(val), precision=15, unique=False, fractional=False, trim='-'
+                )
+
+            def header_line(mnemonic, unit, value, descr):
+                unit_text = '' if unit is None else str(unit)
+                descr_text = '' if descr is None else str(descr)
+                if isinstance(value, (bool, np.bool_)):
+                    value_text = str(value)
+                elif isinstance(value, (int, np.integer)):
+                    value_text = str(int(value))
+                elif isinstance(value, (float, np.floating)):
+                    value_text = format_number(value)
+                else:
+                    value_text = '' if value is None else str(value)
+                return f"{mnemonic}.{unit_text} {value_text} : {descr_text}"
+
             # Determine depth curve preference
             preferred_depth_names = ["DEPT", "DEPTH", "MD", "MDMSL"]
             columns = list(df.columns)
@@ -8220,8 +8331,95 @@ Your feedback contributes to software quality and reliability.
                 ordered_cols = [depth_col] + [c for c in columns if c != depth_col]
             else:
                 ordered_cols = columns
+                depth_col = ordered_cols[0] if ordered_cols else None
 
-            # Header blocks
+            info = curve_info if isinstance(curve_info, dict) else {}
+            depth_unit = ''
+            if depth_col is not None:
+                depth_info = info.get(depth_col, {})
+                if not isinstance(depth_info, dict):
+                    depth_info = {}
+                unit = depth_info.get('unit', '')
+                depth_unit = '' if unit is None else str(unit)
+
+            # A missing or unreadable source contributes no header. STRT, STOP,
+            # STEP and NULL are still written from the rows below.
+            header = None
+            source_name = ''
+            if source_path is not None and str(source_path).strip():
+                source_name = os.path.basename(os.fspath(source_path))
+                try:
+                    header = lasio.read(source_path, ignore_data=True)
+                except Exception:
+                    header = None
+
+            nv = null_value
+            data_lines = []
+            written_depths = []
+            depth_index = ordered_cols.index(depth_col) if depth_col in ordered_cols else None
+            count = 0
+            if ordered_cols:
+                for row in df[ordered_cols].itertuples(index=False, name=None):
+                    if max_rows is not None and count >= max_rows:
+                        break
+                    formatted = []
+                    for val in row:
+                        if pd.isna(val):
+                            formatted.append(str(nv))
+                        else:
+                            try:
+                                formatted.append(format_number(val))
+                            except Exception:
+                                formatted.append(str(val))
+                    data_lines.append(" ".join(formatted))
+                    if depth_index is not None:
+                        raw_depth = row[depth_index]
+                        if not pd.isna(raw_depth):
+                            try:
+                                written_depths.append(float(raw_depth))
+                            except (TypeError, ValueError):
+                                pass
+                    count += 1
+
+            # STEP magnitude, first match wins: resampled spacing, then the
+            # original header, then one equal gap, otherwise 0. The sign
+            # follows the order the depths were written.
+            magnitude = None
+            if resampled_spacing is not None:
+                try:
+                    magnitude = abs(float(resampled_spacing))
+                except (TypeError, ValueError):
+                    magnitude = None
+            if magnitude is None and header is not None:
+                for item in header.well:
+                    if str(item.original_mnemonic).strip().upper() != 'STEP':
+                        continue
+                    try:
+                        number = float(item.value)
+                    except (TypeError, ValueError):
+                        number = 0.0
+                    if number != 0 and np.isfinite(number):
+                        magnitude = abs(number)
+                    break
+            if magnitude is None and len(written_depths) >= 2:
+                texts = [format_number(depth) for depth in written_depths]
+                try:
+                    depth_decimals = [Decimal(text) for text in texts]
+                    gaps = [
+                        depth_decimals[i + 1] - depth_decimals[i]
+                        for i in range(len(depth_decimals) - 1)
+                    ]
+                except Exception:
+                    gaps = []
+                if gaps and all(gap == gaps[0] for gap in gaps):
+                    magnitude = abs(float(gaps[0]))
+            if magnitude is None:
+                magnitude = 0.0
+            if len(written_depths) >= 2 and written_depths[-1] < written_depths[0]:
+                signed_step = -abs(float(magnitude))
+            else:
+                signed_step = abs(float(magnitude))
+
             lines = []
             lines.append("~Version")
             lines.append("VERS.                  2.0:   CWLS LOG ASCII STANDARD - VERSION 2.0")
@@ -8229,68 +8427,51 @@ Your feedback contributes to software quality and reliability.
             lines.append("DLM .                 SPACE:   Column Data Section Delimiter")
             lines.append("")
             lines.append("~Well")
-            try:
-                file_label = self.file_path_var.get() if hasattr(self, 'file_path_var') else ''
-            except (tk.TclError, AttributeError) as file_var_error:
-                # UI variable access failed - use empty string and log
-                self.handle_ui_error(
-                    file_var_error,
-                    "File path variable access in LAS export",
-                    "file_path_var",
-                    graceful_degradation=True
-                )
-                file_label = ''
-            except Exception as file_var_error:
-                # Unexpected error accessing file path variable
-                self.handle_ui_error(
-                    file_var_error,
-                    "File path variable access in LAS export",
-                    "file_path_var",
-                    graceful_degradation=True
-                )
-                file_label = ''
-            lines.append(f"FILE. {file_label} :   Source file path")
-            lines.append(f"DATE. {_dt.now().strftime('%Y-%m-%d %H:%M:%S')} :   Export timestamp")
-            lines.append(f"NULL. {null_value} :   Null value")
+            stamp = _dt.now().strftime('%Y-%m-%d %H:%M:%S')
+            lines.append(f"# Exported by POLISH from {source_name} on {stamp}")
+            skipped = {'STRT', 'STOP', 'STEP', 'NULL'}
+            if header is not None:
+                for item in header.well:
+                    if str(item.original_mnemonic).strip().upper() in skipped:
+                        continue
+                    lines.append(header_line(
+                        item.original_mnemonic, item.unit, item.value, item.descr
+                    ))
+            if written_depths:
+                strt_text = format_number(written_depths[0])
+                stop_text = format_number(written_depths[-1])
+            else:
+                strt_text = str(nv)
+                stop_text = str(nv)
+            lines.append(header_line('STRT', depth_unit, strt_text, 'START DEPTH'))
+            lines.append(header_line('STOP', depth_unit, stop_text, 'STOP DEPTH'))
+            lines.append(header_line('STEP', depth_unit, format_number(signed_step), 'STEP'))
+            lines.append(header_line('NULL', depth_unit, str(nv), 'NULL VALUE'))
             lines.append("")
 
-            # Curve Information block
+            # Curve Information block. Unit is glued to the mnemonic.
             lines.append("~Curve")
             for col in ordered_cols:
-                info = curve_info.get(col, {}) if isinstance(curve_info, dict) else {}
-                unit = info.get('unit', '') if isinstance(info, dict) else ''
-                desc = info.get('description', '') if isinstance(info, dict) else ''
-                safe_unit = unit if unit is not None else ''
-                safe_desc = desc if desc is not None else ''
-                lines.append(f"{col}. {safe_unit} : {safe_desc}")
+                curve_meta = info.get(col, {})
+                if not isinstance(curve_meta, dict):
+                    curve_meta = {}
+                unit = curve_meta.get('unit', '')
+                desc = curve_meta.get('description', '')
+                safe_unit = '' if unit is None else str(unit)
+                safe_desc = '' if desc is None else str(desc)
+                lines.append(f"{col}.{safe_unit}  : {safe_desc}")
             lines.append("")
 
-            # ASCII data block
-            lines.append("~Ascii")
-            # Prepare values with null substitution
-            nv = null_value
-            # Limit rows for preview if requested
-            data_iter = df[ordered_cols].itertuples(index=False, name=None)
-            count = 0
-            for row in data_iter:
-                if max_rows is not None and count >= max_rows:
-                    break
-                formatted = []
-                for val in row:
-                    if pd.isna(val):
-                        formatted.append(str(nv))
-                    else:
-                        # Use a sensible formatting to avoid scientific notation explosions
-                        try:
-                            if isinstance(val, (int,)):
-                                formatted.append(f"{val}")
-                            else:
-                                formatted.append(f"{float(val):.6g}")
-                        except Exception:
-                            formatted.append(str(val))
-                lines.append(" ".join(formatted))
-                count += 1
+            if header is not None and len(header.params) > 0:
+                lines.append("~Parameter")
+                for item in header.params:
+                    lines.append(header_line(
+                        item.original_mnemonic, item.unit, item.value, item.descr
+                    ))
+                lines.append("")
 
+            lines.append("~Ascii")
+            lines.extend(data_lines)
             return "\n".join(lines)
         except Exception as e:
             # In case of unexpected failure, surface a simple, direct representation
@@ -8365,7 +8546,14 @@ Your feedback contributes to software quality and reliability.
 
             # Build LAS text limited to a reasonable number of rows for UI responsiveness
             null_value = self.null_value_var.get() if hasattr(self, 'null_value_var') else "-999.25"
-            las_text = self._generate_las_text_from_dataframe(self.processed_data, self.curve_info or {}, str(null_value), max_rows=300)
+            las_text = self._generate_las_text_from_dataframe(
+                self.processed_data,
+                self.curve_info or {},
+                str(null_value),
+                max_rows=300,
+                source_path=self.file_path_var.get(),
+                resampled_spacing=self.processing_results.get('resampled_spacing'),
+            )
 
             # Update UI text widget
             self.processed_las_preview_text.config(state='normal')
@@ -8403,8 +8591,9 @@ Your feedback contributes to software quality and reliability.
             if not save_path:
                 return
             
-            # Security: Validate and normalize export path
-            validated_path = SafeFileHandler.validate_file_path(save_path)
+            # Security: Validate and normalize export path. A new file in an
+            # existing folder is a legal destination.
+            validated_path = SafeFileHandler.validate_output_path(save_path)
             if not validated_path:
                 sanitized = SafeFileHandler.sanitize_path_for_display(save_path)
                 messagebox.showerror(ERROR_TITLE_SECURITY, f"Invalid export path: {sanitized}")
@@ -8443,7 +8632,14 @@ Your feedback contributes to software quality and reliability.
                             'description': 'Gap-fill uncertainty' if col.endswith('_UNC') else 'Gap-fill confidence (0-1)',
                             'curve_type': 'QC',
                         })
-                las_text = self._generate_las_text_from_dataframe(export_df, export_info, str(null_value), max_rows=None)
+                las_text = self._generate_las_text_from_dataframe(
+                    export_df,
+                    export_info,
+                    str(null_value),
+                    max_rows=None,
+                    source_path=self.file_path_var.get(),
+                    resampled_spacing=self.processing_results.get('resampled_spacing'),
+                )
                 with open(sp, 'w', encoding='utf-8') as f:
                     f.write(las_text)
             messagebox.showinfo("Export", f"Exported data to: {sp}")
@@ -10411,14 +10607,20 @@ Your feedback contributes to software quality and reliability.
         
         # Calculate overall statistics (handle case where no processing has been done)
         if self.processing_results:
+            # resampled_spacing is a number stored beside the curve results.
+            curve_results = [
+                result for result in self.processing_results.values() if isinstance(result, dict)
+            ]
             total_gaps_filled = sum(
                 result.get('gap_filling', {}).get('quality_metrics', {}).get('total_points_filled', 0)
-                for result in self.processing_results.values()
+                for result in curve_results
             )
             
             # Calculate average completeness with fallback to original statistics
             completeness_values = []
             for curve, result in self.processing_results.items():
+                if not isinstance(result, dict):
+                    continue
                 completeness = result.get('gap_filling', {}).get('quality_metrics', {}).get('data_completeness', 0)
                 if completeness == 0:
                     # Fallback to original statistics if gap filling completeness not available
@@ -10431,8 +10633,8 @@ Your feedback contributes to software quality and reliability.
             
             avg_denoise_quality = np.mean([
                 result.get('denoising', {}).get('quality', 0) * 100
-                for result in self.processing_results.values()
-            ]) if self.processing_results else 0
+                for result in curve_results
+            ]) if curve_results else 0
         else:
             # No processing done - calculate original completeness from curve statistics
             total_gaps_filled = 0
@@ -11944,7 +12146,20 @@ Your feedback contributes to software quality and reliability.
             if dmax <= dmin:
                 return
 
-            new_depth = np.arange(dmin, dmax + target_spacing / 2.0, target_spacing)
+            spacing = float(target_spacing)
+            # Keep the historical point count. np.arange drifts (159-19A's last
+            # depth at 0.1524 m is not on the step). Round to the coarser
+            # decimal of the start depth and the spacing.
+            n = len(np.arange(dmin, dmax + spacing / 2.0, spacing))
+
+            def _decimal_places(number):
+                text = np.format_float_positional(number, unique=True, trim='-')
+                if '.' not in text:
+                    return 0
+                return len(text.split('.', 1)[1])
+
+            decimals = max(_decimal_places(dmin), _decimal_places(spacing))
+            new_depth = np.round(dmin + np.arange(n) * spacing, decimals)
             resampled_df = pd.DataFrame({depth_column: new_depth})
 
             for col in self.processed_data.columns:
@@ -11967,6 +12182,8 @@ Your feedback contributes to software quality and reliability.
                 resampled_df[col] = s_interp.reindex(new_depth).values
 
             self.processed_data = resampled_df
+            # Export reads this per well. It is a spacing, not a curve result.
+            self.processing_results['resampled_spacing'] = spacing
         except Exception as e:
             try:
                 self.log_processing(f"ERROR: Resampling failed: {e}")
@@ -12120,6 +12337,9 @@ Your feedback contributes to software quality and reliability.
                 return 0
             
             for curve, result in self.processing_results.items():
+                # resampled_spacing is a number, not a per-curve result.
+                if not isinstance(result, dict):
+                    continue
                 gap_filling = result.get('gap_filling', {})
                 quality_metrics = gap_filling.get('quality_metrics', {})
                 total_gaps += quality_metrics.get('total_points_filled', 0)
@@ -13842,7 +14062,9 @@ Your feedback contributes to software quality and reliability.
         
         # Quality scores bar chart
         ax1 = fig.add_subplot(gs[0, 0])
-        curves = list(self.processing_results.keys())
+        curves = [
+            curve for curve, result in self.processing_results.items() if isinstance(result, dict)
+        ]
         scores = [self.processing_results[curve].get('quality_score', 0) for curve in curves]
         
         bars = ax1.bar(range(len(curves)), scores, color='steelblue', alpha=0.7)
@@ -13860,7 +14082,8 @@ Your feedback contributes to software quality and reliability.
         # Processing methods used
         ax2 = fig.add_subplot(gs[0, 1])
         methods_used = {}
-        for curve, result in self.processing_results.items():
+        for curve in curves:
+            result = self.processing_results[curve]
             for method in result.get('methods_used', []):
                 methods_used[method] = methods_used.get(method, 0) + 1
         
