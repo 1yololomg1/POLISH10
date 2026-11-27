@@ -8513,6 +8513,11 @@ Your feedback contributes to software quality and reliability.
                     lines.append(replaced[mnemonic])
             seen_replaced = set()
             for well_line in well_lines:
+                # The source section still begins with its own title line.
+                # A second ~Well block is what lasio keeps, so a title whose
+                # first non-blank character is ~ is not copied.
+                if well_line.lstrip()[:1] == '~':
+                    continue
                 parsed_well = _parse_las_header_line(well_line)
                 if parsed_well is not None and parsed_well[0] in replaced:
                     mnemonic = parsed_well[0]

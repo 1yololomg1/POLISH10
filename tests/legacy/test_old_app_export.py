@@ -9,6 +9,7 @@ Synthetic LAS only. The fixtures under tests/fixtures are not read.
 from __future__ import annotations
 
 import ast
+import io
 import os
 import re
 from decimal import Decimal
@@ -419,6 +420,16 @@ def _mnemonic_lines(text: str, mnemonic: str) -> list[str]:
     return found
 
 
+def _well_section_count(text: str) -> int:
+    """A ~Well line starts with ~, after blanks, and the next character is W or w."""
+    count = 0
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if len(stripped) >= 2 and stripped[0] == "~" and stripped[1] in "Ww":
+            count += 1
+    return count
+
+
 def test_verbatim_header_and_latin1_encoding(tmp_path: Path) -> None:
     source = _write_las(tmp_path / "pozo.las", _LATIN, encoding="latin-1")
     sections, encoding = _load("_read_source_las_header")(str(source))
@@ -430,6 +441,7 @@ def test_verbatim_header_and_latin1_encoding(tmp_path: Path) -> None:
 
     text = _export(source, _stand_in(str(tmp_path / "other.las")))
     written = text.splitlines()
+    assert _well_section_count(text) == 1
     for line in _KEPT_LATIN:
         assert line in written
     assert "STEP.M 0.1524 : STEP" in written
@@ -607,3 +619,49 @@ def test_null_has_no_unit_and_version_has_no_dlm(tmp_path: Path) -> None:
     version = text.split("~Well", 1)[0]
     assert "DLM" not in version
     assert not any(line.strip().upper().startswith("DLM") for line in text.splitlines())
+
+
+def test_source_without_null_exports_one_well_section(tmp_path: Path) -> None:
+    body = _las_text(
+        [
+            "STRT.M 100 : START",
+            "STOP.M 101 : STOP",
+            "STEP.M 1 : STEP",
+            "WELL. NONULL : WELL",
+        ],
+        ["DEPT.M : Depth", "GR.GAPI : Gamma"],
+    )
+    frame = pd.DataFrame({"DEPT": [100.0, 101.0], "GR": [1.0, -999.25]})
+    info = {
+        "DEPT": {"unit": "M", "description": "Depth"},
+        "GR": {"unit": "GAPI", "description": "Gamma"},
+    }
+    text = _emit(tmp_path, "nonull.las", body, frame, info)
+    assert _well_section_count(text) == 1
+    loaded = lasio.read(io.StringIO(text))
+    well = loaded.well
+    assert well["NULL"].value == -999.25
+    assert well["STRT"].value == 100
+    assert well["STOP"].value == 101
+    assert well["STEP"].value == 1
+    assert well["WELL"].value == "NONULL"
+
+
+def test_long_well_title_is_not_copied(tmp_path: Path) -> None:
+    body = _las_text(
+        [
+            "STRT.M 100 : START",
+            "STOP.M 101 : STOP",
+            "STEP.M 1 : STEP",
+            "WELL. NONULL : WELL",
+        ],
+        ["DEPT.M : Depth", "GR.GAPI : Gamma"],
+    ).replace("~Well\n", "~WELL INFORMATION BLOCK\n", 1)
+    frame = pd.DataFrame({"DEPT": [100.0, 101.0], "GR": [1.0, -999.25]})
+    info = {
+        "DEPT": {"unit": "M", "description": "Depth"},
+        "GR": {"unit": "GAPI", "description": "Gamma"},
+    }
+    text = _emit(tmp_path, "longtitle.las", body, frame, info)
+    assert _well_section_count(text) == 1
+    assert "~WELL INFORMATION BLOCK" not in text
