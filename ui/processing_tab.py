@@ -67,6 +67,10 @@ class ProcessingTabMixin:
         ttk.Label(uniformization_tab, text="Standard Depth Spacing:", style='Card.TLabel').pack(anchor='w', padx=10, pady=(10, 5))
         # Initialize with metric default here as well
         self.depth_spacing_var = tk.DoubleVar(value=0.1)
+        # Presets and the Custom Spacing entry both write this variable, so
+        # both count as a spacing chosen in the window. The file-default path
+        # sets a flag first and is not counted.
+        self.depth_spacing_var.trace_add("write", self._on_depth_spacing_written)
         spacing_frame = ttk.Frame(uniformization_tab)
         spacing_frame.pack(fill='x', pady=5, padx=10)
         

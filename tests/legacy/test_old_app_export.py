@@ -1,9 +1,11 @@
 """Export behaviour of the old app, loaded from source.
 
 Importing advanced_preprocessing_system10 installs global handlers and
-selects the TkAgg backend, so these tests compile the three symbols they
-need out of the file with ast and call them on a stand-in object.
+selects the TkAgg backend, so these tests compile the helpers they need
+out of the file with ast and call them on a stand-in object.
 Synthetic LAS only. The fixtures under tests/fixtures are not read.
+Unit conversion is tested through IndustryUnitStandardizer, which does
+not build a Tk window.
 """
 
 from __future__ import annotations
@@ -14,8 +16,10 @@ import os
 import re
 from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any, Optional
+
+import pytest
 
 import lasio
 import numpy as np
@@ -53,7 +57,12 @@ LOC. PAD 12 : LOCATION
 
 
 # The writer calls these. They are compiled with it so the app is still not imported.
-_COMPANIONS = ("_parse_las_header_line", "_read_source_las_header")
+_COMPANIONS = (
+    "_parse_las_header_line",
+    "_read_source_las_header",
+    "_depth_length_kind",
+    "_convert_depth_spacing",
+)
 
 
 def _load(name: str):
@@ -665,3 +674,299 @@ def test_long_well_title_is_not_copied(tmp_path: Path) -> None:
     text = _emit(tmp_path, "longtitle.las", body, frame, info)
     assert _well_section_count(text) == 1
     assert "~WELL INFORMATION BLOCK" not in text
+
+
+# Depth spacing and F-as-feet. Methods are bound onto a stand-in; the two
+# module helpers above are compiled with them through _COMPANIONS.
+
+
+class _GetSetVar:
+    """Stand-in for a Tk variable that only stores a value."""
+
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def get(self) -> object:
+        return self._value
+
+    def set(self, value: object) -> None:
+        self._value = value
+
+
+class _SpacingVar:
+    """Stand-in for depth_spacing_var. set() runs write callbacks, as a Tk trace does."""
+
+    def __init__(self, value: float) -> None:
+        self._value = value
+        self._writes: list = []
+
+    def get(self) -> float:
+        return self._value
+
+    def set(self, value: float) -> None:
+        self._value = value
+        for callback in list(self._writes):
+            callback()
+
+    def trace_add(self, _mode: str, callback) -> None:
+        self._writes.append(callback)
+
+
+class _Flag:
+    """Stand-in for a Tk boolean. get() returns the stored flag."""
+
+    def __init__(self, value: bool) -> None:
+        self._value = value
+
+    def get(self) -> bool:
+        return self._value
+
+
+_DEPTH_METHODS = (
+    "_current_depth_unit",
+    "_file_depth_step",
+    "_set_depth_spacing_default",
+    "_on_depth_spacing_written",
+    "_depth_spacing_in_depth_unit",
+    "_sync_depth_spacing_default",
+)
+
+
+def _depth_host(depths, unit: str, source: str, spacing: float = 0.1) -> SimpleNamespace:
+    """Bind the depth-spacing methods to a stand-in for one well."""
+    logs: list[str] = []
+    labels: list[str] = []
+    host = SimpleNamespace(
+        current_data=pd.DataFrame({"DEPT": list(depths)}),
+        processed_data=None,
+        curve_info={"DEPT": {"unit": unit, "curve_type": "DEPTH"}},
+        file_path_var=_GetSetVar(source),
+        depth_spacing_var=_SpacingVar(spacing),
+        _depth_spacing_unit="m",
+        _depth_spacing_user_chosen=False,
+        _depth_spacing_setting_default=False,
+        log_processing=logs.append,
+        _apply_depth_spacing_unit_labels=labels.append,
+        logs=logs,
+        labels=labels,
+    )
+    for name in _DEPTH_METHODS:
+        setattr(host, name, MethodType(_load(name), host))
+    host.depth_spacing_var.trace_add("write", host._on_depth_spacing_written)
+    return host
+
+
+def _write_depth_las(
+    directory: Path,
+    filename: str,
+    well_lines: list[str],
+    curve_unit: str,
+    depths: list[float],
+) -> Path:
+    """Write a synthetic LAS whose ~Well section carries the depth step."""
+    lines = [
+        "~Version",
+        "VERS. 2.0 : v",
+        "WRAP. NO : w",
+        "~Well",
+        *well_lines,
+        "~Curve",
+        f"DEPT.{curve_unit} : Depth",
+        "~A",
+        *[str(depth) for depth in depths],
+    ]
+    path = directory / filename
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    return path
+
+
+def _standardizer(frame: pd.DataFrame, curve_info: dict, rules: Optional[dict] = None):
+    """IndustryUnitStandardizer with standardization switched on and no Tk window."""
+    from core.unit_standardization import IndustryUnitStandardizer
+
+    logs: list[str] = []
+    app = SimpleNamespace(
+        current_data=frame,
+        curve_info=curve_info,
+        log_processing=logs.append,
+    )
+    if rules is not None:
+        app.depth_validation_rules = rules
+    standardizer = IndustryUnitStandardizer()
+    standardizer.set_application_reference(app)
+    standardizer.standardize_units_var = _Flag(True)
+    return standardizer, app
+
+
+def test_depth_length_kind_reads_feet_metres_and_neither() -> None:
+    kind = _load("_depth_length_kind")
+    for text in ("F", "f", " FT ", "FEET", "Foot"):
+        assert kind(text) == "ft"
+    for text in ("M", "metres", "METER"):
+        assert kind(text) == "m"
+    for text in ("", "XYZ", None):
+        assert kind(text) is None
+
+
+def test_current_depth_unit_reads_f_as_feet() -> None:
+    host = _depth_host([5000.0, 5000.5], "F", "")
+    assert host.processed_data is None
+    assert host._current_depth_unit() == "ft"
+
+
+def test_header_step_in_feet_is_the_default(tmp_path: Path) -> None:
+    path = _write_depth_las(
+        tmp_path,
+        "feet.las",
+        ["STRT.F 5000", "STOP.F 5001.5", "STEP.F 0.5", "NULL. -999.25"],
+        "F",
+        [5000.0, 5000.5, 5001.0, 5001.5],
+    )
+    host = _depth_host([5000.0, 5000.5, 5001.0, 5001.5], "F", str(path))
+    host._sync_depth_spacing_default()
+    assert host.depth_spacing_var.get() == 0.5
+    assert host._depth_spacing_unit == "ft"
+    assert host._depth_spacing_user_chosen is False
+    assert host.labels == ["ft"]
+    assert "the file's own STEP" in host.logs[-1]
+
+
+def test_header_step_in_metres_ignores_uneven_data(tmp_path: Path) -> None:
+    path = _write_depth_las(
+        tmp_path,
+        "metres.las",
+        ["STRT.M 3500.0183", "STEP.M 0.1524"],
+        "M",
+        [3500.0183, 3500.1707, 3500.3232],
+    )
+    host = _depth_host([3500.0183, 3500.1707, 3500.3232], "M", str(path))
+    host._sync_depth_spacing_default()
+    assert host.depth_spacing_var.get() == 0.1524
+    assert host._depth_spacing_unit == "m"
+
+
+def test_step_without_a_unit_takes_strt(tmp_path: Path) -> None:
+    path = _write_depth_las(
+        tmp_path,
+        "strt.las",
+        ["STRT.FT 100", "STEP. 0.25"],
+        "FT",
+        [100.0, 100.25, 100.5],
+    )
+    host = _depth_host([100.0, 100.25, 100.5], "FT", str(path))
+    host._sync_depth_spacing_default()
+    assert host.depth_spacing_var.get() == 0.25
+    assert host._depth_spacing_unit == "ft"
+
+
+def test_header_step_of_zero_uses_the_data(tmp_path: Path) -> None:
+    depths = [100.0, 100.1524, 100.3048, 100.6096, 100.762]
+    path = _write_depth_las(
+        tmp_path,
+        "zero.las",
+        ["STRT.M 100", "STEP.M 0"],
+        "M",
+        depths,
+    )
+    host = _depth_host(depths, "M", str(path))
+    host._sync_depth_spacing_default()
+    assert host.depth_spacing_var.get() == 0.1524
+    assert host._depth_spacing_unit == "m"
+    assert "the median depth step of the data" in host.logs[-1]
+
+
+def test_mismatched_step_unit_uses_the_data(tmp_path: Path) -> None:
+    path = _write_depth_las(
+        tmp_path,
+        "mismatch.las",
+        ["STRT.F 100", "STEP.F 0.25"],
+        "M",
+        [100.0, 100.5, 101.0],
+    )
+    host = _depth_host([100.0, 100.5, 101.0], "M", str(path))
+    host._sync_depth_spacing_default()
+    assert host.depth_spacing_var.get() == 0.5
+    assert host._depth_spacing_unit == "m"
+
+
+def test_csv_source_uses_the_data(tmp_path: Path) -> None:
+    path = tmp_path / "dept.csv"
+    path.write_text("DEPT\n10\n10.25\n10.5\n", encoding="utf-8", newline="\n")
+    host = _depth_host([10.0, 10.25, 10.5], "FT", str(path))
+    host._sync_depth_spacing_default()
+    assert host.depth_spacing_var.get() == 0.25
+    assert host._depth_spacing_unit == "ft"
+
+
+def test_no_depth_step_leaves_the_spacing() -> None:
+    host = _depth_host([100.0], "M", "")
+    host._sync_depth_spacing_default()
+    assert host.depth_spacing_var.get() == 0.1
+    assert host._depth_spacing_unit == "m"
+    assert "left at 0.1 m" in host.logs[-1]
+
+
+def test_a_choice_in_the_window_is_kept(tmp_path: Path) -> None:
+    path = _write_depth_las(
+        tmp_path,
+        "chosen.las",
+        ["STRT.F 5000", "STOP.F 5001.5", "STEP.F 0.5", "NULL. -999.25"],
+        "F",
+        [5000.0, 5000.5, 5001.0, 5001.5],
+    )
+    host = _depth_host([5000.0, 5000.5, 5001.0, 5001.5], "F", str(path))
+    host._sync_depth_spacing_default()
+    host.depth_spacing_var.set(0.25)
+    assert host._depth_spacing_user_chosen is True
+    assert host._depth_spacing_unit == "ft"
+    host._sync_depth_spacing_default()
+    assert host.depth_spacing_var.get() == 0.25
+    assert host._depth_spacing_unit == "ft"
+    assert "kept at 0.25 ft" in host.logs[-1]
+
+
+def test_spacing_is_converted_into_the_depth_unit() -> None:
+    host = _depth_host([5000.0, 5000.5], "M", "")
+    host._depth_spacing_unit = "ft"
+    host.depth_spacing_var.set(0.5)
+    assert host._depth_spacing_in_depth_unit() == (0.1524, "ft", "m")
+    host.curve_info["DEPT"]["unit"] = "F"
+    assert host._depth_spacing_in_depth_unit() == (0.5, "ft", "ft")
+
+
+def test_convert_depth_spacing_is_exact() -> None:
+    convert = _load("_convert_depth_spacing")
+    assert convert(0.1524, "m", "ft") == pytest.approx(0.5)
+    assert convert(0.5, None, "m") == 0.5
+
+
+def test_feet_depth_converts_to_metres() -> None:
+    for unit_name in ("F", "FT", "FEET", "FOOT"):
+        frame = pd.DataFrame({"DEPT": [5000.0, 5000.5]})
+        standardizer, app = _standardizer(frame, {"DEPT": {"unit": unit_name}})
+        standardizer.apply_unit_standardization()
+        assert app.curve_info["DEPT"]["unit"] == "M"
+        assert app.current_data["DEPT"].tolist() == pytest.approx([1524.0, 1524.1524])
+
+
+def test_depth_curve_is_not_converted_as_another_quantity() -> None:
+    frame = pd.DataFrame({"DEPT": [5000.0, 5000.5]})
+    standardizer, app = _standardizer(frame, {"DEPT": {"unit": "C"}})
+    standardizer.apply_unit_standardization()
+    assert app.curve_info["DEPT"]["unit"] == "C"
+    assert app.current_data["DEPT"].tolist() == pytest.approx([5000.0, 5000.5])
+
+
+def test_temperature_in_f_still_converts_to_celsius() -> None:
+    frame = pd.DataFrame({"BHTX": [212.0, 32.0]})
+    standardizer, app = _standardizer(frame, {"BHTX": {"unit": "F"}})
+    standardizer.apply_unit_standardization()
+    assert app.curve_info["BHTX"]["unit"] == "DEGC"
+    assert app.current_data["BHTX"].tolist() == pytest.approx([100.0, 0.0])
+
+
+def test_depth_validation_rules_for_f() -> None:
+    frame = pd.DataFrame({"DEPT": [5000.0, 5000.5]})
+    standardizer, app = _standardizer(frame, {"DEPT": {"unit": "F"}}, rules={})
+    standardizer._update_depth_validation_rules()
+    assert app.depth_validation_rules["min_interval"] == 32.8

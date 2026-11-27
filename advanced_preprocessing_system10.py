@@ -2442,6 +2442,12 @@ class AdvancedPreprocessingApplication(WellLoadingMixin, AppUIMixin):
         # Default resampling spacing will be adapted to current depth units.
         # Initialize with metric default; will be updated post-load by _sync_depth_spacing_default().
         self.depth_spacing_var = tk.DoubleVar(value=0.1)
+        # The number is kept in the unit it was set in. A spacing picked in the
+        # window applies to every loaded well; writing the file's own step does
+        # not count as that choice, and a fresh load clears the flag.
+        self._depth_spacing_unit = 'm'
+        self._depth_spacing_user_chosen = False
+        self._depth_spacing_setting_default = False
         self.rename_curves_var = tk.BooleanVar(value=True)
         self.null_value_var = tk.StringVar(value="-999.25")
         # Independent of rename and unit conversion. Default off so loading or
@@ -5181,6 +5187,9 @@ Your feedback contributes to software quality and reliability.
             return
         self.active_well_id = well_id
         self._apply_dataset_to_single_state(self.well_datasets[well_id])
+        # Switching wells, Load Multiple Files and Process All Wells all come
+        # through here. A spacing already chosen in the window is kept.
+        self._sync_depth_spacing_default()
         try:
             self.status_label.config(text=f"Active well: {well_id}")
         except (tk.TclError, AttributeError) as status_error:
@@ -5943,6 +5952,9 @@ Your feedback contributes to software quality and reliability.
             self.current_data = None
             self.processed_data = None
             self.curve_info = {}
+            # Load and Load Multiple Files both reset first, so the next file
+            # starts from its own step. Switching wells does not come through here.
+            self._depth_spacing_user_chosen = False
             self.processing_results = {}
             self.original_las_header = None
             self._upload_standardization_note = ""
@@ -8998,6 +9010,7 @@ Your feedback contributes to software quality and reliability.
 
             # Apply LAS-declared NULL (prompt only if multiple loaded wells disagree)
             self._reconcile_null_value_convention(allow_prompt=True)
+            self._sync_depth_spacing_default()
             
             self.progress_bar['value'] = 50
             self.status_label.config(text="Analyzing curves...")
@@ -9091,6 +9104,7 @@ Your feedback contributes to software quality and reliability.
                 pass
         # Headless: adopt file NULL without UI prompts
         self._reconcile_null_value_convention(allow_prompt=False)
+        self._sync_depth_spacing_default()
         if hasattr(self, 'analyze_curves'):
             try:
                 self.analyze_curves()
@@ -10090,8 +10104,14 @@ Your feedback contributes to software quality and reliability.
             # DEPT is written by standardize_depth_reference during
             # _validate_and_standardize_depth, which runs before this method.
             if self.processed_data is not None and 'DEPT' in self.processed_data.columns:
-                depth_spacing = self.depth_spacing_var.get()
-                unit = self._current_depth_unit()
+                # The window remembers the spacing in the unit it was set in.
+                # Resampling reads the depth curve's unit, so convert first.
+                depth_spacing, spacing_unit, unit = self._depth_spacing_in_depth_unit()
+                if spacing_unit != unit:
+                    self.log_processing(
+                        f"Depth spacing {self.depth_spacing_var.get()} {spacing_unit} is "
+                        f"{depth_spacing} {unit} in this well's depth unit"
+                    )
                 self.log_processing(f"Resampling to standard depth spacing: {depth_spacing} {unit}")
                 self.resample_to_standard_spacing('DEPT', depth_spacing)
     
@@ -11846,7 +11866,7 @@ Your feedback contributes to software quality and reliability.
             Dictionary with adjusted parameters
         """
         try:
-            depth_spacing = self.depth_spacing_var.get()
+            depth_spacing = self._depth_spacing_in_depth_unit()[0]
             
             # Reference spacing (0.5m) - all default thresholds assume this
             reference_spacing = 0.5
@@ -12274,11 +12294,14 @@ Your feedback contributes to software quality and reliability.
     def _current_depth_unit(self) -> str:
         """Return 'ft' or 'm' from the declared unit of the depth curve.
 
-        Used for logs and labels. Depth spacing numbers are in this unit;
-        they are not converted here.
+        Used for logs and labels. The processed frame is preferred. The loaded
+        frame is used when nothing has been processed yet, which is the state
+        just after a file is loaded. F is feet, the same as FT. A blank or
+        unknown unit stays metres.
         """
         try:
-            columns = self.processed_data.columns if self.processed_data is not None else []
+            frame = self.processed_data if self.processed_data is not None else self.current_data
+            columns = frame.columns if frame is not None else []
             curve_info = getattr(self, 'curve_info', None) or {}
             depth_col = None
             for col in columns:
@@ -12288,12 +12311,122 @@ Your feedback contributes to software quality and reliability.
                     break
             if not depth_col:
                 return 'm'
-            raw = str(curve_info.get(depth_col, {}).get('unit', 'M')).upper()
-            if raw in ['FT', 'FEET']:
+            raw = curve_info.get(depth_col, {}).get('unit', '')
+            if _depth_length_kind(raw) == 'ft':
                 return 'ft'
             return 'm'
         except Exception:
             return 'm'
+
+    def _file_depth_step(self):
+        """Return (step, unit, source) for the active well's own depth step.
+
+        The header STEP is used when it is a positive number and its unit is
+        the same length kind as the depth curve. A STEP line with no unit
+        borrows the STRT line's unit. Otherwise the step is the median of the
+        positive gaps in the depth column, rounded to 4 decimals. ``source``
+        is 'header', 'data', or None when no step was found. ``unit`` is None
+        only when there is no frame or no depth column.
+
+        Returns:
+            tuple: (step or None, 'ft' or 'm' or None, 'header' or 'data' or None)
+        """
+        frame = self.current_data if self.current_data is not None else self.processed_data
+        curve_info = getattr(self, 'curve_info', None) or {}
+        columns = frame.columns if frame is not None else []
+        depth_col = None
+        for col in columns:
+            ctype = str(curve_info.get(col, {}).get('curve_type', '')).upper()
+            if 'DEPTH' in ctype or str(col).upper() in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
+                depth_col = col
+                break
+        if frame is None or depth_col is None:
+            return (None, None, None)
+
+        # A depth curve with no length unit is treated as metres, matching
+        # _current_depth_unit. The spacing default is then in that unit.
+        unit = _depth_length_kind(curve_info.get(depth_col, {}).get('unit', ''))
+        if unit is None:
+            unit = 'm'
+
+        sections, _encoding = _read_source_las_header(self.file_path_var.get())
+        step_line = None
+        strt_line = None
+        if sections:
+            for line in sections.get('W', []):
+                parsed = _parse_las_header_line(line)
+                if not parsed:
+                    continue
+                mnemonic, line_unit, value = parsed
+                if mnemonic == 'STEP' and step_line is None:
+                    step_line = (line_unit, value)
+                elif mnemonic == 'STRT' and strt_line is None:
+                    strt_line = (line_unit, value)
+        if step_line is not None:
+            step_unit, value = step_line
+            if str(step_unit).strip() == '' and strt_line is not None:
+                step_unit = strt_line[0]
+            try:
+                magnitude = abs(float(value))
+            except (TypeError, ValueError):
+                magnitude = 0.0
+            if magnitude > 0 and _depth_length_kind(step_unit) == unit:
+                return (magnitude, unit, 'header')
+
+        depths = pd.to_numeric(frame[depth_col], errors='coerce').dropna()
+        gaps = depths.diff().abs()
+        positive = gaps[gaps > 0]
+        if len(positive) > 0:
+            median = round(float(positive.median()), 4)
+            if median > 0:
+                return (median, unit, 'data')
+        return (None, unit, None)
+
+    def _set_depth_spacing_default(self, value, unit) -> None:
+        """Write a file-derived spacing without marking it as the user's choice.
+
+        The flag is set for the duration of the variable write, including when
+        that write raises, so the trace does not record a choice. The unit is
+        updated only after the write succeeds.
+
+        Args:
+            value: Spacing in ``unit``.
+            unit: 'ft' or 'm', the unit ``value`` is expressed in.
+        """
+        self._depth_spacing_setting_default = True
+        try:
+            self.depth_spacing_var.set(value)
+        finally:
+            self._depth_spacing_setting_default = False
+        self._depth_spacing_unit = unit
+
+    def _on_depth_spacing_written(self, *_args) -> None:
+        """Mark the spacing as chosen when the window writes the variable.
+
+        Preset buttons and the Custom Spacing entry both write it. The
+        file-default path sets ``_depth_spacing_setting_default`` first and
+        is ignored here. A missing unit is metres, the startup default.
+        """
+        if self._depth_spacing_setting_default:
+            return
+        self._depth_spacing_user_chosen = True
+        if self._depth_spacing_unit is None:
+            self._depth_spacing_unit = 'm'
+
+    def _depth_spacing_in_depth_unit(self):
+        """Return the spacing converted into the depth curve's unit.
+
+        The window stores the spacing in the unit it was set in. Resampling
+        and the depth-aware windows read the depth curve, so a feet spacing
+        on a metres well has to be converted before either uses it.
+
+        Returns:
+            tuple: (converted value, spacing unit, depth unit)
+        """
+        depth_unit = self._current_depth_unit()
+        spacing_unit = self._depth_spacing_unit if self._depth_spacing_unit is not None else depth_unit
+        converted = _convert_depth_spacing(self.depth_spacing_var.get(), spacing_unit, depth_unit)
+        return (converted, spacing_unit, depth_unit)
 
     def _apply_depth_spacing_unit_labels(self, unit: str) -> None:
         """Refresh Uniformization tab captions that previously hardcoded metres."""
@@ -12315,26 +12448,43 @@ Your feedback contributes to software quality and reliability.
                 pass
 
     def _sync_depth_spacing_default(self) -> None:
-        """Set depth resampling default to 0.1 m or 0.5 ft based on current depth units."""
+        """Default the spacing to this well's own step, unless the window chose one.
+
+        A choice is kept in the unit it was chosen in and is not replaced when
+        processing starts or the active well changes. With no choice, the
+        header STEP is used when it matches the depth curve, otherwise the
+        median gap of the depth column. When neither exists the current
+        spacing is left as it is.
+        """
         try:
-            depth_col = None
-            for col in (self.processed_data.columns if self.processed_data is not None else []):
-                ctype = str(self.curve_info.get(col, {}).get('curve_type', '')).upper()
-                if 'DEPTH' in ctype or col.upper() in ['DEPT', 'DEPTH', 'MD', 'TVD', 'TVDSS']:
-                    depth_col = col
-                    break
-            if not depth_col:
+            if self._depth_spacing_user_chosen:
+                if self._depth_spacing_unit is None:
+                    self._depth_spacing_unit = self._current_depth_unit()
+                unit = self._depth_spacing_unit
+                self.log_processing(
+                    f"Depth spacing kept at {self.depth_spacing_var.get()} {unit}, as chosen in the window"
+                )
+                self._apply_depth_spacing_unit_labels(unit)
                 return
-            unit = self._current_depth_unit()
-            if unit == 'ft':
-                if abs(self.depth_spacing_var.get() - 0.5) > 1e-9:
-                    self.depth_spacing_var.set(0.5)
-                    self.log_processing("Depth spacing default set to 0.5 ft based on depth units")
+            step, unit, source = self._file_depth_step()
+            if unit is None:
+                return
+            if step is not None:
+                self._set_depth_spacing_default(step, unit)
+                if source == 'header':
+                    self.log_processing(
+                        f"Depth spacing default set to {step} {unit}, the file's own STEP"
+                    )
+                else:
+                    self.log_processing(
+                        f"Depth spacing default set to {step} {unit}, the median depth step of the data"
+                    )
             else:
-                if abs(self.depth_spacing_var.get() - 0.1) > 1e-9:
-                    self.depth_spacing_var.set(0.1)
-                    self.log_processing("Depth spacing default set to 0.1 m based on depth units")
-            self._apply_depth_spacing_unit_labels(unit)
+                self.log_processing(
+                    "No depth step found for this well; depth spacing left at "
+                    f"{self.depth_spacing_var.get()} {self._depth_spacing_unit}"
+                )
+            self._apply_depth_spacing_unit_labels(self._depth_spacing_unit)
         except Exception:
             pass
 
@@ -14636,6 +14786,57 @@ Your feedback contributes to software quality and reliability.
         if messagebox.askokcancel("Quit", "Do you want to quit the application?"):
 
             self.root.destroy()
+
+
+def _depth_length_kind(unit):
+    """Classify a depth-unit string as feet, metres, or neither.
+
+    LAS 2.0 allows M, F and FT. F is feet. Letter case and surrounding spaces
+    are ignored. The spelling lists stay inside this function so the legacy
+    test loader can compile it on its own.
+
+    Args:
+        unit: A curve or header unit, or None.
+
+    Returns:
+        'ft', 'm', or None.
+    """
+    feet = ('F', 'FT', 'FEET', 'FOOT')
+    metres = ('M', 'METER', 'METERS', 'METRE', 'METRES')
+    if unit is None:
+        return None
+    text = str(unit).strip().upper()
+    if text in feet:
+        return 'ft'
+    if text in metres:
+        return 'm'
+    return None
+
+
+def _convert_depth_spacing(value, from_kind, to_kind):
+    """Convert a depth spacing between feet and metres.
+
+    0.5 ft must become 0.1524 m exactly, so the factor is Decimal('0.3048')
+    applied to Decimal(str(value)), not a binary float multiply. A missing
+    kind, or two kinds that already match, is returned unchanged.
+
+    Args:
+        value: The spacing number.
+        from_kind: 'ft', 'm', or None.
+        to_kind: 'ft', 'm', or None.
+
+    Returns:
+        float: The spacing in ``to_kind``.
+    """
+    from decimal import Decimal
+
+    if from_kind is None or to_kind is None or from_kind == to_kind:
+        return float(value)
+    decimal_value = Decimal(str(value))
+    feet_to_metres = Decimal('0.3048')
+    if from_kind == 'ft' and to_kind == 'm':
+        return float(decimal_value * feet_to_metres)
+    return float(decimal_value / feet_to_metres)
 
 
 def _parse_las_header_line(line):
