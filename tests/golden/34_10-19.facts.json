@@ -1,0 +1,258 @@
+{
+  "fixture": "34_10-19.las",
+  "sha256": "bd77113c26915105bb213af593de6c64649fc91a3cc3c94810699e780a7a681c",
+  "vers": {
+    "text": "2.0"
+  },
+  "wrap": {
+    "text": "NO",
+    "wrapped": false
+  },
+  "null": {
+    "text": "-999.250000",
+    "number": -999.25
+  },
+  "strt": {
+    "text": "211.00000000",
+    "unit": "m",
+    "number": 211.0
+  },
+  "stop": {
+    "text": "2223.1076660",
+    "unit": "m",
+    "number": 2223.107666
+  },
+  "step": {
+    "text": "0.15200000",
+    "unit": "m",
+    "number": 0.152
+  },
+  "null_comparison": {
+    "rel_tol": 1e-06,
+    "abs_tol": 0.0,
+    "rule": "math.isclose(value, null, rel_tol=1e-6, abs_tol=0.0)"
+  },
+  "depth_channel": {
+    "curve_index": 0,
+    "meaning": "LAS index channel, the first curve in the curve section"
+  },
+  "depth_step_count": 13238,
+  "curves": [
+    {
+      "index": 0,
+      "mnemonic": "DEPT",
+      "unit": "m",
+      "description": " DEPTH",
+      "line": "DEPT .m                   : DEPTH",
+      "null_count": 0,
+      "first_non_null_depth": 211.0,
+      "last_non_null_depth": 2223.024,
+      "min_non_null": 211.0,
+      "max_non_null": 2223.024
+    },
+    {
+      "index": 1,
+      "mnemonic": "FORCE_2020_LITHOFACIES_CONFIDENCE",
+      "unit": "_",
+      "description": " FORCE_2020_LITHOFACIES_CONFIDENCE",
+      "line": "FORCE_2020_LITHOFACIES_CONFIDENCE ._ : FORCE_2020_LITHOFACIES_CONFIDENCE",
+      "null_count": 577,
+      "first_non_null_depth": 291.104,
+      "last_non_null_depth": 2215.576,
+      "min_non_null": 1.0,
+      "max_non_null": 3.0
+    },
+    {
+      "index": 2,
+      "mnemonic": "FORCE_2020_LITHOFACIES_LITHOLOGY",
+      "unit": "_",
+      "description": " FORCE_2020_LITHOFACIES_LITHOLOGY",
+      "line": "FORCE_2020_LITHOFACIES_LITHOLOGY ._ : FORCE_2020_LITHOFACIES_LITHOLOGY",
+      "null_count": 576,
+      "first_non_null_depth": 291.104,
+      "last_non_null_depth": 2215.576,
+      "min_non_null": 30000.0,
+      "max_non_null": 99000.0
+    },
+    {
+      "index": 3,
+      "mnemonic": "CALI",
+      "unit": "in",
+      "description": " CALI",
+      "line": "CALI .in                  : CALI",
+      "null_count": 1,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2223.024,
+      "min_non_null": 7.8746948242,
+      "max_non_null": 23.402364731
+    },
+    {
+      "index": 4,
+      "mnemonic": "RDEP",
+      "unit": "ohm.m",
+      "description": " RDEP",
+      "line": "RDEP .ohm.m               : RDEP",
+      "null_count": 11,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.504,
+      "min_non_null": 0.3652032018,
+      "max_non_null": 32.105293274
+    },
+    {
+      "index": 5,
+      "mnemonic": "RSHA",
+      "unit": "ohm.m",
+      "description": " RSHA",
+      "line": "RSHA .ohm.m               : RSHA",
+      "null_count": 403,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.352,
+      "min_non_null": 0.1128000021,
+      "max_non_null": 1644.848999
+    },
+    {
+      "index": 6,
+      "mnemonic": "RMED",
+      "unit": "ohm.m",
+      "description": " RMED",
+      "line": "RMED .ohm.m               : RMED",
+      "null_count": 90,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.504,
+      "min_non_null": 0.1284734756,
+      "max_non_null": 46.828193665
+    },
+    {
+      "index": 7,
+      "mnemonic": "RXO",
+      "unit": "ohm.m",
+      "description": " RXO",
+      "line": "RXO .ohm.m                : RXO",
+      "null_count": 406,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.048,
+      "min_non_null": 0.112999998,
+      "max_non_null": 1508.878418
+    },
+    {
+      "index": 8,
+      "mnemonic": "SP",
+      "unit": "mV",
+      "description": " SP",
+      "line": "SP .mV                    : SP",
+      "null_count": 14,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.048,
+      "min_non_null": -99.61286926,
+      "max_non_null": 92.594261169
+    },
+    {
+      "index": 9,
+      "mnemonic": "DTC",
+      "unit": "us/ft",
+      "description": " DTC",
+      "line": "DTC .us/ft                : DTC",
+      "null_count": 3054,
+      "first_non_null_depth": 311.624,
+      "last_non_null_depth": 2210.256,
+      "min_non_null": 52.940509796,
+      "max_non_null": 176.13317871
+    },
+    {
+      "index": 10,
+      "mnemonic": "NPHI",
+      "unit": "m3/m3",
+      "description": " NPHI",
+      "line": "NPHI .m3/m3               : NPHI",
+      "null_count": 1168,
+      "first_non_null_depth": 270.584,
+      "last_non_null_depth": 2223.024,
+      "min_non_null": 0.0610674508,
+      "max_non_null": 0.6905006766
+    },
+    {
+      "index": 11,
+      "mnemonic": "GR",
+      "unit": "gAPI",
+      "description": " GR",
+      "line": "GR .gAPI                  : GR",
+      "null_count": 68,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2212.84,
+      "min_non_null": 8.6763944626,
+      "max_non_null": 105.86029053
+    },
+    {
+      "index": 12,
+      "mnemonic": "RHOB",
+      "unit": "g/cm3",
+      "description": " RHOB",
+      "line": "RHOB .g/cm3               : RHOB",
+      "null_count": 1074,
+      "first_non_null_depth": 270.584,
+      "last_non_null_depth": 2223.024,
+      "min_non_null": 1.3787754774,
+      "max_non_null": 3.1534032822
+    },
+    {
+      "index": 13,
+      "mnemonic": "DRHO",
+      "unit": "g/cm3",
+      "description": " DRHO",
+      "line": "DRHO .g/cm3               : DRHO",
+      "null_count": 1076,
+      "first_non_null_depth": 270.584,
+      "last_non_null_depth": 2223.024,
+      "min_non_null": -0.726270556,
+      "max_non_null": 0.2376797795
+    },
+    {
+      "index": 14,
+      "mnemonic": "DEPTH_MD",
+      "unit": "_",
+      "description": " DEPTH_MD",
+      "line": "DEPTH_MD ._               : DEPTH_MD",
+      "null_count": 11,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.504,
+      "min_non_null": 211.1519928,
+      "max_non_null": 2221.5039063
+    },
+    {
+      "index": 15,
+      "mnemonic": "x_loc",
+      "unit": "_",
+      "description": " x_loc",
+      "line": "x_loc ._                  : x_loc",
+      "null_count": 11,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.504,
+      "min_non_null": 460100.6875,
+      "max_non_null": 460128.53125
+    },
+    {
+      "index": 16,
+      "mnemonic": "y_loc",
+      "unit": "_",
+      "description": " y_loc",
+      "line": "y_loc ._                  : y_loc",
+      "null_count": 11,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.504,
+      "min_non_null": 6783929.0,
+      "max_non_null": 6783939.0
+    },
+    {
+      "index": 17,
+      "mnemonic": "z_loc",
+      "unit": "_",
+      "description": " z_loc",
+      "line": "z_loc ._                  : z_loc",
+      "null_count": 11,
+      "first_non_null_depth": 211.152,
+      "last_non_null_depth": 2221.504,
+      "min_non_null": -2199.015381,
+      "max_non_null": -189.1519775
+    }
+  ]
+}

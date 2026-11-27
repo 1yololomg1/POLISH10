@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+      QT_QPA_PLATFORM: offscreen
+      POLISH_REQUIRE_UI: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The four real fixtures are Git LFS. Without this, checkout leaves
+          # pointer text and the golden and ingest tests parse that text.
+          lfs: true
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install system packages for Tkinter and the window tests
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libfontconfig1 libdbus-1-3
+      - run: pip install -r requirements.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: xvfb-run -a coverage run -m pytest -q
+      - run: coverage report
+      # Do not import advanced_preprocessing_system10 here. That import loads
+      # seaborn, and D1 removed seaborn rather than adding it to requirements.
+      # Pytest does not import the monolith, so the old coverage probe could
+      # not run and failed the job after the tests had already passed.
+

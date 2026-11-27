@@ -623,7 +623,7 @@ class WellLoadingMixin:
             'field': 'UNKNOWN',
             'company': 'UNKNOWN',
             'date': 'UNKNOWN',
-            'null_value': '-999.25',
+            'null_value': None,
             'start_depth': 'UNKNOWN',
             'stop_depth': 'UNKNOWN',
             'step': 'UNKNOWN',

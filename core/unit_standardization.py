@@ -46,10 +46,16 @@ class IndustryUnitStandardizer:
         self.unit_conversions = {
             # Depth conversions
             'depth': {
+                # LAS 2.0 allows M, F and FT. F is feet, not Fahrenheit.
+                'F':      {'factor': 0.3048, 'target': 'M',    'name': 'Feet to meters'},
                 'FT':     {'factor': 0.3048, 'target': 'M',    'name': 'Feet to meters'},
                 'FEET':   {'factor': 0.3048, 'target': 'M',    'name': 'Feet to meters'},
+                'FOOT':   {'factor': 0.3048, 'target': 'M',    'name': 'Feet to meters'},
                 'M':      {'factor': 1.0,    'target': 'M',    'name': 'Meters (standard)'},
-                'METER':  {'factor': 1.0,    'target': 'M',    'name': 'Meters (standard)'}
+                'METER':  {'factor': 1.0,    'target': 'M',    'name': 'Meters (standard)'},
+                'METERS': {'factor': 1.0,    'target': 'M',    'name': 'Meters (standard)'},
+                'METRE':  {'factor': 1.0,    'target': 'M',    'name': 'Meters (standard)'},
+                'METRES': {'factor': 1.0,    'target': 'M',    'name': 'Meters (standard)'},
             },
 
             # Density conversions (bulk density of formations)
@@ -189,7 +195,9 @@ class IndustryUnitStandardizer:
         if hasattr(self.app, 'standardize_units_var'):
             standardize_units_var = self.app.standardize_units_var
         else:
-            standardize_units_var = tk.BooleanVar(value=True)
+            # Off by default, matching the application-level variable. See the
+            # Phase 0 item 2 note in advanced_preprocessing_system10.py.
+            standardize_units_var = tk.BooleanVar(value=False)
             
         ttk.Checkbutton(unit_frame, text="Standardize Units to Industry Standard", 
                        variable=standardize_units_var).pack(anchor='w', pady=5)
@@ -282,8 +290,12 @@ class IndustryUnitStandardizer:
                     else:
                         self.unit_analysis_results['no_conversion_needed'].append(f"{curve_name} ({current_unit})")
                 else:
-                    # Attempt fallback: find any category whose units include the current unit
-                    fallback = self._infer_category_from_unit(current_unit)
+                    # Attempt fallback: find any category whose units include the current unit.
+                    # A depth curve is not converted as temperature or any other quantity.
+                    if curve_category == 'depth':
+                        fallback = None
+                    else:
+                        fallback = self._infer_category_from_unit(current_unit)
                     if fallback and current_unit in self.unit_conversions[fallback]:
                         conversion_info = self.unit_conversions[fallback][current_unit]
                         target_unit = conversion_info['target']
@@ -413,8 +425,12 @@ class IndustryUnitStandardizer:
                                 if self.app:
                                     self.app.log_processing(f"   {curve_name}: Conversion validation failed")
                     else:
-                        # Fallback attempt by unit membership across categories
-                        fallback = self._infer_category_from_unit(current_unit)
+                        # Fallback attempt by unit membership across categories.
+                        # A depth curve is not converted as temperature or any other quantity.
+                        if curve_category == 'depth':
+                            fallback = None
+                        else:
+                            fallback = self._infer_category_from_unit(current_unit)
                         if fallback and current_unit in self.unit_conversions[fallback]:
                             conversion_info = self.unit_conversions[fallback][current_unit]
                             target_unit = conversion_info['target']
@@ -825,7 +841,7 @@ class IndustryUnitStandardizer:
             if depth_curve and depth_curve in self.app.curve_info:
                 current_unit = self.app.curve_info[depth_curve].get('unit', '').upper()
                 
-                if current_unit == 'M':
+                if current_unit in ('M', 'METER', 'METERS', 'METRE', 'METRES'):
                     # Metric units
                     if hasattr(self.app, 'depth_validation_rules'):
                         self.app.depth_validation_rules = {
@@ -836,7 +852,7 @@ class IndustryUnitStandardizer:
                         self.app.log_processing("   Depth validation updated for metric units")
                         self.unit_analysis_results['depth_validation_updated'] = True
                     
-                elif current_unit == 'FT':
+                elif current_unit in ('F', 'FT', 'FEET', 'FOOT'):
                     # Imperial units  
                     if hasattr(self.app, 'depth_validation_rules'):
                         self.app.depth_validation_rules = {

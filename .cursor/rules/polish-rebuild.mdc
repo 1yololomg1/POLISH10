@@ -1,0 +1,95 @@
+---
+description: POLISH rebuild — standing rules for every task in this repository
+alwaysApply: true
+---
+
+# POLISH rebuild — standing rules
+
+## What POLISH is
+A fully isolated desktop preprocessor for petrophysical well logs (LAS). It describes a
+file completely before altering anything, alters only with recorded consent, and reports
+refusals as prominently as actions. Honesty is the product. A value that looks measured
+but was invented is the worst possible defect.
+
+## Governing documents (in docs/governing/)
+- POLISH_pipeline_contracts.md — invariants C1–C7
+- POLISH_decision_register.md — decisions D1–D99, findings F1–F19
+- POLISH_design_brief.md — interface intent
+- POLISH_UIUX_cohesion_supplement.md — UXC items (adopted: UXC1–UXC10, all ten)
+- POLISH_build_plan.md — open decisions OD-nn, prompts Pnn
+- state_glossary.md - state vocabulary and the block-type/action matrix (OD-04, Appendix A)
+Precedence when they disagree: Contracts C1–C7 are the core invariants. Where a
+decision-register row (revision 2 or later) revises older text, the register row wins.
+The domain expert's answers (POLISH_build_plan.md section 1.0) outrank DESIGN-tier
+rows on petrophysics and workflow. Owner decisions recorded in POLISH_build_plan.md
+section 1.0 apply. The design brief governs interface intent where the register is
+silent.
+If a conflict is not covered by that rule: STOP and report it. Do not choose.
+
+## Numbering
+Use only: Stage 0–10 (eleven stages), D-numbers, F-numbers, UXC-numbers, C1–C7,
+OD-numbers, P-numbers. Do not introduce steps, phases, tasks or any other numbered scheme
+in code, comments, docs or commit messages.
+
+## Hard rules — never break these
+1. No network access in shipped code. polish/ and polish_ui/ must not import socket,
+   requests, urllib.request, http.client, httpx, aiohttp, ftplib, smtplib, webbrowser,
+   or any Qt network module. No telemetry, no update checks, no URLs fetched.
+2. polish/ never imports a UI toolkit. polish_ui/ imports polish/, never the reverse.
+3. The input file is never opened for writing. Source arrays are read-only.
+   Nothing overwrites original values; changes live in overlays or child datasets.
+4. No guessing. If a value, unit, family, tolerance, bound, threshold or rule is not
+   established by a governing document, a rule/table data file, or a recorded user
+   decision, the result is an explicit "not set / not eligible / unknown" state.
+   Never a default. Never a fallback range. Never `.get(key, some_default)` for
+   scientific values.
+5. No silent conversion of absent to present. Every created or changed sample has a
+   provenance record.
+6. No "force export", "accept anyway", "fill anyway" or equivalent escape hatch,
+   anywhere, under any name.
+7. Do not modify legacy files (advanced_preprocessing_system10.py, core/, ui/,
+   petrophysics/) unless the prompt explicitly says so. Reading and harvesting logic
+   from them is expected. polish/ never imports them (three core/ modules import
+   tkinter): copy the logic across with a comment naming its source file and symbol.
+8. Never fill an ⟦OD-…⟧ slot or decide an open decision yourself. Stop and report.
+9. Proper fixes only. No workarounds, suppressed warnings, skipped tests, broad
+   try/except, or TODO placeholders standing in for behaviour. Never write
+   "# ... rest of code ...".
+10. No new dependency without listing it in the report with its licence and why.
+
+## Working method
+- Locate code by symbol name, never by line number.
+- Read before writing. Before editing a module, read it and the tests that cover it.
+- Every public function in polish/ has a docstring naming the D/C/UXC rows it
+  implements.
+- Scientific values (bounds, tolerances, thresholds, tool groups, unit factors,
+  mnemonic entries) live in versioned data files under polish/rules/ or polish/tables/,
+  each entry carrying its source and source tier.
+- Tests accompany every change. Parametrise across the fixtures in tests/fixtures/.
+  Never hardcode a count that can be computed from a fixture.
+- Before committing: run `python -m pytest -q` and `ruff check .`. Both must pass.
+- Commit in small, single-purpose commits. Commit messages are plain sentences
+  describing the change (house style: "Halt processing when depth cannot be identified,
+  and show the reason."). Reference D/C/UXC rows in the body, not the subject.
+- Aikido: .cursor/rules/aikido_rules.mdc stays active by owner decision (OD-09,
+  15 Sept); follow it. Never pass .las files, anything under tests/fixtures/, or any
+  well data to Aikido or any other external tool — source code only.
+
+## Evidence rules for your report
+- Never claim a file, folder, function, test or result exists unless you listed,
+  read or ran it in this task. Paste the command and its output (tail is fine).
+- Distinguish: VERIFIED (you ran/read it), INFERRED (reasoned from code),
+  NOT CHECKED.
+- If something fails, report the failure. Do not paper over it.
+- Before writing NOT CHECKED or "not verified" for anything, run the command or read the file that would check it, if one exists in this environment. NOT CHECKED is allowed only when (a) you ran the check and it failed: name the command and paste the error, or (b) no command in this environment can reach it: say what is missing. A bare "not verified" is a defect.
+- Read-only checks (git status, git log, git diff, reading and listing files, running pytest and ruff, re-ingesting fixtures to compare results) never need permission. Run them before you report. This does not permit changing files outside the task.
+- After editing any file, read it back (or run the test that covers it) and report what you saw.
+
+## Report format (end of every task)
+1. Summary — two to four sentences.
+2. Files changed — full relative paths, one line each on what changed.
+3. Commands run — with output tails, including pytest and ruff counts before and after.
+4. Decisions I needed but did not make — each with the OD/D number if known.
+5. Deviations from the prompt — and why.
+6. Not verified — only items that meet the NOT CHECKED rule above, each with the command tried and its error, or what is missing.
+7. Suggested next step — one line.

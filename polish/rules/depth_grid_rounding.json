@@ -1,0 +1,12 @@
+{
+  "id": "depth.grid_rounding",
+  "statement": "When STEP is given and not zero, each depth passes when its distance from the first depth plus its index times STEP is at most the smaller of one unit of that depth's own last written decimal and half the absolute step. The first depth is the first depth in the data. When STEP is blank or zero, the step is the median of the neighbouring gaps, and each gap passes when its distance from that median is at most the smaller of one unit of the coarser last written decimal of the gap's two depths and half the median. A depth or gap outside that allowance is an irregular grid, reported as informational, and no step is invented for it.",
+  "application": "When STEP is given and not zero, each depth passes when its distance from the first depth plus its index times STEP is at most the smaller of one unit of that depth's own last written decimal and half the absolute step. The first depth is the first depth in the data. When STEP is blank or zero, the step is the median of the neighbouring gaps, and each gap passes when its distance from that median is at most the smaller of one unit of the coarser last written decimal of the gap's two depths and half the median. A depth or gap outside that allowance is an irregular grid, reported as informational, and no step is invented for it.",
+  "source": "Per-depth precision and one full unit: domain expert, 7 Oct 2026, relayed by owner. Half-step cap and median step: owner, 18 Nov 2026.",
+  "source_tier": "AC",
+  "examples": [
+    {"decimal_places": 1, "one_unit": "0.1", "step": "0.1", "allowance": "0.05"},
+    {"decimal_places": 0, "one_unit": "1", "step": "1", "allowance": "0.5"},
+    {"decimal_places": 3, "one_unit": "0.001", "step": "0.1524", "allowance": "0.001"}
+  ]
+}

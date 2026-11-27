@@ -1,0 +1,318 @@
+{
+  "fixture": "WLC_PETRO_COMPUTED_INPUT_1_15_9-F-1B.las",
+  "sha256": "685b009dbf038ce0a547b6bcb249ad60f7583515c39df267e4218ecb98d1797c",
+  "vers": {
+    "text": "2.0"
+  },
+  "wrap": {
+    "text": "NO",
+    "wrapped": false
+  },
+  "null": {
+    "text": "-999.25",
+    "number": -999.25
+  },
+  "strt": {
+    "text": "145.9000",
+    "unit": "M",
+    "number": 145.9
+  },
+  "stop": {
+    "text": "3464.9000",
+    "unit": "M",
+    "number": 3464.9
+  },
+  "step": {
+    "text": "0.1000",
+    "unit": "M",
+    "number": 0.1
+  },
+  "null_comparison": {
+    "rel_tol": 1e-06,
+    "abs_tol": 0.0,
+    "rule": "math.isclose(value, null, rel_tol=1e-6, abs_tol=0.0)"
+  },
+  "depth_channel": {
+    "curve_index": 0,
+    "meaning": "LAS index channel, the first curve in the curve section"
+  },
+  "depth_step_count": 33191,
+  "curves": [
+    {
+      "index": 0,
+      "mnemonic": "DEPTH",
+      "unit": "M",
+      "description": "   0  Depth",
+      "line": "DEPTH   .M            00 001 00 00:   0  Depth",
+      "null_count": 0,
+      "first_non_null_depth": 145.9,
+      "last_non_null_depth": 3464.9,
+      "min_non_null": 145.9,
+      "max_non_null": 3464.9
+    },
+    {
+      "index": 1,
+      "mnemonic": "ABDCQF01",
+      "unit": "g/cm3",
+      "description": "v1",
+      "line": "ABDCQF01.g/cm3        00 000 00 00:   1  ABDCQF01:COMPOSITE:rC:NONE:v1",
+      "null_count": 29965,
+      "first_non_null_depth": 3120.0,
+      "last_non_null_depth": 3442.5,
+      "min_non_null": 2.1046,
+      "max_non_null": 3.0577
+    },
+    {
+      "index": 2,
+      "mnemonic": "ABDCQF02",
+      "unit": "g/cm3",
+      "description": "v1",
+      "line": "ABDCQF02.g/cm3        00 000 00 00:   2  ABDCQF02:COMPOSITE:rC:NONE:v1",
+      "null_count": 29965,
+      "first_non_null_depth": 3120.0,
+      "last_non_null_depth": 3442.5,
+      "min_non_null": 2.1182,
+      "max_non_null": 3.0521
+    },
+    {
+      "index": 3,
+      "mnemonic": "ABDCQF03",
+      "unit": "g/cm3",
+      "description": "v1",
+      "line": "ABDCQF03.g/cm3        00 000 00 00:   3  ABDCQF03:COMPOSITE:rC:NONE:v1",
+      "null_count": 29965,
+      "first_non_null_depth": 3120.0,
+      "last_non_null_depth": 3442.5,
+      "min_non_null": 2.0902,
+      "max_non_null": 3.0505
+    },
+    {
+      "index": 4,
+      "mnemonic": "ABDCQF04",
+      "unit": "g/cm3",
+      "description": "v1",
+      "line": "ABDCQF04.g/cm3        00 000 00 00:   4  ABDCQF04:COMPOSITE:rC:NONE:v1",
+      "null_count": 29965,
+      "first_non_null_depth": 3120.0,
+      "last_non_null_depth": 3442.5,
+      "min_non_null": 2.1247,
+      "max_non_null": 3.0866
+    },
+    {
+      "index": 5,
+      "mnemonic": "BS",
+      "unit": "inches",
+      "description": "v1",
+      "line": "BS      .inches       00 000 00 00:   5  BS:COMPOSITE:rC:NONE:v1",
+      "null_count": 0,
+      "first_non_null_depth": 145.9,
+      "last_non_null_depth": 3464.9,
+      "min_non_null": 8.5,
+      "max_non_null": 36.0
+    },
+    {
+      "index": 6,
+      "mnemonic": "CALI",
+      "unit": "inches",
+      "description": "v1",
+      "line": "CALI    .inches       70 280 00 01:   6  CALI:COMPOSITE:rC:NONE:v1",
+      "null_count": 29672,
+      "first_non_null_depth": 3090.0,
+      "last_non_null_depth": 3441.8,
+      "min_non_null": 8.3604,
+      "max_non_null": 10.1917
+    },
+    {
+      "index": 7,
+      "mnemonic": "DRHO",
+      "unit": "g/cm3",
+      "description": "v1",
+      "line": "DRHO    .g/cm3        45 356 01 01:   7  DRHO:COMPOSITE:rC:NONE:v1",
+      "null_count": 29665,
+      "first_non_null_depth": 3090.0,
+      "last_non_null_depth": 3442.5,
+      "min_non_null": -0.0225,
+      "max_non_null": 0.2206
+    },
+    {
+      "index": 8,
+      "mnemonic": "DT",
+      "unit": "us/ft",
+      "description": "v1",
+      "line": "DT      .us/ft        60 520 32 01:   8  DT:COMPOSITE:rC:NONE:v1",
+      "null_count": 28929,
+      "first_non_null_depth": 2998.5,
+      "last_non_null_depth": 3424.6,
+      "min_non_null": 54.9283,
+      "max_non_null": 125.9827
+    },
+    {
+      "index": 9,
+      "mnemonic": "DTS",
+      "unit": "us/ft",
+      "description": "v1",
+      "line": "DTS     .us/ft        00 000 00 00:   9  DTS:COMPOSITE:rC:NONE:v1",
+      "null_count": 29382,
+      "first_non_null_depth": 2999.0,
+      "last_non_null_depth": 3424.7,
+      "min_non_null": 99.9092,
+      "max_non_null": 202.14
+    },
+    {
+      "index": 10,
+      "mnemonic": "GR",
+      "unit": "API",
+      "description": "v1",
+      "line": "GR      .API          30 150 01 01:  10  GR:COMPOSITE:rC:NONE:v1",
+      "null_count": 693,
+      "first_non_null_depth": 197.9,
+      "last_non_null_depth": 3457.1,
+      "min_non_null": 0.1493,
+      "max_non_null": 297.7673
+    },
+    {
+      "index": 11,
+      "mnemonic": "NBGRCFM",
+      "unit": "API",
+      "description": "v1",
+      "line": "NBGRCFM .API          00 000 00 00:  11  NBGRCFM:COMPOSITE:rC:0001:v1",
+      "null_count": 20004,
+      "first_non_null_depth": 1279.7,
+      "last_non_null_depth": 2598.3,
+      "min_non_null": 3.2584,
+      "max_non_null": 189.6786
+    },
+    {
+      "index": 12,
+      "mnemonic": "NPHI",
+      "unit": "v/v",
+      "description": "v1",
+      "line": "NPHI    .v/v          42 890 01 01:  12  NPHI:COMPOSITE:rC:NONE:v1",
+      "null_count": 29778,
+      "first_non_null_depth": 3098.5,
+      "last_non_null_depth": 3439.7,
+      "min_non_null": 0.0595,
+      "max_non_null": 0.5576
+    },
+    {
+      "index": 13,
+      "mnemonic": "PEF",
+      "unit": "b/elec",
+      "description": "v1",
+      "line": "PEF     .b/elec       45 358 01 01:  13  PEF:COMPOSITE:rC:NONE:v1",
+      "null_count": 29750,
+      "first_non_null_depth": 3098.5,
+      "last_non_null_depth": 3442.5,
+      "min_non_null": 4.7299,
+      "max_non_null": 10.9876
+    },
+    {
+      "index": 14,
+      "mnemonic": "RACEHM",
+      "unit": "ohm.m",
+      "description": "v1",
+      "line": "RACEHM  .ohm.m        95 220 00 01:  14  RACEHM:COMPOSITE:rC:NONE:v1",
+      "null_count": 24653,
+      "first_non_null_depth": 2589.4,
+      "last_non_null_depth": 3456.0,
+      "min_non_null": -0.0965,
+      "max_non_null": 1118.3141
+    },
+    {
+      "index": 15,
+      "mnemonic": "RACELM",
+      "unit": "ohm.m",
+      "description": "v1",
+      "line": "RACELM  .ohm.m        00 524 01 00:  15  RACELM:COMPOSITE:rC:NONE:v1",
+      "null_count": 24653,
+      "first_non_null_depth": 2589.4,
+      "last_non_null_depth": 3456.0,
+      "min_non_null": 0.072,
+      "max_non_null": 8417.9795
+    },
+    {
+      "index": 16,
+      "mnemonic": "RD",
+      "unit": "ohm.m",
+      "description": "v1",
+      "line": "RD      .ohm.m        00 000 00 00:  16  RD:COMPOSITE:rC:NONE:v1",
+      "null_count": 1281,
+      "first_non_null_depth": 226.0,
+      "last_non_null_depth": 3456.0,
+      "min_non_null": 0.2032,
+      "max_non_null": 96.4279
+    },
+    {
+      "index": 17,
+      "mnemonic": "RHOB",
+      "unit": "g/cm3",
+      "description": "v1",
+      "line": "RHOB    .g/cm3        45 350 01 01:  17  RHOB:COMPOSITE:rC:NONE:v1",
+      "null_count": 29750,
+      "first_non_null_depth": 3098.5,
+      "last_non_null_depth": 3442.5,
+      "min_non_null": 2.1118,
+      "max_non_null": 3.0517
+    },
+    {
+      "index": 18,
+      "mnemonic": "RM",
+      "unit": "ohm.m",
+      "description": "v1",
+      "line": "RM      .ohm.m        00 000 00 00:  18  RM:COMPOSITE:rC:NONE:v1",
+      "null_count": 1281,
+      "first_non_null_depth": 226.0,
+      "last_non_null_depth": 3456.0,
+      "min_non_null": 0.1794,
+      "max_non_null": 396.6379
+    },
+    {
+      "index": 19,
+      "mnemonic": "ROP",
+      "unit": "m/hr",
+      "description": "v1",
+      "line": "ROP     .m/hr         00 000 00 00:  19  ROP:COMPOSITE:rC:NONE:v1",
+      "null_count": 807,
+      "first_non_null_depth": 223.2,
+      "last_non_null_depth": 3464.8,
+      "min_non_null": 0.3856,
+      "max_non_null": 151.127
+    },
+    {
+      "index": 20,
+      "mnemonic": "RPCEHM",
+      "unit": "ohm.m",
+      "description": "v1",
+      "line": "RPCEHM  .ohm.m        00 000 00 00:  20  RPCEHM:COMPOSITE:rC:NONE:v1",
+      "null_count": 24653,
+      "first_non_null_depth": 2589.4,
+      "last_non_null_depth": 3456.0,
+      "min_non_null": 0.2237,
+      "max_non_null": 97543.4219
+    },
+    {
+      "index": 21,
+      "mnemonic": "RPCELM",
+      "unit": "ohm.m",
+      "description": "v1",
+      "line": "RPCELM  .ohm.m        00 000 00 00:  21  RPCELM:COMPOSITE:rC:NONE:v1",
+      "null_count": 24653,
+      "first_non_null_depth": 2589.4,
+      "last_non_null_depth": 3456.0,
+      "min_non_null": 0.2904,
+      "max_non_null": 97036.4063
+    },
+    {
+      "index": 22,
+      "mnemonic": "RT",
+      "unit": "ohm.m",
+      "description": "v1",
+      "line": "RT      .ohm.m        00 000 00 00:  22  RT:COMPOSITE:rC:NONE:v1",
+      "null_count": 24653,
+      "first_non_null_depth": 2589.4,
+      "last_non_null_depth": 3456.0,
+      "min_non_null": 0.2237,
+      "max_non_null": 97543.4219
+    }
+  ]
+}

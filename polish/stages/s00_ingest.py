@@ -1,0 +1,1931 @@
+"""Stage 0: read a LAS file and record an audit ledger. D64, D65, D66, D68.
+
+The file is opened read-only. Pass 1 reads the bytes and the text without a
+parser library. Pass 2 may call lasio and compare. The dataset is built from
+pass 1. A pass-2 result never overwrites a pass-1 sample.
+
+Implements D64, D65 (PARTIAL), D66 (PARTIAL, F19), D68 (PARTIAL), D30, D46,
+D17, D96, C3, C6, and contracts section 6. D65, D66 and D68 are corroborated by
+other implementations. They are not verified against the CWLS specification
+(OD-24).
+
+Structure
+---------
+CONTRACT
+    Stage 0 contract. alters_data is False. depends_on_stages is empty.
+ingest
+    Read one file. Returns an IngestResult.
+TextAudit
+    Pass-1 facts, including ones that are also findings: encoding, line
+    endings, sections, VERS, WRAP, well header numbers, curve text, duplicate
+    mnemonics, repeated VERS and WRAP.
+IngestResult
+    Source file, dataset or none, findings, audit, and null sample indexes.
+UnclassifiedIngest
+    Raised when a condition would need a block type the approved ledger
+    mapping does not name. The partial result is attached. It is not classified.
+
+Ledger mapping, approved with this stage
+-----------------------------------------
+undeclared NULL → AMBIGUOUS_INTERPRETATION
+undeclared sentinel candidate → INFORMATIONAL (kept as a number; D66, F07)
+header line not splitting cleanly → INFORMATIONAL
+unrecognised section → INFORMATIONAL
+LAS 3.0 feature detected → RULE_DEPENDENT_WARNING
+column count irreconcilable after WRAP/comments/blanks → STRUCTURAL_DATA_FAILURE
+no ~A section or no data rows → STRUCTURAL_DATA_FAILURE
+encoding undeterminable → STRUCTURAL_DATA_FAILURE
+pass-1/pass-2 disagreement → INFORMATIONAL, unless it changes a value, then
+STRUCTURAL_DATA_FAILURE
+non-monotonic depth, duplicate depth, or fewer than 2 depth samples →
+STRUCTURAL_DATA_FAILURE
+repeated NULL, STRT, STOP, STEP, VERS, or WRAP → AMBIGUOUS_INTERPRETATION
+NULL present but not a finite number → AMBIGUOUS_INTERPRETATION
+duplicate sections, absent ~V/~W/~C, ~A not last, preamble lines, or a VERS
+that is not major version 3 and is parsed as LAS 2.0 → INFORMATIONAL
+
+Regularity is not classified here. DepthGrid.regularity is None. A blank or
+non-numeric STEP is stored as declared_step None and is not a finding.
+``depth_tokens`` keeps the index-column spellings as written, so Stage 1 can
+see the last decimal place. Pass 2 re-reads a wrapped file with lasio
+engine='normal' and does not record that re-read as a finding.
+
+NULL matching uses polish/rules/null_comparison.json. Sentinel candidates
+live in polish/rules/null_sentinels.json. Stage 4 owns sample status, so a
+null here is a NaN plus an index, not a SampleStatus.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import logging
+import math
+import re
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy
+
+from polish.model.dataset import (
+    Curve,
+    Dataset,
+    DepthDirection,
+    DepthGrid,
+    SourceFile,
+)
+from polish.model.findings import Evidence, FindingRecord, finding_key
+from polish.model.ids import CurveRef, DatasetId, FileHash
+from polish.model.null_choice import NONE_OPTION, NullChoice
+from polish.model.states import BlockType, StageStatus
+from polish.stages.contract import StageContract, StageGuarantees, StageRequires
+
+# LAS 2.0 section letters. PARTIAL (D65): the first character after "~" is the
+# section. The titles these letters stand for are the ones lasio and the
+# legacy compliance checker both treat as the 2.0 set. Not CWLS-verified.
+_KNOWN_SECTION_LETTERS = frozenset({"V", "W", "C", "P", "O", "A"})
+_TRACKED_ABSENCES = ("V", "W", "C", "A")
+
+# Harvested from lasio.reader.SectionParser.las3_section_indicators. A title
+# containing one of these is reported as a LAS 3.0 feature and its body is
+# not read as LAS 2.0 curves or data (D68). Not CWLS-verified (OD-24).
+_LAS3_TITLE_MARKERS = ("_DATA", "_PARAMETER", "_DEFINITION")
+
+_LASIO_SECTION_NAME = {
+    "V": "Version",
+    "W": "Well",
+    "C": "Curves",
+    "P": "Parameter",
+    "O": "Other",
+}
+
+_RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
+
+
+def _load_null_comparison() -> tuple[float, float]:
+    """Relative and absolute tolerances for a declared NULL. D66.
+
+    Both numbers come from the rules file. A missing key is an error.
+    There is no stand-in tolerance.
+    """
+
+    payload = json.loads((_RULES_DIR / "null_comparison.json").read_text(encoding="utf-8"))
+    rel_tol = payload["rel_tol"]
+    abs_tol = payload["abs_tol"]
+    if isinstance(rel_tol, bool) or not isinstance(rel_tol, (int, float)):
+        raise ValueError("null_comparison.json rel_tol must be a real number")
+    if isinstance(abs_tol, bool) or not isinstance(abs_tol, (int, float)):
+        raise ValueError("null_comparison.json abs_tol must be a real number")
+    return float(rel_tol), float(abs_tol)
+
+
+def _load_sentinels() -> tuple[tuple[str, float], ...]:
+    """Candidate spellings and values for the undeclared-sentinel warning. D66, F19."""
+
+    payload = json.loads((_RULES_DIR / "null_sentinels.json").read_text(encoding="utf-8"))
+    rows = payload["candidates"]
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("null_sentinels.json candidates must be a non-empty list")
+    loaded: list[tuple[str, float]] = []
+    for row in rows:
+        text = row["text"]
+        value = row["value"]
+        if not isinstance(text, str) or text.strip() == "":
+            raise ValueError("null sentinel text must be a non-empty string")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"null sentinel {text!r} value must be a real number")
+        loaded.append((text, float(value)))
+    return tuple(loaded)
+
+
+NULL_REL_TOL, NULL_ABS_TOL = _load_null_comparison()
+SENTINEL_CANDIDATES = _load_sentinels()
+
+CONTRACT = StageContract(
+    stage_number=0,
+    name="Ingest",
+    requires=StageRequires(
+        units="Units are whatever the file declares. An absent unit stays absent (C1, C3).",
+        completeness="The file may contain the declared NULL. Sample status is not known at ingest.",
+        preconditions=(),
+    ),
+    guarantees=StageGuarantees(
+        row_count="The number of depth steps read from ~A. Ingest does not add or drop a step.",
+        units="Unchanged from the curve-section text.",
+        validity="Declared NULL samples are NaN in the array and listed by index. Sample status is not set (Stage 4).",
+    ),
+    declines_when=(
+        "The file encoding cannot be determined.",
+        "The file has no ~A section or the data section has no rows.",
+        "The data column count cannot be reconciled with the ~C count after WRAP, comments, and blank lines.",
+        "VERS has major version 3. LAS 3.0 is reported and is not parsed as LAS 2.0.",
+        "The depth column is not strictly monotonic, contains a duplicate depth, or has fewer than 2 samples.",
+    ),
+    depends_on_stages=(),
+    alters_data=False,
+)
+
+
+class UnclassifiedIngest(Exception):
+    """A condition the approved ledger mapping does not name.
+
+    ``partial`` is the audit and any findings already recorded. This exception
+    does not choose a block type. ``partial.status`` is BLOCKED when the
+    ledger has no structural finding. A structural finding already on the
+    ledger stays REFUSED_STRUCTURAL. D80, D86.
+    """
+
+    def __init__(self, message: str, partial: IngestResult) -> None:
+        super().__init__(message)
+        self.partial = partial
+
+
+@dataclass(frozen=True)
+class SectionMark:
+    """One section marker. ``letter`` is the first character after ``~``. D65."""
+
+    lineno: int
+    letter: str
+    title: str
+    las3_feature: bool
+
+
+@dataclass(frozen=True)
+class ParsedHeaderLine:
+    """One header line that split on the first period and the last colon. D65."""
+
+    lineno: int
+    section: str
+    mnemonic: str
+    unit: str
+    value_text: str
+    description: str
+
+
+@dataclass(frozen=True)
+class ParsedCurve:
+    """Curve text as split from ~C. Identity is the column index, not the mnemonic. D30."""
+
+    column_index: int
+    mnemonic: str
+    unit: str
+    description: str
+
+
+@dataclass(frozen=True)
+class TextAudit:
+    """Pass-1 facts that are recorded whether or not they are findings."""
+
+    encoding_name: str | None
+    encoding_method: str
+    line_endings: tuple[str, ...]
+    sections: tuple[SectionMark, ...]
+    duplicate_section_letters: tuple[str, ...]
+    absent_section_letters: tuple[str, ...]
+    ascii_is_last: bool | None
+    vers_text: str | None
+    vers_major: int | None
+    wrap_text: str | None
+    wrapped: bool | None
+    null_text: str | None
+    null_number: float | None
+    strt_text: str | None
+    strt_unit: str | None
+    strt_number: float | None
+    stop_text: str | None
+    stop_unit: str | None
+    stop_number: float | None
+    step_text: str | None
+    step_unit: str | None
+    step_number: float | None
+    header_lines: tuple[ParsedHeaderLine, ...]
+    curves: tuple[ParsedCurve, ...]
+    duplicate_mnemonics: tuple[str, ...]
+    repeated_well_mnemonics: tuple[str, ...]
+    repeated_version_mnemonics: tuple[str, ...]
+    preamble_lines: tuple[int, ...]
+    column_mismatches: tuple[tuple[int, int, int], ...]
+    data_token_count: int
+    depth_step_count: int | None
+    depth_tokens: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IngestResult:
+    """What Stage 0 returns. ``dataset`` is None when no source frame was built."""
+
+    source_file: SourceFile
+    dataset: Dataset | None
+    findings: tuple[FindingRecord, ...]
+    audit: TextAudit
+    null_sample_indexes: tuple[tuple[int, ...], ...]
+    status: StageStatus
+    null_decision_id: str | None = None
+
+
+# One check, one block type. D96. A call site that can emit two block types uses two names.
+_STAGE0_CHECKS: tuple[tuple[str, BlockType], ...] = (
+    ("preamble_lines", BlockType.INFORMATIONAL),
+    ("section_repeated", BlockType.INFORMATIONAL),
+    ("section_absent", BlockType.INFORMATIONAL),
+    ("ascii_not_last", BlockType.INFORMATIONAL),
+    ("vers_absent", BlockType.INFORMATIONAL),
+    ("vers_parsed_as_2", BlockType.INFORMATIONAL),
+    ("version_field_repeated", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("well_field_repeated", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("null_not_finite", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("section_marker_empty", BlockType.INFORMATIONAL),
+    ("section_unrecognised", BlockType.INFORMATIONAL),
+    ("las3_section_title", BlockType.RULE_DEPENDENT_WARNING),
+    ("header_line_unsplit", BlockType.INFORMATIONAL),
+    ("las3_version", BlockType.RULE_DEPENDENT_WARNING),
+    ("null_undeclared", BlockType.AMBIGUOUS_INTERPRETATION),
+    ("null_within_tolerance", BlockType.INFORMATIONAL),
+    ("no_sections", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("ascii_absent", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("wrapped_no_curves", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("wrapped_tokens_leftover", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("unwrapped_columns_mismatch", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("ascii_no_rows", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("sentinel_candidate", BlockType.INFORMATIONAL),
+    ("dos_end_of_file", BlockType.INFORMATIONAL),
+    ("data_token_not_numeric", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_header_line_unreadable", BlockType.INFORMATIONAL),
+    ("pass2_header_error", BlockType.INFORMATIONAL),
+    ("pass2_no_parse", BlockType.INFORMATIONAL),
+    ("pass2_header_value_differs", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_header_text_differs", BlockType.INFORMATIONAL),
+    ("pass2_curve_count_differs", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_mnemonic_differs", BlockType.INFORMATIONAL),
+    ("pass2_unit_differs", BlockType.INFORMATIONAL),
+    ("pass2_description_differs", BlockType.INFORMATIONAL),
+    ("pass2_length_differs", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_samples_differ", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("pass2_description_whitespace", BlockType.INFORMATIONAL),
+    ("encoding_undetermined", BlockType.STRUCTURAL_DATA_FAILURE),
+    ("depth_axis_refused", BlockType.STRUCTURAL_DATA_FAILURE),
+)
+CHECKS = frozenset(name for name, _block in _STAGE0_CHECKS)
+_CHECK_BLOCK = dict(_STAGE0_CHECKS)
+
+
+@dataclass
+class _Ledger:
+    """Approved findings only. An id is the check and what it is about. D96."""
+
+    read_at: datetime
+    file_hash: FileHash
+    items: list[FindingRecord]
+
+    def __init__(self, read_at: datetime, file_hash: FileHash) -> None:
+        self.read_at = read_at
+        self.file_hash = file_hash
+        self.items = []
+
+    def add(
+        self,
+        check: str,
+        identity: tuple[tuple[str, str], ...],
+        message: str,
+        column: int | None = None,
+        fields: dict[str, str | int | float | bool] | None = None,
+    ) -> None:
+        """Record one finding. The id is not this finding's position in the run. D96."""
+
+        if message.strip() == "":
+            raise ValueError("A ledger entry needs a message.")
+        if check not in CHECKS:
+            raise ValueError(f"Check {check!r} is not declared for this stage.")
+        block_type = _CHECK_BLOCK[check]
+        finding_id = finding_key(0, check, identity)
+        if any(item.id == finding_id for item in self.items):
+            raise ValueError(
+                f"Finding {finding_id} for check {check!r} and identity {identity!r} is already in this run."
+            )
+        refs: list[FileHash | CurveRef] = [self.file_hash]
+        if column is not None:
+            refs.append(CurveRef(DatasetId.for_source(self.file_hash), column))
+        evidence_fields = () if not fields else tuple(sorted(fields.items()))
+        self.items.append(
+            FindingRecord(
+                id=finding_id,
+                stage=0,
+                check=check,
+                identity=identity,
+                block_type=block_type,
+                subject_refs=tuple(refs),
+                evidence=Evidence(block_type.value, evidence_fields),
+                message=message,
+                created_at=self.read_at,
+            )
+        )
+
+
+@dataclass
+class _Pass1:
+    """Working state for the text walk. Not part of the public result."""
+
+    audit: TextAudit
+    rows: list[list[float]] | None
+    non_numeric: tuple[tuple[int, str], ...]
+    header_for_lasio: tuple[tuple[int, str, str, bool], ...]
+
+
+def _read_bytes(path: Path) -> bytes:
+    """Read the whole file. The mode is binary read. D17, C5."""
+
+    with path.open("rb") as handle:
+        return handle.read()
+
+
+# These five bytes have no character in Windows-1252. LAS 2.0 section 3.0.
+_CP1252_UNDEFINED = frozenset({0x81, 0x8D, 0x8F, 0x90, 0x9D})
+
+# A LAS data token: optional sign, digits with an optional point, optional exponent.
+# Python's float() also accepts underscores, nan, and inf. Those are not LAS numbers.
+_LAS_NUMBER = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+
+
+def _strip_trailing_dos_eof(raw: bytes) -> tuple[bytes, bool]:
+    """Drop one trailing Ctrl-Z. The file hash still covers the original bytes. D64.
+
+    A 0x1A anywhere except as the final byte is left in place.
+    """
+
+    if raw.endswith(b"\x1a"):
+        return raw[:-1], True
+    return raw, False
+
+
+def _line_number_at(raw: bytes, index: int) -> int:
+    """1-based line of the byte at ``index``. CRLF counts as one break."""
+
+    head = raw[:index]
+    without_crlf = head.replace(b"\r\n", b"")
+    return head.count(b"\n") + without_crlf.count(b"\r") + 1
+
+
+def _windows_1252_phrase(byte: int) -> str:
+    """How one byte would read in Windows-1252, or that it is not defined there."""
+
+    if byte in _CP1252_UNDEFINED:
+        return "not defined in Windows-1252"
+    shown = bytes([byte]).decode("cp1252")
+    return f"in Windows-1252 it would be {shown!r}"
+
+
+def _utf8_refusal(raw: bytes) -> str:
+    """The encoding refusal, naming the first byte that is not UTF-8. D64."""
+
+    try:
+        raw.decode("utf-8")
+    except UnicodeError as exc:
+        index = exc.start if isinstance(exc.start, int) else 0
+    else:
+        index = 0
+    if index < 0 or index >= len(raw):
+        index = 0
+    byte = raw[index]
+    line = _line_number_at(raw, index)
+    phrase = _windows_1252_phrase(byte)
+    return (
+        f"Line {line} has byte 0x{byte:02X}, which is not valid UTF-8 ({phrase}). "
+        "LAS 2.0 allows plain ASCII only. No encoding was assumed, so the file was not processed."
+    )
+
+
+def _detect_encoding(raw: bytes) -> tuple[str | None, str, str | None]:
+    """Detect an encoding from the bytes. Never substitutes another encoding.
+
+    A byte-order mark selects UTF-8, UTF-16, or UTF-32. With no mark, the
+    file is UTF-8 only when every byte decodes as UTF-8. Anything else is
+    undeterminable: latin-1 and ``errors='ignore'`` are not used. The refusal
+    names the first byte and what it would be in Windows-1252. D64.
+
+    Returns (encoding name or None, how it was detected, decoded text or None).
+    """
+
+    if raw.startswith(b"\xff\xfe\x00\x00") or raw.startswith(b"\x00\x00\xfe\xff"):
+        name, method, codec = "utf-32", "UTF-32 byte-order mark", "utf-32"
+    elif raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        name, method, codec = "utf-16", "UTF-16 byte-order mark", "utf-16"
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        name, method, codec = "utf-8", "UTF-8 byte-order mark EF BB BF", "utf-8-sig"
+    else:
+        name, method, codec = "utf-8", "strict UTF-8 decode of the whole file; no byte-order mark", "utf-8"
+    try:
+        text = raw.decode(codec)
+    except UnicodeError:
+        if codec == "utf-8":
+            return None, _utf8_refusal(raw), None
+        return None, (
+            "Encoding undeterminable: no recognised byte-order mark, and the "
+            "bytes are not valid UTF-8. No other encoding was assumed."
+        ), None
+    return name, method, text
+
+
+def _line_endings(text: str) -> tuple[str, ...]:
+    """Which of CRLF, LF, and CR occur. A mix is recorded, not classified."""
+
+    crlf = text.count("\r\n")
+    without_crlf = text.replace("\r\n", "")
+    found: list[str] = []
+    if crlf:
+        found.append("CRLF")
+    if "\n" in without_crlf:
+        found.append("LF")
+    if "\r" in without_crlf:
+        found.append("CR")
+    if not found:
+        found.append("NONE")
+    return tuple(found)
+
+
+def _blank_or_comment(line: str) -> bool:
+    stripped = line.strip()
+    return stripped == "" or stripped.startswith("#")
+
+
+def _section_letter(line: str) -> str | None:
+    """First character after ``~``, uppercased, or None when this is not a marker.
+
+    PARTIAL, D65. A leading space on the line is indentation, not the
+    character after the tilde. ``~CURVE`` and ``~C`` are both ``C``.
+    ``~ ASCII`` is a space, which is not a letter.
+    """
+
+    stripped = line.strip()
+    if not stripped.startswith("~"):
+        return None
+    if len(stripped) < 2:
+        return ""
+    return stripped[1].upper()
+
+
+def _las3_title(title: str) -> bool:
+    """True when the section title carries a LAS 3.0 marker. D68, PARTIAL."""
+
+    upper = title.upper()
+    return any(marker in upper for marker in _LAS3_TITLE_MARKERS)
+
+
+def _major_version(vers_text: str | None) -> int | None:
+    """Major version from the VERS value text, or None when it is not a finite number."""
+
+    if vers_text is None:
+        return None
+    try:
+        number = float(vers_text)
+    except ValueError:
+        return None
+    if not math.isfinite(number):
+        return None
+    return int(math.floor(number))
+
+
+def split_header_line(line: str) -> tuple[str, str, str, str] | None:
+    """Split one header line on the first period and the last colon. D65, PARTIAL.
+
+    Returns (mnemonic, unit, value text, description) or None when the line
+    does not have both delimiters or the mnemonic is empty. The mnemonic is
+    the text before the first period with surrounding spaces removed. The
+    unit is the run of non-space characters immediately after that period,
+    kept character for character. The description is the text after the last
+    colon, including spaces. The value text is the remainder, with surrounding
+    spaces removed so it can be read as a number.
+
+    A colon inside the description is part of the value, because the split
+    is the last colon. This is the PARTIAL D65 rule. It is not the first-colon
+    split the golden-facts extractor uses.
+    """
+
+    dot = line.find(".")
+    if dot < 0:
+        return None
+    mnemonic = line[:dot].strip()
+    if mnemonic == "":
+        return None
+    after = line[dot + 1 :]
+    colon = after.rfind(":")
+    if colon < 0:
+        return None
+    middle = after[:colon]
+    description = after[colon + 1 :]
+    unit_end = 0
+    while unit_end < len(middle) and not middle[unit_end].isspace():
+        unit_end += 1
+    unit = middle[:unit_end]
+    value_text = middle[unit_end:].strip()
+    return mnemonic, unit, value_text, description
+
+
+def _parse_finite(text: str) -> float | None:
+    """A finite float, or None. Scientific notation is accepted. D66, F19."""
+
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
+def _is_close(left: float, right: float) -> bool:
+    """Pass-1 / pass-2 numeric comparison. Not a NULL comparison. D64.
+
+    The tolerances are the ones recorded in null_comparison.json. This helper
+    stays on the header and sample comparisons between the two passes.
+    """
+
+    return math.isclose(left, right, rel_tol=NULL_REL_TOL, abs_tol=NULL_ABS_TOL)
+
+
+def _matches_declared_null(value: float, null_number: float) -> bool:
+    """True when ``value`` is the declared NULL. D66.
+
+    The tolerance is relative to the NULL, from null_comparison.json:
+    abs(value - null) <= abs_tol + rel_tol * abs(null). A non-finite value
+    is not the NULL.
+    """
+
+    if not math.isfinite(value) or not math.isfinite(null_number):
+        return False
+    limit = NULL_ABS_TOL + NULL_REL_TOL * abs(null_number)
+    return abs(value - null_number) <= limit
+
+
+def _las_data_number(token: str) -> float | None:
+    """A finite LAS data number, or None. D65.
+
+    The token must be an optional sign, digits with an optional point, and
+    an optional exponent, and ``float`` of that token must be finite.
+    ``5_0.0``, ``nan``, ``inf`` and ``-1.#IND`` are not LAS numbers.
+    """
+
+    if _LAS_NUMBER.fullmatch(token) is None:
+        return None
+    value = float(token)
+    if not math.isfinite(value):
+        return None
+    return value
+
+
+def _empty_audit(encoding_name: str | None, encoding_method: str) -> TextAudit:
+    return TextAudit(
+        encoding_name=encoding_name,
+        encoding_method=encoding_method,
+        line_endings=(),
+        sections=(),
+        duplicate_section_letters=(),
+        absent_section_letters=_TRACKED_ABSENCES,
+        ascii_is_last=None,
+        vers_text=None,
+        vers_major=None,
+        wrap_text=None,
+        wrapped=None,
+        null_text=None,
+        null_number=None,
+        strt_text=None,
+        strt_unit=None,
+        strt_number=None,
+        stop_text=None,
+        stop_unit=None,
+        stop_number=None,
+        step_text=None,
+        step_unit=None,
+        step_number=None,
+        header_lines=(),
+        curves=(),
+        duplicate_mnemonics=(),
+        repeated_well_mnemonics=(),
+        repeated_version_mnemonics=(),
+        preamble_lines=(),
+        column_mismatches=(),
+        data_token_count=0,
+        depth_step_count=None,
+        depth_tokens=(),
+    )
+
+
+def _well_slot(mnemonic: str) -> str | None:
+    upper = mnemonic.upper()
+    if upper in {"NULL", "STRT", "STOP", "STEP"}:
+        return upper
+    return None
+
+
+def _record_text_conditions(
+    ledger: _Ledger,
+    *,
+    sections: list[SectionMark],
+    letter_counts: Counter[str],
+    preamble_lines: list[int],
+    vers_text: str | None,
+    vers_major: int | None,
+    wrap_text: str | None,
+    well: dict[str, tuple[str, str, float | None]],
+    repeated_well: list[str],
+    repeated_version: list[str],
+) -> None:
+    """Ledger entries for conditions pass 1 used to store only on the audit.
+
+    The first value of a repeated mnemonic is the one already stored. A second
+    VERS or WRAP is kept on the audit as well as here. A file with no section
+    records none of these. D64, D65.
+    """
+
+    if not sections:
+        return
+    if preamble_lines:
+        shown = ", ".join(str(number) for number in preamble_lines[:10])
+        extra = ""
+        if len(preamble_lines) > 10:
+            extra = f" {len(preamble_lines) - 10} further lines are in the audit."
+        ledger.add(
+            "preamble_lines",
+            (),
+            f"Lines before the first section are not in a LAS section: {shown}.{extra}",
+        )
+    for letter, count in letter_counts.items():
+        if count < 2 or letter == "":
+            continue
+        lines = ", ".join(str(mark.lineno) for mark in sections if mark.letter == letter)
+        ledger.add(
+            "section_repeated",
+            (("section", letter),),
+            f"Section ~{letter} appears {count} times, at lines {lines}.",
+        )
+    for letter in ("V", "W", "C"):
+        if letter_counts[letter] == 0:
+            ledger.add("section_absent", (("section", letter),), f"Section ~{letter} is absent.")
+    has_ascii = any(mark.letter == "A" for mark in sections)
+    if has_ascii and sections and sections[-1].letter != "A":
+        start = next(mark.lineno for mark in sections if mark.letter == "A")
+        ledger.add(
+            "ascii_not_last",
+            (),
+            (
+                f"The ~A section is not the last section. It starts at line {start}. "
+                "Lines after the next section were not read as data."
+            ),
+        )
+    if vers_major != 3:
+        if vers_text is None:
+            ledger.add(
+                "vers_absent",
+                (),
+                "VERS is not declared. The file was parsed as LAS 2.0.",
+            )
+        else:
+            major = "unreadable" if vers_major is None else str(vers_major)
+            ledger.add(
+                "vers_parsed_as_2",
+                (),
+                (
+                    f"VERS value {vers_text!r} is not major version 3 (major version {major}). "
+                    "The file was parsed as LAS 2.0."
+                ),
+            )
+    for name in dict.fromkeys(repeated_version):
+        used = vers_text if name == "VERS" else wrap_text
+        ledger.add(
+            "version_field_repeated",
+            (("field", name),),
+            f"{name} is repeated. The first value {used!r} was used.",
+        )
+    for slot in dict.fromkeys(repeated_well):
+        used = well[slot][1]
+        ledger.add(
+            "well_field_repeated",
+            (("field", slot),),
+            f"{slot} is repeated. The first value {used!r} was used.",
+        )
+    if "NULL" in well and well["NULL"][2] is None:
+        ledger.add(
+            "null_not_finite",
+            (),
+            (
+                f"NULL is declared as {well['NULL'][1]!r}, which is not a finite number. "
+                "No null value was assumed, and no sample was converted."
+            ),
+        )
+
+
+def _pass1(text: str, ledger: _Ledger) -> _Pass1:
+    """Walk the text. Parser libraries are not used. D64, D65, D66, D68.
+
+    A file with no line starting with ``~`` records ``no_sections`` and no
+    other finding. D65.
+    """
+
+    endings = _line_endings(text)
+    sections: list[SectionMark] = []
+    letter_counts: Counter[str] = Counter()
+    header_lines: list[ParsedHeaderLine] = []
+    curves: list[ParsedCurve] = []
+    header_for_lasio: list[tuple[int, str, str, bool]] = []
+    data_lines: list[tuple[int, str]] = []
+    preamble_lines: list[int] = []
+    collecting_data = False
+    vers_text: str | None = None
+    wrap_text: str | None = None
+    well: dict[str, tuple[str, str, float | None]] = {}
+    repeated_well: list[str] = []
+    repeated_version: list[str] = []
+
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        letter = _section_letter(line)
+        if letter is not None:
+            title = line.strip()
+            las3 = _las3_title(title)
+            sections.append(SectionMark(lineno, letter, title, las3))
+            if letter == "":
+                ledger.add(
+                    "section_marker_empty",
+                    (("line", str(lineno)),),
+                    f"Line {lineno}: section marker {title!r} has no character after '~'.",
+                )
+            elif letter not in _KNOWN_SECTION_LETTERS:
+                ledger.add(
+                    "section_unrecognised",
+                    (("line", str(lineno)),),
+                    f"Line {lineno}: unrecognised section {title!r} (first character {letter!r}).",
+                )
+            if las3:
+                ledger.add(
+                    "las3_section_title",
+                    (("line", str(lineno)),),
+                    (
+                        f"Line {lineno}: LAS 3.0 feature in section title {title!r}. "
+                        "The section was not parsed as LAS 2.0."
+                    ),
+                )
+            letter_counts[letter] += 1
+            collecting_data = letter == "A" and not las3
+            if collecting_data:
+                data_lines = []
+            continue
+        if collecting_data:
+            data_lines.append((lineno, line))
+            continue
+        if not sections:
+            if not _blank_or_comment(line):
+                preamble_lines.append(lineno)
+            continue
+        if _blank_or_comment(line):
+            continue
+        current = sections[-1]
+        if current.las3_feature or current.letter not in _KNOWN_SECTION_LETTERS or current.letter == "A":
+            continue
+        parsed = split_header_line(line)
+        split_failed = parsed is None
+        header_for_lasio.append((lineno, current.letter, line, split_failed))
+        if parsed is None:
+            ledger.add(
+                "header_line_unsplit",
+                (("line", str(lineno)),),
+                (
+                    f"Line {lineno}: header line in section {current.letter} does not split "
+                    f"on the first period and the last colon: {line.strip()!r}."
+                ),
+            )
+            continue
+        mnemonic, unit, value_text, description = parsed
+        header_lines.append(
+            ParsedHeaderLine(lineno, current.letter, mnemonic, unit, value_text, description)
+        )
+        if current.letter == "V" and mnemonic.upper() == "VERS":
+            if vers_text is None:
+                vers_text = value_text
+            else:
+                repeated_version.append("VERS")
+        elif current.letter == "V" and mnemonic.upper() == "WRAP":
+            if wrap_text is None:
+                wrap_text = value_text
+            else:
+                repeated_version.append("WRAP")
+        elif current.letter == "W":
+            slot = _well_slot(mnemonic)
+            if slot is not None:
+                if slot in well:
+                    repeated_well.append(slot)
+                else:
+                    well[slot] = (unit, value_text, _parse_finite(value_text))
+        elif current.letter == "C":
+            curves.append(ParsedCurve(len(curves), mnemonic, unit, description))
+
+    vers_major = _major_version(vers_text)
+    if vers_major == 3:
+        ledger.add(
+            "las3_version",
+            (),
+            (
+                f"LAS 3.0 feature: VERS value {vers_text!r} has major version 3. "
+                "The file was not parsed as LAS 2.0."
+            ),
+        )
+
+    wrapped: bool | None
+    if wrap_text is None:
+        wrapped = None
+    else:
+        flag = wrap_text.strip().upper()
+        if flag == "YES":
+            wrapped = True
+        elif flag == "NO":
+            wrapped = False
+        else:
+            wrapped = None
+
+    duplicate_letters = tuple(letter for letter, count in letter_counts.items() if count > 1 and letter != "")
+    absent = tuple(letter for letter in _TRACKED_ABSENCES if letter_counts[letter] == 0)
+    ascii_is_last = (sections[-1].letter == "A") if sections else None
+
+    mnemonic_counts: Counter[str] = Counter(curve.mnemonic for curve in curves)
+    duplicate_mnemonics = tuple(name for name, count in mnemonic_counts.items() if count > 1)
+
+    null_text = well["NULL"][1] if "NULL" in well else None
+    null_number = well["NULL"][2] if "NULL" in well else None
+    # A file with no section is not LAS. That one finding replaces the NULL,
+    # preamble, and version notes, which would all be true of any non-LAS text. D65.
+    if not sections:
+        ledger.add(
+            "no_sections",
+            (),
+            (
+                "This file has no LAS sections (no line starting with ~), so it is not a LAS file "
+                "and was not processed."
+            ),
+        )
+    elif "NULL" not in well:
+        ledger.add(
+            "null_undeclared",
+            (),
+            "NULL is not declared in the well section. No null value was assumed, and no sample was converted.",
+        )
+    # A NULL line whose value is not a finite number stays declared and unused.
+    # That is not the undeclared-NULL condition, and no number is assumed.
+
+    strt = well.get("STRT", (None, None, None))
+    stop = well.get("STOP", (None, None, None))
+    step = well.get("STEP", (None, None, None))
+
+    rows: list[list[float]] | None = None
+    mismatches: list[tuple[int, int, int]] = []
+    non_numeric: list[tuple[int, str]] = []
+    token_count = 0
+    depth_steps: int | None = None
+    depth_tokens: list[str] = []
+    parse_data = vers_major != 3
+
+    if sections and parse_data and "A" not in letter_counts:
+        ledger.add("ascii_absent", (), "No ~A section.")
+    elif sections and parse_data:
+        content = [(lineno, line) for lineno, line in data_lines if not _blank_or_comment(line)]
+        n_curves = len(curves)
+        if wrapped is None:
+            token_count = sum(len(line.split()) for _, line in content)
+        elif wrapped:
+            tokens: list[tuple[int, str]] = []
+            for lineno, line in content:
+                for token in line.split():
+                    tokens.append((lineno, token))
+            token_count = len(tokens)
+            if n_curves == 0:
+                if token_count:
+                    ledger.add(
+                        "wrapped_no_curves",
+                        (),
+                        (
+                            f"Column count irreconcilable after WRAP=YES, comments, and blank lines: "
+                            f"~C count is 0 and the data section has {token_count} tokens."
+                        ),
+                    )
+            elif token_count % n_curves != 0:
+                leftover = token_count % n_curves
+                complete = token_count // n_curves
+                ledger.add(
+                    "wrapped_tokens_leftover",
+                    (),
+                    (
+                        f"Column count irreconcilable after WRAP=YES, comments, and blank lines: "
+                        f"~C count is {n_curves}, data tokens are {token_count}, "
+                        f"{leftover} left over after {complete} complete steps."
+                    ),
+                )
+            else:
+                built, bad = _rows_from_tokens(tokens, n_curves)
+                non_numeric.extend(bad)
+                if not bad:
+                    rows = built
+                    depth_steps = len(built)
+                    depth_tokens = [token for _, token in tokens[0::n_curves]]
+        else:
+            parsed_rows: list[list[float]] = []
+            bad_line = False
+            for lineno, line in content:
+                parts = line.split()
+                token_count += len(parts)
+                if len(parts) != n_curves:
+                    mismatches.append((lineno, len(parts), n_curves))
+                    bad_line = True
+                    continue
+                values, bad = _floats_on_line(lineno, parts)
+                non_numeric.extend(bad)
+                if bad:
+                    bad_line = True
+                elif not bad_line:
+                    parsed_rows.append(values)
+                    depth_tokens.append(parts[0])
+            if mismatches:
+                shown = ", ".join(
+                    f"line {lineno} has {actual} tokens where ~C count is {expected}"
+                    for lineno, actual, expected in mismatches[:10]
+                )
+                extra = ""
+                if len(mismatches) > 10:
+                    extra = f" {len(mismatches) - 10} further lines are in the audit."
+                ledger.add(
+                    "unwrapped_columns_mismatch",
+                    (),
+                    (
+                        f"Column count irreconcilable after WRAP=NO, comments, and blank lines: "
+                        f"{len(mismatches)} data line(s) differ from ~C count {n_curves}. {shown}.{extra}"
+                    ),
+                )
+            elif not bad_line:
+                rows = parsed_rows
+                depth_steps = len(parsed_rows)
+        if rows is not None and depth_steps == 0:
+            ledger.add(
+                "ascii_no_rows",
+                (),
+                (
+                    "The ~A section has no data rows after comments and blank lines. "
+                    "The depth column has no samples, so there is no adjacent pair to check."
+                ),
+            )
+            rows = None
+            depth_steps = 0
+            depth_tokens = []
+        elif content == [] and not any(
+            item.block_type is BlockType.STRUCTURAL_DATA_FAILURE for item in ledger.items
+        ):
+            ledger.add(
+                "ascii_no_rows",
+                (),
+                (
+                    "The ~A section has no data rows after comments and blank lines. "
+                    "The depth column has no samples, so there is no adjacent pair to check."
+                ),
+            )
+            depth_steps = 0
+
+    _record_text_conditions(
+        ledger,
+        sections=sections,
+        letter_counts=letter_counts,
+        preamble_lines=preamble_lines,
+        vers_text=vers_text,
+        vers_major=vers_major,
+        wrap_text=wrap_text,
+        well=well,
+        repeated_well=repeated_well,
+        repeated_version=repeated_version,
+    )
+
+    audit = TextAudit(
+        encoding_name=None,
+        encoding_method="",
+        line_endings=endings,
+        sections=tuple(sections),
+        duplicate_section_letters=duplicate_letters,
+        absent_section_letters=absent,
+        ascii_is_last=ascii_is_last,
+        vers_text=vers_text,
+        vers_major=vers_major,
+        wrap_text=wrap_text,
+        wrapped=wrapped,
+        null_text=null_text,
+        null_number=null_number,
+        strt_text=strt[1],
+        strt_unit=strt[0],
+        strt_number=strt[2],
+        stop_text=stop[1],
+        stop_unit=stop[0],
+        stop_number=stop[2],
+        step_text=step[1],
+        step_unit=step[0],
+        step_number=step[2],
+        header_lines=tuple(header_lines),
+        curves=tuple(curves),
+        duplicate_mnemonics=duplicate_mnemonics,
+        repeated_well_mnemonics=tuple(repeated_well),
+        repeated_version_mnemonics=tuple(repeated_version),
+        preamble_lines=tuple(preamble_lines),
+        column_mismatches=tuple(mismatches),
+        data_token_count=token_count,
+        depth_step_count=depth_steps,
+        depth_tokens=tuple(depth_tokens) if rows is not None else (),
+    )
+    return _Pass1(audit, rows, tuple(non_numeric), tuple(header_for_lasio))
+
+
+def _floats_on_line(lineno: int, parts: list[str]) -> tuple[list[float], list[tuple[int, str]]]:
+    values: list[float] = []
+    bad: list[tuple[int, str]] = []
+    for token in parts:
+        number = _las_data_number(token)
+        if number is None:
+            bad.append((lineno, token))
+        else:
+            values.append(number)
+    if bad:
+        return [], bad
+    return values, []
+
+
+def _rows_from_tokens(
+    tokens: list[tuple[int, str]], n_curves: int
+) -> tuple[list[list[float]], list[tuple[int, str]]]:
+    rows: list[list[float]] = []
+    bad: list[tuple[int, str]] = []
+    for start in range(0, len(tokens), n_curves):
+        chunk = tokens[start : start + n_curves]
+        values, chunk_bad = _floats_on_line(chunk[0][0], [token for _, token in chunk])
+        if chunk_bad:
+            bad.extend(chunk_bad)
+        elif not bad:
+            rows.append(values)
+    if bad:
+        return [], bad
+    return rows, []
+
+
+def _status(findings: tuple[FindingRecord, ...]) -> StageStatus:
+    if any(item.block_type is BlockType.STRUCTURAL_DATA_FAILURE for item in findings):
+        return StageStatus.REFUSED_STRUCTURAL
+    return StageStatus.COMPLETE
+
+
+def _result(
+    source: SourceFile,
+    dataset: Dataset | None,
+    ledger: _Ledger,
+    audit: TextAudit,
+    null_indexes: tuple[tuple[int, ...], ...],
+    null_decision_id: str | None = None,
+) -> IngestResult:
+    findings = tuple(ledger.items)
+    return IngestResult(
+        source,
+        dataset,
+        findings,
+        audit,
+        null_indexes,
+        _status(findings),
+        null_decision_id,
+    )
+
+
+def _halted(result: IngestResult) -> IngestResult:
+    """Status for an unclassified halt. D80, D86.
+
+    COMPLETE would say the stage finished. BLOCKED is the existing status
+    for a stage that cannot complete. A structural finding already recorded
+    stays REFUSED_STRUCTURAL. No block type is chosen for the halt itself.
+    """
+
+    if result.status is not StageStatus.COMPLETE:
+        return result
+    return IngestResult(
+        result.source_file,
+        result.dataset,
+        result.findings,
+        result.audit,
+        result.null_sample_indexes,
+        StageStatus.BLOCKED,
+        result.null_decision_id,
+    )
+
+
+def _direction(depths: numpy.ndarray) -> DepthDirection | None:
+    """Strict pairwise direction. No tolerance. D88's test, recorded not reversed."""
+
+    diffs = numpy.diff(depths)
+    if diffs.size == 0:
+        return None
+    if bool(numpy.all(diffs > 0)):
+        return DepthDirection.ASCENDING
+    if bool(numpy.all(diffs < 0)):
+        return DepthDirection.DESCENDING
+    return None
+
+
+def _depth_refusal(depths: numpy.ndarray) -> tuple[str, str] | None:
+    """Why the index column cannot be a DepthGrid, or None when it can.
+
+    ``structural`` is an approved STRUCTURAL_DATA_FAILURE. ``unclassified``
+    is a non-finite sample, which has no approved block type. Duplicate
+    depths are reported before a reversal. D3, D88.
+    """
+
+    count = int(depths.size)
+    if count < 2:
+        if count == 0:
+            detail = "The depth column has no samples, so there is no adjacent pair to check."
+        else:
+            detail = (
+                f"The depth column has one sample at index 0 (value {depths[0]!r}), "
+                "so there is no adjacent pair to check."
+            )
+        return ("structural", detail)
+    if not bool(numpy.all(numpy.isfinite(depths))):
+        index = int(numpy.flatnonzero(~numpy.isfinite(depths))[0])
+        return (
+            "unclassified",
+            (
+                f"Depth sample at index {index} is not a finite number ({depths[index]!r}). "
+                "This is not an approved ledger condition."
+            ),
+        )
+    diffs = numpy.diff(depths)
+    equal = numpy.flatnonzero(diffs == 0)
+    if equal.size:
+        index = int(equal[0])
+        return (
+            "structural",
+            (
+                f"Duplicate depth at indexes {index} and {index + 1}: "
+                f"{depths[index]!r} and {depths[index + 1]!r}."
+            ),
+        )
+    if bool(numpy.all(diffs > 0)) or bool(numpy.all(diffs < 0)):
+        return None
+    first = float(diffs[0])
+    if first > 0:
+        broken = numpy.flatnonzero(diffs <= 0)
+    else:
+        broken = numpy.flatnonzero(diffs >= 0)
+    index = int(broken[0])
+    return (
+        "structural",
+        (
+            f"Non-monotonic depth at indexes {index} and {index + 1}: "
+            f"{depths[index]!r} and {depths[index + 1]!r}."
+        ),
+    )
+
+
+def _null_mask(series: numpy.ndarray, null_number: float) -> numpy.ndarray:
+    """Samples within the NULL tolerance. The tolerance is relative to the NULL. D66."""
+
+    limit = NULL_ABS_TOL + NULL_REL_TOL * abs(null_number)
+    finite = numpy.isfinite(series)
+    return finite & (numpy.abs(series - null_number) <= limit)
+
+
+def _apply_nulls(
+    rows: list[list[float]],
+    null_number: float | None,
+    curves: tuple[ParsedCurve, ...],
+    null_label: str,
+    ledger: _Ledger,
+) -> tuple[numpy.ndarray, tuple[tuple[int, ...], ...]]:
+    """Copy rows to float64 and replace NULL matches with NaN. D66, F07.
+
+    Column 0 is the depth column. It is not converted. A sample within the
+    NULL tolerance but not exactly equal to the NULL is absent, and one
+    informational finding names it. Samples that are not the NULL stay
+    numbers, including values that merely coincide with a sentinel candidate.
+    """
+
+    matrix = numpy.array(rows, dtype=numpy.float64)
+    indexes: list[tuple[int, ...]] = [() for _ in range(matrix.shape[1])]
+    if null_number is None:
+        return matrix, tuple(indexes)
+    for column in range(1, matrix.shape[1]):
+        series = matrix[:, column]
+        mask = _null_mask(series, null_number)
+        exact = series == null_number
+        near = mask & ~exact
+        near_count = int(numpy.count_nonzero(near))
+        if near_count:
+            first = int(numpy.flatnonzero(near)[0])
+            mnemonic = curves[column].mnemonic
+            shown_value = format(float(series[first]), ".16g")
+            ledger.add(
+                "null_within_tolerance",
+                (("column", str(column)), ("mnemonic", mnemonic)),
+                (
+                    f"{near_count} sample(s) in {mnemonic} are within the NULL tolerance of {null_label} "
+                    f"without being exactly it (first: {shown_value} at index {first}). "
+                    "They were read as absent."
+                ),
+                column=column,
+                fields={"mnemonic": mnemonic, "sample_count": near_count},
+            )
+        found = tuple(int(index) for index in numpy.flatnonzero(mask))
+        matrix[mask, column] = numpy.nan
+        indexes[column] = found
+    return matrix, tuple(indexes)
+
+
+def _sentinel_warnings(
+    matrix: numpy.ndarray,
+    curves: tuple[ParsedCurve, ...],
+    null_number: float | None,
+    ledger: _Ledger,
+) -> None:
+    """Note sentinel candidates that are not the declared NULL. D66, F07, F19.
+
+    Column 0 is not scanned. A match is kept as a number. Scientific notation
+    is not a signal: only the numeric candidates in the rules file are checked,
+    and only an exact equal value counts. Whether a candidate is this file's
+    NULL uses the one NULL comparison.
+    """
+
+    grouped: list[tuple[list[str], float]] = []
+    for text, value in SENTINEL_CANDIDATES:
+        for labels, existing in grouped:
+            if existing == value:
+                labels.append(text)
+                break
+        else:
+            grouped.append(([text], value))
+    for labels, sentinel in grouped:
+        if null_number is not None and _matches_declared_null(sentinel, null_number):
+            continue
+        spelling = labels[0]
+        for column, curve in enumerate(curves):
+            if column == 0:
+                continue
+            series = matrix[:, column]
+            hits = series == sentinel
+            count = int(numpy.count_nonzero(hits))
+            if count == 0:
+                continue
+            ledger.add(
+                "sentinel_candidate",
+                (("column", str(column)), ("mnemonic", curve.mnemonic), ("sentinel", spelling)),
+                (
+                    f"Column {column} '{curve.mnemonic}' has {count} sample(s) equal to {spelling}, "
+                    "a common NULL value that is not this file's declared NULL. They were kept as numbers."
+                ),
+                column=column,
+                fields={"mnemonic": curve.mnemonic, "sample_count": count},
+            )
+
+
+def _build_dataset(
+    source: SourceFile,
+    audit: TextAudit,
+    matrix: numpy.ndarray,
+    direction: DepthDirection,
+) -> Dataset:
+    """Source dataset from pass-1 columns. Arrays are copied read-only. D17, D30, C5, C6.
+
+    ``regularity`` is None. Stage 1 classifies it. ``declared_step`` is the
+    finite header STEP, or None when the header did not state one. A missing
+    STEP is not a finding.
+    """
+
+    dataset_id = DatasetId.for_source(source.file_hash)
+    depths = matrix[:, 0]
+    grid = DepthGrid(
+        depths,
+        direction,
+        None,
+        audit.step_number,
+        audit.curves[0].unit,
+    )
+    curves = tuple(
+        Curve(
+            CurveRef(dataset_id, curve.column_index),
+            curve.mnemonic,
+            curve.unit,
+            curve.description,
+            matrix[:, curve.column_index],
+        )
+        for curve in audit.curves
+    )
+    return Dataset(dataset_id, None, source, grid, curves, ())
+
+
+def _placeholder_partial(source: SourceFile, audit: TextAudit) -> IngestResult:
+    """Used only so UnclassifiedIngest can carry the audit before findings are sealed.
+
+    Callers replace this with the real result before raising.
+    """
+
+    return IngestResult(source, None, (), audit, (), StageStatus.BLOCKED)
+
+
+class _SilenceWrappedEngine(logging.Filter):
+    """Drop lasio's wrapped-engine notice. It is not a POLISH finding."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen = False
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "Only engine='normal' can read wrapped files" in record.getMessage():
+            self.seen = True
+            return False
+        return True
+
+
+def _lasio_text(text: str) -> io.StringIO:
+    """Pass 1's decoded text, as a stream. Never a path. D64, F02, F10."""
+
+    return io.StringIO(text)
+
+
+def _read_with_lasio(text: str, audit: TextAudit, ignore_header_errors: bool) -> object:
+    """Read with lasio. A wrapped file is read with engine='normal' and no finding.
+
+    lasio is given the text pass 1 decoded, and ``null_policy='none'``, so
+    lasio does not apply a NULL rule and does not open a path. D64, F02, F10.
+
+    lasio logs "Only engine='normal' can read wrapped files" and then switches
+    engine when its default allows it. WRAP YES is passed engine='normal' on
+    the first read so that log line is not emitted. If lasio still logs it,
+    the line is dropped and the file is read again with engine='normal'.
+    The user does not see a finding.
+    """
+
+    import lasio
+
+    # null_policy "none" is not lasio's strict policy, so lasio will only read
+    # with engine="normal" and otherwise logs a wrapped-file warning even when
+    # WRAP is NO. Pass the normal engine on the first read. D64.
+    kwargs: dict[str, object] = {
+        "ignore_header_errors": ignore_header_errors,
+        "mnemonic_case": "preserve",
+        "null_policy": "none",
+        "engine": "normal",
+    }
+    if audit.wrapped is True:
+        return lasio.read(_lasio_text(text), **kwargs)
+
+    lasio_logger = logging.getLogger("lasio.las")
+    silence = _SilenceWrappedEngine()
+    lasio_logger.addFilter(silence)
+    try:
+        parsed = lasio.read(_lasio_text(text), **kwargs)
+    finally:
+        lasio_logger.removeFilter(silence)
+    if not silence.seen:
+        return parsed
+    kwargs["engine"] = "normal"
+    return lasio.read(_lasio_text(text), **kwargs)
+
+
+def _compare_pass2(
+    text: str,
+    audit: TextAudit,
+    matrix: numpy.ndarray | None,
+    header_for_lasio: tuple[tuple[int, str, str, bool], ...],
+    ledger: _Ledger,
+) -> None:
+    """Read with lasio and record every disagreement with pass 1. D64.
+
+    ``ignore_header_errors=True`` is used only after each header line lasio
+    would reject has already been recorded. The rejection check calls
+    ``lasio.reader.read_header_line``, which is the call ``ignore_header_errors``
+    wraps in lasio.reader.parse_header_items_section. Mnemonic case is
+    ``preserve`` so lasio's default uppercasing is not a false disagreement.
+    """
+
+    if audit.vers_major == 3:
+        return
+    import lasio
+    from lasio.exceptions import LASHeaderError
+    from lasio.reader import read_header_line
+
+    captured = {lineno for lineno, _letter, _line, failed in header_for_lasio if failed}
+    lasio_rejects: list[tuple[int, str]] = []
+    for lineno, letter, line, _failed in header_for_lasio:
+        section_name = _LASIO_SECTION_NAME.get(letter, letter)
+        try:
+            read_header_line(line.strip(), section_name=section_name)
+        except (AttributeError, ValueError, TypeError, IndexError, re.error):
+            lasio_rejects.append((lineno, line.strip()))
+    for lineno, header_text in lasio_rejects:
+        if lineno in captured:
+            continue
+        ledger.add(
+            "pass2_header_line_unreadable",
+            (("line", str(lineno)),),
+            (
+                f"Pass 2 cannot read header line {lineno}, which pass 1 split: {header_text!r}. "
+                "No sample value was changed."
+            ),
+        )
+        captured.add(lineno)
+    use_ignore = bool(lasio_rejects)
+    try:
+        parsed = _read_with_lasio(text, audit, use_ignore)
+    except LASHeaderError as exc:
+        ledger.add(
+            "pass2_header_error",
+            (),
+            (
+                "Pass 2 stopped on a header error that was not suppressed "
+                f"({exc}). ignore_header_errors was not used to hide an unrecorded line. "
+                "No sample value was changed."
+            ),
+        )
+        return
+    except Exception as exc:
+        # D64: every exception lasio raises is the existing pass2_no_parse record.
+        # KeyError ('No ~ sections found') is one of those. KeyboardInterrupt is not.
+        ledger.add(
+            "pass2_no_parse",
+            (),
+            f"Pass 2 did not return a parse ({type(exc).__name__}: {exc}). No sample value was changed.",
+        )
+        return
+    _compare_header_numbers(audit, parsed, ledger)
+    _compare_curves(audit, matrix, parsed, ledger)
+
+
+def _compare_header_numbers(audit: TextAudit, parsed: object, ledger: _Ledger) -> None:
+    """VERS, WRAP, NULL, STRT, STOP, STEP. A numeric change is structural. D64."""
+
+    version = _item_value(parsed, "version", "VERS")
+    wrap = _item_value(parsed, "version", "WRAP")
+    _compare_one_header("VERS", audit.vers_text, version, ledger)
+    _compare_one_header("WRAP", audit.wrap_text, wrap, ledger)
+    _compare_one_header("NULL", audit.null_number, _item_value(parsed, "well", "NULL"), ledger)
+    _compare_one_header("STRT", audit.strt_number, _item_value(parsed, "well", "STRT"), ledger)
+    _compare_one_header("STOP", audit.stop_number, _item_value(parsed, "well", "STOP"), ledger)
+    _compare_one_header("STEP", audit.step_number, _item_value(parsed, "well", "STEP"), ledger)
+
+
+def _item_value(parsed: object, section_name: str, mnemonic: str) -> object:
+    section = getattr(parsed, section_name, None)
+    if section is None:
+        return None
+    try:
+        item = section[mnemonic]
+    except KeyError:
+        return None
+    return getattr(item, "value", None)
+
+
+def _as_real(value: object) -> float | None:
+    """A finite real from a Python or numpy number. Bool is not a number."""
+
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    item = getattr(value, "item", None)
+    if not callable(item):
+        return None
+    try:
+        raw = item()
+    except (ValueError, TypeError):
+        return None
+    return _as_real(raw)
+
+
+def _compare_one_header(label: str, ours: object, theirs: object, ledger: _Ledger) -> None:
+    if ours is None and theirs is None:
+        return
+    our_number = _as_real(ours)
+    their_number = _as_real(theirs)
+    if our_number is not None and their_number is not None:
+        if _is_close(our_number, their_number):
+            return
+        ledger.add(
+            "pass2_header_value_differs",
+            (("field", label),),
+            f"Pass 1 {label} value {our_number} disagrees with pass 2 value {their_number}.",
+        )
+        return
+    if isinstance(ours, str) and their_number is not None:
+        parsed = _parse_finite(ours)
+        if parsed is not None and _is_close(parsed, their_number):
+            return
+    if ours is not None and theirs is not None and str(ours).strip() == str(theirs).strip():
+        return
+    changes_value = our_number is not None or their_number is not None
+    check = "pass2_header_value_differs" if changes_value else "pass2_header_text_differs"
+    tail = "This changes a recorded value." if changes_value else "No sample value was changed."
+    ledger.add(check, (("field", label),), f"Pass 1 {label} {ours!r} disagrees with pass 2 {theirs!r}. {tail}")
+
+
+def _compare_curves(audit: TextAudit, matrix: numpy.ndarray | None, parsed: object, ledger: _Ledger) -> None:
+    las_curves = list(getattr(parsed, "curves"))
+    if len(las_curves) != len(audit.curves):
+        ledger.add(
+            "pass2_curve_count_differs",
+            (),
+            (
+                f"Pass 1 curve count {len(audit.curves)} disagrees with pass 2 curve count {len(las_curves)}. "
+                "This changes which values are in the file."
+            ),
+        )
+        return
+    whitespace_columns: list[int] = []
+    for index, (ours, theirs) in enumerate(zip(audit.curves, las_curves, strict=True)):
+        their_name = str(getattr(theirs, "mnemonic", ""))
+        their_unit = str(getattr(theirs, "unit", ""))
+        their_desc = str(getattr(theirs, "descr", ""))
+        if their_name.strip() != ours.mnemonic.strip():
+            ledger.add(
+                "pass2_mnemonic_differs",
+                (("column", str(index)), ("mnemonic", ours.mnemonic)),
+                (
+                    f"Pass 1 mnemonic {ours.mnemonic!r} at column {index} disagrees with "
+                    f"pass 2 mnemonic {their_name!r}. No sample value was changed."
+                ),
+                column=index,
+            )
+        if their_unit.strip() != ours.unit.strip():
+            ledger.add(
+                "pass2_unit_differs",
+                (("column", str(index)), ("mnemonic", ours.mnemonic)),
+                (
+                    f"Pass 1 unit {ours.unit!r} at column {index} disagrees with "
+                    f"pass 2 unit {their_unit!r}. No sample value was changed."
+                ),
+                column=index,
+            )
+        if their_desc.strip() != ours.description.strip():
+            ledger.add(
+                "pass2_description_differs",
+                (("column", str(index)), ("mnemonic", ours.mnemonic)),
+                (
+                    f"Pass 1 description {ours.description!r} at column {index} disagrees with "
+                    f"pass 2 description {their_desc!r}. No sample value was changed."
+                ),
+                column=index,
+            )
+        elif their_desc != ours.description:
+            whitespace_columns.append(index)
+        if matrix is None:
+            continue
+        their_values = numpy.asarray(getattr(theirs, "data"), dtype=numpy.float64)
+        our_values = matrix[:, index]
+        if their_values.shape != our_values.shape:
+            ledger.add(
+                "pass2_length_differs",
+                (("column", str(index)), ("mnemonic", ours.mnemonic)),
+                (
+                    f"Pass 1 column {index} length {our_values.shape[0]} disagrees with "
+                    f"pass 2 length {their_values.shape[0]}."
+                ),
+                column=index,
+            )
+            continue
+        nan_ours = numpy.isnan(our_values)
+        nan_theirs = numpy.isnan(their_values)
+        numeric = ~nan_ours & ~nan_theirs
+        differ = (nan_ours != nan_theirs) | (
+            numeric & ~numpy.isclose(our_values, their_values, rtol=NULL_REL_TOL, atol=NULL_ABS_TOL)
+        )
+        count = int(numpy.count_nonzero(differ))
+        if count == 0:
+            continue
+        first = int(numpy.flatnonzero(differ)[0])
+        ledger.add(
+            "pass2_samples_differ",
+            (("column", str(index)), ("mnemonic", ours.mnemonic)),
+            (
+                f"Pass 1 and pass 2 disagree on {count} sample(s) in column {index} "
+                f"mnemonic {ours.mnemonic!r}. First index {first}: "
+                f"pass 1 {our_values[first]!r}, pass 2 {their_values[first]!r}."
+            ),
+            column=index,
+        )
+    if whitespace_columns:
+        listed = ", ".join(str(index) for index in whitespace_columns)
+        ledger.add(
+            "pass2_description_whitespace",
+            (),
+            (
+                f"Pass 2 description text differs from the file text by surrounding whitespace "
+                f"only, on column(s) {listed}. No sample value was changed."
+            ),
+        )
+
+
+def _with_encoding(audit: TextAudit, name: str | None, method: str) -> TextAudit:
+    return TextAudit(
+        encoding_name=name,
+        encoding_method=method,
+        line_endings=audit.line_endings,
+        sections=audit.sections,
+        duplicate_section_letters=audit.duplicate_section_letters,
+        absent_section_letters=audit.absent_section_letters,
+        ascii_is_last=audit.ascii_is_last,
+        vers_text=audit.vers_text,
+        vers_major=audit.vers_major,
+        wrap_text=audit.wrap_text,
+        wrapped=audit.wrapped,
+        null_text=audit.null_text,
+        null_number=audit.null_number,
+        strt_text=audit.strt_text,
+        strt_unit=audit.strt_unit,
+        strt_number=audit.strt_number,
+        stop_text=audit.stop_text,
+        stop_unit=audit.stop_unit,
+        stop_number=audit.stop_number,
+        step_text=audit.step_text,
+        step_unit=audit.step_unit,
+        step_number=audit.step_number,
+        header_lines=audit.header_lines,
+        curves=audit.curves,
+        duplicate_mnemonics=audit.duplicate_mnemonics,
+        repeated_well_mnemonics=audit.repeated_well_mnemonics,
+        repeated_version_mnemonics=audit.repeated_version_mnemonics,
+        preamble_lines=audit.preamble_lines,
+        column_mismatches=audit.column_mismatches,
+        data_token_count=audit.data_token_count,
+        depth_step_count=audit.depth_step_count,
+        depth_tokens=audit.depth_tokens,
+    )
+
+
+def _sentinel_options(rows: list[list[float]] | None) -> tuple[str, ...]:
+    """Sentinel values that occur outside column 0, then NONE. D66.
+
+    ``-1e30`` and ``-1.0e+30`` are one value. The option text is the first
+    text in null_sentinels.json. Occurrence is exact equality, not the NULL
+    tolerance. NONE means the file has no NULL.
+    """
+
+    present: set[float] = set()
+    if rows:
+        for row in rows:
+            for value in row[1:]:
+                present.add(value)
+    seen: set[float] = set()
+    texts: list[str] = []
+    for text, value in SENTINEL_CANDIDATES:
+        if value in seen or value not in present:
+            continue
+        texts.append(text)
+        seen.add(value)
+    texts.append(NONE_OPTION)
+    return tuple(texts)
+
+
+def _attach_null_options(ledger: _Ledger, options: tuple[str, ...]) -> None:
+    """Put the NULL question's options on the finding that asks it. D66."""
+
+    payload = json.dumps(list(options))
+    updated: list[FindingRecord] = []
+    for item in ledger.items:
+        if item.check not in ("null_undeclared", "null_not_finite"):
+            updated.append(item)
+            continue
+        fields = dict(item.evidence.fields)
+        fields["options"] = payload
+        updated.append(
+            FindingRecord(
+                id=item.id,
+                stage=item.stage,
+                check=item.check,
+                identity=item.identity,
+                block_type=item.block_type,
+                subject_refs=item.subject_refs,
+                evidence=Evidence(item.block_type.value, tuple(sorted(fields.items()))),
+                message=item.message,
+                created_at=item.created_at,
+            )
+        )
+    ledger.items = updated
+
+
+def _one_null_choice(choices: tuple[NullChoice, ...], options: tuple[str, ...]) -> NullChoice | None:
+    """The one passed choice, or None. An option the question does not list is refused. D66."""
+
+    if type(choices) is not tuple or any(not isinstance(item, NullChoice) for item in choices):
+        raise TypeError("null_choices must be a tuple of NullChoice.")
+    if len(choices) > 1:
+        raise ValueError("Two NULL choices are in force.")
+    if not choices:
+        return None
+    choice = choices[0]
+    if choice.option not in options:
+        shown = ", ".join(options) if options else "none"
+        raise ValueError(f"{choice.option!r} is not an option this finding lists ({shown}).")
+    return choice
+
+
+def _sentinel_value(option: str) -> float:
+    """The numeric value of one sentinel option text. D66."""
+
+    for text, value in SENTINEL_CANDIDATES:
+        if text == option:
+            return value
+    raise ValueError(f"{option!r} is not an option this finding lists (none).")
+
+
+def _drop_null_questions(ledger: _Ledger) -> None:
+    """A recorded NULL choice answers the question, so it is not raised again. D66."""
+
+    ledger.items = [item for item in ledger.items if item.check not in ("null_undeclared", "null_not_finite")]
+
+
+def ingest(
+    path: Path | str,
+    *,
+    read_at: datetime | None = None,
+    null_choices: tuple[NullChoice, ...] = (),
+) -> IngestResult:
+    """Read one LAS file into a source dataset and an audit ledger.
+
+    Implements D64, D65 (PARTIAL), D66 (PARTIAL, F07, F16, F19), D68 (PARTIAL),
+    D30, D46, D17, D96, C3, C6, contracts section 6.
+
+    Parameters
+    ----------
+    path:
+        Input LAS file. Opened read-only. The bytes are not written. A
+        URL-shaped name is not opened as a URL: pass 2 reads the decoded text.
+    read_at:
+        Timestamp stored on the source file and the findings. When omitted,
+        the clock is UTC now. Callers pass a fixed time in tests.
+    null_choices:
+        THIS_ITEM NULL choices. Empty applies none. A held session passes
+        nothing. An option the NULL question does not list is refused.
+
+    Returns
+    -------
+    IngestResult
+        The dataset is None when a structural finding, or a LAS 3.0 version,
+        means no source frame was built. Null samples are NaN, and their
+        indexes are on ``null_sample_indexes``. ``null_decision_id`` is the
+        choice that supplied the NULL, or None when the file's own NULL was
+        used or no NULL was applied.
+
+    Raises
+    ------
+    UnclassifiedIngest
+        The text has a condition the approved mapping does not name, and a
+        dataset cannot be built without classifying it.
+    TypeError
+        ``null_choices`` is not a tuple of NullChoice.
+    ValueError
+        A NULL choice is not one the finding lists, or two choices were passed.
+    """
+
+    file_path = Path(path)
+    if read_at is None:
+        read_at = datetime.now(timezone.utc)
+    if not isinstance(read_at, datetime):
+        raise TypeError("read_at must be a datetime or None")
+    raw = _read_bytes(file_path)
+    source = SourceFile(
+        path=file_path,
+        file_hash=FileHash(hashlib.sha256(raw).hexdigest()),
+        size_bytes=len(raw),
+        read_at=read_at,
+    )
+    ledger = _Ledger(read_at, source.file_hash)
+    # The hash above covers the original bytes, including a trailing Ctrl-Z.
+    decoded, dropped_eof = _strip_trailing_dos_eof(raw)
+    if dropped_eof:
+        ledger.add(
+            "dos_end_of_file",
+            (),
+            "The file ends with a DOS end-of-file byte (Ctrl-Z). It was ignored; no value changed.",
+        )
+    encoding_name, encoding_method, text = _detect_encoding(decoded)
+    if text is None:
+        ledger.add("encoding_undetermined", (), encoding_method)
+        audit = _empty_audit(None, encoding_method)
+        return _result(source, None, ledger, audit, ())
+
+    passed = _pass1(text, ledger)
+    audit = _with_encoding(passed.audit, encoding_name, encoding_method)
+    asks_null = any(item.check in ("null_undeclared", "null_not_finite") for item in ledger.items)
+    options = _sentinel_options(passed.rows) if asks_null else ()
+    if asks_null:
+        _attach_null_options(ledger, options)
+    choice = _one_null_choice(null_choices, options)
+    null_decision_id: str | None = None
+    applied_null = audit.null_number
+    null_label = audit.null_text if audit.null_text is not None else ""
+    if choice is not None:
+        null_decision_id = choice.decision_id
+        _drop_null_questions(ledger)
+        if choice.converts_nothing:
+            applied_null = None
+            null_label = ""
+        else:
+            applied_null = _sentinel_value(choice.option)
+            null_label = choice.option
+    structural = any(item.block_type is BlockType.STRUCTURAL_DATA_FAILURE for item in ledger.items)
+    las3_version = audit.vers_major == 3
+    matrix: numpy.ndarray | None = None
+    raw_matrix: numpy.ndarray | None = None
+    null_indexes: tuple[tuple[int, ...], ...] = ()
+    dataset: Dataset | None = None
+
+    if (
+        not structural
+        and not las3_version
+        and passed.rows is None
+        and audit.wrapped is None
+        and audit.data_token_count > 0
+        and "A" not in audit.absent_section_letters
+        and not any(item.check == "no_sections" for item in ledger.items)
+    ):
+        partial = _halted(_result(source, None, ledger, audit, (), null_decision_id))
+        raise UnclassifiedIngest(
+            "WRAP is not YES or NO, so the column layout was not assumed. "
+            "This is not an approved ledger condition.",
+            partial,
+        )
+    if passed.non_numeric and not structural and not las3_version:
+        shown = [
+            f"Line {lineno} has '{token}' where a number should be, so the file was not processed."
+            for lineno, token in passed.non_numeric[:5]
+        ]
+        ledger.add("data_token_not_numeric", (), " ".join(shown))
+        structural = True
+    if passed.rows is not None and not structural and not las3_version:
+        if audit.wrapped is None:
+            partial = _halted(_result(source, None, ledger, audit, (), null_decision_id))
+            raise UnclassifiedIngest(
+                "WRAP is not YES or NO, so the column layout was not assumed. "
+                "This is not an approved ledger condition.",
+                partial,
+            )
+        raw_matrix = numpy.array(passed.rows, dtype=numpy.float64)
+        matrix, null_indexes = _apply_nulls(passed.rows, applied_null, audit.curves, null_label, ledger)
+        _sentinel_warnings(raw_matrix, audit.curves, applied_null, ledger)
+        depths = matrix[:, 0]
+        refusal = _depth_refusal(depths)
+        if refusal is not None and refusal[0] == "unclassified":
+            partial = _halted(_result(source, None, ledger, audit, null_indexes, null_decision_id))
+            raise UnclassifiedIngest(refusal[1], partial)
+        if refusal is not None:
+            ledger.add("depth_axis_refused", (), refusal[1])
+        else:
+            direction = _direction(depths)
+            if direction is None:
+                partial = _halted(_result(source, None, ledger, audit, null_indexes, null_decision_id))
+                raise UnclassifiedIngest(
+                    "The index curve has no strict direction after the depth checks. "
+                    "This is not an approved ledger condition.",
+                    partial,
+                )
+            dataset = _build_dataset(source, audit, matrix, direction)
+
+    if any(item.check == "no_sections" for item in ledger.items):
+        return _result(source, dataset, ledger, audit, null_indexes, null_decision_id)
+    _compare_pass2(text, audit, raw_matrix, passed.header_for_lasio, ledger)
+    return _result(source, dataset, ledger, audit, null_indexes, null_decision_id)

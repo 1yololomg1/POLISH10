@@ -1,0 +1,501 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "polish-describe/1",
+  "title": "POLISH describe report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "result",
+    "notice",
+    "structural_refusal",
+    "unclassified",
+    "unclassified_message",
+    "file",
+    "stage0",
+    "stages",
+    "depth",
+    "curves",
+    "gap_inventory",
+    "default_passes",
+    "findings_by_block",
+    "refusals",
+    "non_eligibility",
+    "deferred",
+    "versions",
+    "not_verified",
+    "local_tables",
+    "not_available_from_the_engine"
+  ],
+  "properties": {
+    "schema_version": { "const": "polish-describe/1" },
+    "result": { "type": "string", "minLength": 1 },
+    "notice": {
+      "const": "This report shows POLISH's own reading with no decisions applied. Saved answers are not shown in this version."
+    },
+    "structural_refusal": { "type": "boolean" },
+    "unclassified": { "type": "boolean" },
+    "unclassified_message": { "type": ["string", "null"] },
+    "file": { "$ref": "#/$defs/file" },
+    "stage0": { "$ref": "#/$defs/stage0" },
+    "stages": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/stage" }
+    },
+    "depth": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/depth" }] },
+    "curves": { "type": "array", "items": { "$ref": "#/$defs/curve" } },
+    "gap_inventory": { "type": "array", "items": { "$ref": "#/$defs/gap" } },
+    "default_passes": { "type": "array", "maxItems": 0 },
+    "findings_by_block": { "type": "array", "items": { "$ref": "#/$defs/finding_group" } },
+    "refusals": { "type": "array", "items": { "$ref": "#/$defs/refusal" } },
+    "non_eligibility": { "type": "array", "items": { "$ref": "#/$defs/non_eligibility" } },
+    "deferred": { "type": "array", "maxItems": 0 },
+    "versions": { "$ref": "#/$defs/versions" },
+    "not_verified": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/not_verified" } },
+    "local_tables": { "$ref": "#/$defs/local_tables" },
+    "not_available_from_the_engine": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "name", "status", "reason"],
+      "properties": {
+        "stage": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
+    "quantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "text", "unit"],
+      "properties": {
+        "name": { "type": "string" },
+        "text": { "type": "string" },
+        "unit": { "type": "string" }
+      }
+    },
+    "depth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "direction",
+        "regularity",
+        "declared_step",
+        "observed_step",
+        "corrected_step",
+        "recorded_strt",
+        "recorded_stop",
+        "displacement",
+        "alias",
+        "primary_standard_step",
+        "depth_unit"
+      ],
+      "properties": {
+        "status": { "type": "string" },
+        "direction": { "type": ["string", "null"] },
+        "regularity": { "type": ["string", "null"] },
+        "declared_step": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quantity" }] },
+        "observed_step": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quantity" }] },
+        "corrected_step": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quantity" }] },
+        "recorded_strt": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quantity" }] },
+        "recorded_stop": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quantity" }] },
+        "displacement": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quantity" }] },
+        "alias": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/alias" }] },
+        "primary_standard_step": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quantity" }] },
+        "depth_unit": { "type": ["string", "null"] }
+      }
+    },
+    "alias": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "canonical_name"],
+      "properties": {
+        "source": { "type": "string" },
+        "canonical_name": { "type": "string" }
+      }
+    },
+    "curve": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "column",
+        "mnemonic",
+        "unit_as_written",
+        "description",
+        "identification",
+        "units",
+        "validity",
+        "gaps"
+      ],
+      "properties": {
+        "column": { "type": "integer", "minimum": 0 },
+        "mnemonic": { "type": "string" },
+        "unit_as_written": { "type": "string" },
+        "description": { "type": "string" },
+        "identification": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/identification" }] },
+        "units": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/units" }] },
+        "validity": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/validity" }] },
+        "gaps": { "type": "array", "items": { "$ref": "#/$defs/gap" } }
+      }
+    },
+    "identification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family_id",
+        "qualifiers",
+        "role",
+        "role_wording",
+        "tier",
+        "tier_wording",
+        "eligibility",
+        "eligibility_wording",
+        "label",
+        "user_label",
+        "trace"
+      ],
+      "properties": {
+        "family_id": { "type": ["string", "null"] },
+        "qualifiers": { "type": "array", "items": { "$ref": "#/$defs/qualifier" } },
+        "role": { "type": "string" },
+        "role_wording": { "type": "string", "minLength": 1 },
+        "tier": { "type": "string" },
+        "tier_wording": { "type": "string", "minLength": 1 },
+        "eligibility": { "type": "string" },
+        "eligibility_wording": { "type": "string", "minLength": 1 },
+        "label": { "type": ["string", "null"] },
+        "user_label": { "type": ["string", "null"] },
+        "trace": { "type": "array", "items": { "$ref": "#/$defs/trace" } }
+      }
+    },
+    "qualifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token", "name"],
+      "properties": {
+        "token": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["table", "entry", "rule", "applied"],
+      "properties": {
+        "table": { "type": "string" },
+        "entry": { "type": "string" },
+        "rule": { "type": "string" },
+        "applied": { "type": "boolean" }
+      }
+    },
+    "units": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "outcome_wording",
+        "canonical_unit",
+        "dimension",
+        "eligibility",
+        "eligibility_wording"
+      ],
+      "properties": {
+        "outcome": { "type": "string" },
+        "outcome_wording": { "type": "string", "minLength": 1 },
+        "canonical_unit": { "type": ["string", "null"] },
+        "dimension": { "type": ["string", "null"] },
+        "eligibility": { "type": "string" },
+        "eligibility_wording": { "type": "string", "minLength": 1 }
+      }
+    },
+    "validity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "wording",
+        "rule_set_version",
+        "ineligibility_reason",
+        "eligibility_evidence",
+        "family_rules_applied"
+      ],
+      "properties": {
+        "outcome": { "type": "string" },
+        "wording": { "type": "string", "minLength": 1 },
+        "rule_set_version": { "type": ["string", "null"] },
+        "ineligibility_reason": { "type": ["string", "null"] },
+        "eligibility_evidence": { "type": ["string", "null"] },
+        "family_rules_applied": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "column",
+        "mnemonic",
+        "sample_start",
+        "sample_end",
+        "depth_at_start",
+        "depth_at_end",
+        "class",
+        "class_wording",
+        "evidence",
+        "confidence",
+        "fill_outcome",
+        "fill_wording"
+      ],
+      "properties": {
+        "column": { "type": "integer", "minimum": 0 },
+        "mnemonic": { "type": "string" },
+        "sample_start": { "type": "integer", "minimum": 0 },
+        "sample_end": { "type": "integer", "minimum": 1 },
+        "depth_at_start": { "type": "number" },
+        "depth_at_end": { "type": "number" },
+        "class": { "type": "string" },
+        "class_wording": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "string", "minLength": 1 },
+        "fill_outcome": { "type": "string" },
+        "fill_wording": { "type": "string", "minLength": 1 }
+      }
+    },
+    "finding_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block_type", "wording", "findings"],
+      "properties": {
+        "block_type": { "type": "string" },
+        "wording": { "type": "string", "minLength": 1 },
+        "findings": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/finding" } }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "stage", "subjects", "message", "open", "evidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "stage": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "subjects": { "type": "array", "items": { "type": "string" } },
+        "message": { "type": "string", "minLength": 1 },
+        "open": { "const": "Open: no decision recorded" },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "number", "boolean"] }
+        }
+      }
+    },
+    "refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "stage", "block_type", "wording", "message"],
+      "properties": {
+        "id": { "type": "string" },
+        "stage": { "type": "integer" },
+        "block_type": { "type": "string" },
+        "wording": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "non_eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["column", "mnemonic", "field", "code", "wording", "reason", "evidence"],
+      "properties": {
+        "column": { "type": "integer", "minimum": 0 },
+        "mnemonic": { "type": "string" },
+        "field": { "type": "string" },
+        "code": { "type": "string" },
+        "wording": { "type": "string", "minLength": 1 },
+        "reason": { "type": ["string", "null"] },
+        "evidence": { "type": ["string", "null"] }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app", "in_force"],
+      "properties": {
+        "app": { "type": "string", "minLength": 1 },
+        "in_force": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version"],
+            "properties": {
+              "name": { "type": "string" },
+              "version": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "not_verified": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "id", "source_tier", "evidence"],
+      "properties": {
+        "file": { "type": "string" },
+        "id": { "type": ["string", "null"] },
+        "source_tier": { "type": "string" },
+        "evidence": { "type": ["string", "null"] }
+      }
+    },
+    "local_tables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "found", "read"],
+      "properties": {
+        "path": { "type": ["string", "null"] },
+        "found": { "type": "boolean" },
+        "read": { "type": "boolean" }
+      }
+    },
+    "header_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "unit", "number"],
+      "properties": {
+        "text": { "type": ["string", "null"] },
+        "unit": { "type": ["string", "null"] },
+        "number": { "type": ["number", "null"] }
+      }
+    },
+    "stage0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "status",
+        "encoding",
+        "line_endings",
+        "vers",
+        "wrap",
+        "null",
+        "strt",
+        "stop",
+        "step",
+        "duplicate_mnemonics",
+        "duplicate_sections",
+        "absent_sections",
+        "preamble_lines",
+        "repeated_well_mnemonics",
+        "repeated_version_mnemonics",
+        "ascii_is_last_section",
+        "ledger",
+        "dataset"
+      ],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string" },
+        "status": { "type": "string" },
+        "encoding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "method"],
+          "properties": {
+            "name": { "type": ["string", "null"] },
+            "method": { "type": "string" }
+          }
+        },
+        "line_endings": { "type": "array", "items": { "type": "string" } },
+        "vers": { "type": ["string", "null"] },
+        "wrap": { "type": ["string", "null"] },
+        "null": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "number"],
+          "properties": {
+            "text": { "type": ["string", "null"] },
+            "number": { "type": ["number", "null"] }
+          }
+        },
+        "strt": { "$ref": "#/$defs/header_value" },
+        "stop": { "$ref": "#/$defs/header_value" },
+        "step": { "$ref": "#/$defs/header_value" },
+        "duplicate_mnemonics": { "type": "array", "items": { "type": "string" } },
+        "duplicate_sections": { "type": "array", "items": { "type": "string" } },
+        "absent_sections": { "type": "array", "items": { "type": "string" } },
+        "preamble_lines": { "type": "array", "items": { "type": "integer" } },
+        "repeated_well_mnemonics": { "type": "array", "items": { "type": "string" } },
+        "repeated_version_mnemonics": { "type": "array", "items": { "type": "string" } },
+        "ascii_is_last_section": { "type": ["boolean", "null"] },
+        "ledger": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "stage", "block_type", "message"],
+            "properties": {
+              "id": { "type": "string" },
+              "stage": { "type": "integer" },
+              "block_type": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        },
+        "dataset": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "curve_count",
+                "row_count",
+                "direction",
+                "regularity",
+                "declared_step",
+                "depth_unit",
+                "curves"
+              ],
+              "properties": {
+                "curve_count": { "type": "integer", "minimum": 0 },
+                "row_count": { "type": "integer", "minimum": 0 },
+                "direction": { "type": "string" },
+                "regularity": { "type": ["string", "null"] },
+                "declared_step": { "type": ["number", "null"] },
+                "depth_unit": { "type": ["string", "null"] },
+                "curves": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["column_index", "mnemonic", "unit", "description", "null_count"],
+                    "properties": {
+                      "column_index": { "type": "integer", "minimum": 0 },
+                      "mnemonic": { "type": "string" },
+                      "unit": { "type": "string" },
+                      "description": { "type": "string" },
+                      "null_count": { "type": "integer", "minimum": 0 }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

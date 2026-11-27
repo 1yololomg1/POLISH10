@@ -1,0 +1,1389 @@
+{
+  "table_id": "mnemonics",
+  "version": "1",
+  "metadata": {
+    "review": "Legacy names reviewed and stated correct by Alvaro Chaveste-Fernandez on 9 Oct 2026, from first-degree sources (chartbooks); not re-verified against them.",
+    "legacy_fields_not_carried": [
+      "range",
+      "units",
+      "physics",
+      "typical_values",
+      "industry_color",
+      "track_scale",
+      "wavelet_type",
+      "filter_params"
+    ],
+    "qualifiers": "Empty on every migrated row. No qualifier was invented from the mnemonic text.",
+    "role": "GEOMETRIC_REFERENCE for TVD, TVDEPTH, and TVDSS (the decided TVD role name). MEASURED_LOG for every other migrated mnemonic. INDEX is assigned by Stage 1, not by this table."
+  },
+  "entries": [
+    {
+      "mnemonic": "RT",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ILD",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "LLD",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RLLD",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AT90",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AHT90",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RT_HRLA",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RILD",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RLL3",
+      "family": "RESISTIVITY_DEEP",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RT); SLB chartbook common mnemonic (ILD/LLD/AT90/AHT90)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ILM",
+      "family": "RESISTIVITY_MEDIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "LLM",
+      "family": "RESISTIVITY_MEDIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RLLM",
+      "family": "RESISTIVITY_MEDIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AT60",
+      "family": "RESISTIVITY_MEDIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AHT60",
+      "family": "RESISTIVITY_MEDIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RT_MRLA",
+      "family": "RESISTIVITY_MEDIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RILM",
+      "family": "RESISTIVITY_MEDIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RLL2",
+      "family": "RESISTIVITY_MEDIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILM/LLM/AT60/AHT60)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ILS",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "LLS",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RLLS",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AT30",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AHT30",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RT_SRLA",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SFLU",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MSFL",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RILS",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RLL1",
+      "family": "RESISTIVITY_SHALLOW",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (ILS/LLS/SFLU/MSFL/AT30)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MCFL",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RXO",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MCFP",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MI",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MIR",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MIRI",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MN",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MNR",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MNOR",
+      "family": "RESISTIVITY_MICRO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (RXO/MCFL); industry common alias (MI/MN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "LL3",
+      "family": "RESISTIVITY_LATEROLOG",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (LL3/LL7/LL8/LL9)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "LL7",
+      "family": "RESISTIVITY_LATEROLOG",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (LL3/LL7/LL8/LL9)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "LL8",
+      "family": "RESISTIVITY_LATEROLOG",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (LL3/LL7/LL8/LL9)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "LL9",
+      "family": "RESISTIVITY_LATEROLOG",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (LL3/LL7/LL8/LL9)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "GR",
+      "family": "GAMMA_RAY_TOTAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (GR); SLB chartbook common mnemonic (HSGR/ECGR/SGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "GRC",
+      "family": "GAMMA_RAY_TOTAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (GR); SLB chartbook common mnemonic (HSGR/ECGR/SGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "GRCX",
+      "family": "GAMMA_RAY_TOTAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (GR); SLB chartbook common mnemonic (HSGR/ECGR/SGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HSGR",
+      "family": "GAMMA_RAY_TOTAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (GR); SLB chartbook common mnemonic (HSGR/ECGR/SGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ECGR",
+      "family": "GAMMA_RAY_TOTAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (GR); SLB chartbook common mnemonic (HSGR/ECGR/SGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SGR",
+      "family": "GAMMA_RAY_TOTAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (GR); SLB chartbook common mnemonic (HSGR/ECGR/SGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TGR",
+      "family": "GAMMA_RAY_TOTAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (GR); SLB chartbook common mnemonic (HSGR/ECGR/SGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HCGR",
+      "family": "GAMMA_RAY_SPECTRAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HCGR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "THOR",
+      "family": "THORIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HTHO/THOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TH",
+      "family": "THORIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HTHO/THOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HTHO",
+      "family": "THORIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HTHO/THOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "STHO",
+      "family": "THORIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HTHO/THOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "URAN",
+      "family": "URANIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HURA/URAN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "U",
+      "family": "URANIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HURA/URAN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HURA",
+      "family": "URANIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HURA/URAN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SURA",
+      "family": "URANIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HURA/URAN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "POTA",
+      "family": "POTASSIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HPOT/POTA)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "K",
+      "family": "POTASSIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HPOT/POTA)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HPOT",
+      "family": "POTASSIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HPOT/POTA)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SPOT",
+      "family": "POTASSIUM",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (HPOT/POTA)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "NPHI",
+      "family": "NEUTRON_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (NPHI); SLB chartbook common mnemonic (TNPH/CNL/NPOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "NPOR",
+      "family": "NEUTRON_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (NPHI); SLB chartbook common mnemonic (TNPH/CNL/NPOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "NEUT",
+      "family": "NEUTRON_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (NPHI); SLB chartbook common mnemonic (TNPH/CNL/NPOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TNPH",
+      "family": "NEUTRON_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (NPHI); SLB chartbook common mnemonic (TNPH/CNL/NPOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CNL",
+      "family": "NEUTRON_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (NPHI); SLB chartbook common mnemonic (TNPH/CNL/NPOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SNPH",
+      "family": "NEUTRON_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (NPHI); SLB chartbook common mnemonic (TNPH/CNL/NPOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "APLC",
+      "family": "NEUTRON_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (NPHI); SLB chartbook common mnemonic (TNPH/CNL/NPOR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CNPOR",
+      "family": "NEUTRON_COMPENSATED",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (NPHI_LS/NPHI_SS/NPHI_DOL)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "NPHI_LS",
+      "family": "NEUTRON_COMPENSATED",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (NPHI_LS/NPHI_SS/NPHI_DOL)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "NPHI_SS",
+      "family": "NEUTRON_COMPENSATED",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (NPHI_LS/NPHI_SS/NPHI_DOL)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "NPHI_DOL",
+      "family": "NEUTRON_COMPENSATED",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (NPHI_LS/NPHI_SS/NPHI_DOL)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ENPH",
+      "family": "NEUTRON_EPITHERMAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (ENPH/ETNP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ETNP",
+      "family": "NEUTRON_EPITHERMAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (ENPH/ETNP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ENN",
+      "family": "NEUTRON_EPITHERMAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (ENPH/ETNP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DPOR",
+      "family": "NEUTRON_DUAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (DPOR/DNPH)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DNPH",
+      "family": "NEUTRON_DUAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (DPOR/DNPH)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DNPHI",
+      "family": "NEUTRON_DUAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (DPOR/DNPH)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RHOB",
+      "family": "BULK_DENSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RHOB); SLB chartbook common mnemonic (RHOZ/ZDEN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RHOZ",
+      "family": "BULK_DENSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RHOB); SLB chartbook common mnemonic (RHOZ/ZDEN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DENB",
+      "family": "BULK_DENSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RHOB); SLB chartbook common mnemonic (RHOZ/ZDEN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DENS",
+      "family": "BULK_DENSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RHOB); SLB chartbook common mnemonic (RHOZ/ZDEN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ROHB",
+      "family": "BULK_DENSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RHOB); SLB chartbook common mnemonic (RHOZ/ZDEN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ZDEN",
+      "family": "BULK_DENSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RHOB); SLB chartbook common mnemonic (RHOZ/ZDEN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "BDCN",
+      "family": "BULK_DENSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (RHOB); SLB chartbook common mnemonic (RHOZ/ZDEN)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PEF",
+      "family": "PHOTOELECTRIC_FACTOR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PE",
+      "family": "PHOTOELECTRIC_FACTOR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PEFZ",
+      "family": "PHOTOELECTRIC_FACTOR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PEFC",
+      "family": "PHOTOELECTRIC_FACTOR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "ZPE",
+      "family": "PHOTOELECTRIC_FACTOR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PEFS",
+      "family": "PHOTOELECTRIC_FACTOR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PEFE",
+      "family": "PHOTOELECTRIC_FACTOR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PEFR",
+      "family": "PHOTOELECTRIC_FACTOR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (PEF/PEFZ); industry common alias (PEFE/PEFR)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DRHO",
+      "family": "DENSITY_CORRECTION",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DRHO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DRHB",
+      "family": "DENSITY_CORRECTION",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DRHO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DCOR",
+      "family": "DENSITY_CORRECTION",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DRHO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "RHOC",
+      "family": "DENSITY_CORRECTION",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DRHO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DT",
+      "family": "SONIC_COMPRESSIONAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (DT); SLB chartbook common mnemonic (DTC/DTCO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTC",
+      "family": "SONIC_COMPRESSIONAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (DT); SLB chartbook common mnemonic (DTC/DTCO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTCO",
+      "family": "SONIC_COMPRESSIONAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (DT); SLB chartbook common mnemonic (DTC/DTCO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AC",
+      "family": "SONIC_COMPRESSIONAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (DT); SLB chartbook common mnemonic (DTC/DTCO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTLN",
+      "family": "SONIC_COMPRESSIONAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (DT); SLB chartbook common mnemonic (DTC/DTCO)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTS",
+      "family": "SONIC_SHEAR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DTS/DTSH/DTSM)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTSH",
+      "family": "SONIC_SHEAR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DTS/DTSH/DTSM)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTSM",
+      "family": "SONIC_SHEAR",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DTS/DTSH/DTSM)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTST",
+      "family": "SONIC_STONELEY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DTST)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTSTM",
+      "family": "SONIC_STONELEY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DTST)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DTTU",
+      "family": "SONIC_STONELEY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (DTST)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SP",
+      "family": "SPONTANEOUS_POTENTIAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SP/SSP/SPC); merged from both legacy databases",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SSP",
+      "family": "SPONTANEOUS_POTENTIAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SP/SSP/SPC); merged from both legacy databases",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PSP",
+      "family": "SPONTANEOUS_POTENTIAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SP/SSP/SPC); merged from both legacy databases",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SPONT",
+      "family": "SPONTANEOUS_POTENTIAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SP/SSP/SPC); merged from both legacy databases",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SPC",
+      "family": "SPONTANEOUS_POTENTIAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SP/SSP/SPC); merged from both legacy databases",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SPCX",
+      "family": "SPONTANEOUS_POTENTIAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SP/SSP/SPC); merged from both legacy databases",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SPLG",
+      "family": "SPONTANEOUS_POTENTIAL",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SP/SSP/SPC); merged from both legacy databases",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CALI",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CAL",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HCAL",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "BS",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CALS",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CALX",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CALL",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CALM",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DCAL",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MCAL",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MCALI",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "C1",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "C2",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "C3",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "C4",
+      "family": "CALIPER",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "observed in demo_data/POLISH_DEMO_1.las (CALI); SLB/industry common alias (HCAL/DCAL/CALS)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DEPT",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DEPTH",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MD",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MDEPTH",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TVD",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "GEOMETRIC_REFERENCE",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TVDEPTH",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "GEOMETRIC_REFERENCE",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TVDSS",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "GEOMETRIC_REFERENCE",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "KB",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DF",
+      "family": "DEPTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "CWLS reference / observed in demo_data/POLISH_DEMO_1.las (DEPT); industry common alias (TVD/TVDSS/KB/DF)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MPHI",
+      "family": "NMR_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (TCMR/MPHI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TCMR",
+      "family": "NMR_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (TCMR/MPHI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CMRP",
+      "family": "NMR_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (TCMR/MPHI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "NMR_POR",
+      "family": "NMR_POROSITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (TCMR/MPHI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "MPERM",
+      "family": "NMR_PERMEABILITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (MPERM/KPERM)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "KPERM",
+      "family": "NMR_PERMEABILITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (MPERM/KPERM)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "KINT",
+      "family": "NMR_PERMEABILITY",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (MPERM/KPERM)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PRES",
+      "family": "FORMATION_PRESSURE",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (PRES/FP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "FP",
+      "family": "FORMATION_PRESSURE",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (PRES/FP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "FPRES",
+      "family": "FORMATION_PRESSURE",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (PRES/FP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "PFOR",
+      "family": "FORMATION_PRESSURE",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (PRES/FP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TEMP",
+      "family": "FORMATION_TEMPERATURE",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (TEMP/FTEMP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "FTEMP",
+      "family": "FORMATION_TEMPERATURE",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (TEMP/FTEMP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "TEMF",
+      "family": "FORMATION_TEMPERATURE",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (TEMP/FTEMP)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AZIM",
+      "family": "BOREHOLE_AZIMUTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (AZIM/HAZI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "AZI",
+      "family": "BOREHOLE_AZIMUTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (AZIM/HAZI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HAZI",
+      "family": "BOREHOLE_AZIMUTH",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (AZIM/HAZI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DEVI",
+      "family": "BOREHOLE_DEVIATION",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (DEVI/HDEV)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "DEV",
+      "family": "BOREHOLE_DEVIATION",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (DEVI/HDEV)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HDEV",
+      "family": "BOREHOLE_DEVIATION",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (DEVI/HDEV)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "FMI",
+      "family": "FORMATION_RESISTIVITY_IMAGING",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (FMI/HRLA/OBMI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "HRLA",
+      "family": "FORMATION_RESISTIVITY_IMAGING",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (FMI/HRLA/OBMI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "OBMI",
+      "family": "FORMATION_RESISTIVITY_IMAGING",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (FMI/HRLA/OBMI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "STAR",
+      "family": "FORMATION_RESISTIVITY_IMAGING",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (FMI/HRLA/OBMI)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "BHTV",
+      "family": "ACOUSTIC_IMAGING",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (UBI/BHTV)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "UBI",
+      "family": "ACOUSTIC_IMAGING",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (UBI/BHTV)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CBIL",
+      "family": "ACOUSTIC_IMAGING",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "SLB chartbook common mnemonic (UBI/BHTV)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "COR",
+      "family": "CARBON_OXYGEN_RATIO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (COR/C/O)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "C/O",
+      "family": "CARBON_OXYGEN_RATIO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (COR/C/O)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "CARB",
+      "family": "CARBON_OXYGEN_RATIO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (COR/C/O)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SICA",
+      "family": "SILICON_CALCIUM_RATIO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SICA/SI/CA)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SI/CA",
+      "family": "SILICON_CALCIUM_RATIO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SICA/SI/CA)",
+      "source_tier": "CITED"
+    },
+    {
+      "mnemonic": "SILI",
+      "family": "SILICON_CALCIUM_RATIO",
+      "qualifiers": [],
+      "role": "MEASURED_LOG",
+      "source": "industry common alias (SICA/SI/CA)",
+      "source_tier": "CITED"
+    }
+  ]
+}

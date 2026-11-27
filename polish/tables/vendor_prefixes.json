@@ -1,0 +1,14 @@
+{
+  "table_id": "vendor_prefixes",
+  "version": "1",
+  "metadata": {
+    "note": "Recognised prefixes are detected and not stripped. D35. Stripping waits for a recorded decision (P15)."
+  },
+  "entries": [
+    {
+      "prefix": "LFP_",
+      "source": "POLISH_design_brief.md section 6 names the vendor suite LFP on LFP_DT_SYNT. D35. D82 records this prefix on the stress-test fixture.",
+      "source_tier": "DESIGN"
+    }
+  ]
+}
